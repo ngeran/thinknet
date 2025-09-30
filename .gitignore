@@ -1,0 +1,103 @@
+
+# =========================
+# Rust Backend
+# =========================
+
+# Compiled files and build output
+/target/
+**/*.rs.bk
+
+# Cargo package manager
+/Cargo.lock
+
+# Rust backend debug builds
+/backend/target/
+
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Rust Language Server / IDE files
+**/*.rs.bk
+*.swp
+*.swo
+*.log
+
+# =========================
+# Node / Frontend (React + Vite + Tailwind)
+# =========================
+
+# Node modules
+/node_modules/
+/frontend/node_modules/
+
+# Build output
+/dist/
+/frontend/dist/
+
+# Vite cache
+/.vite/
+/frontend/.vite/
+
+# Local environment files
+.env
+.env.local
+.env.*.local
+
+# npm / pnpm / yarn logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# IDE/editor files
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# =========================
+# Optional / Misc
+# =========================
+
+# Coverage reports
+coverage/
+*.lcov
+
+# Temporary files
+*.tmp
+*.temp
+
+# Docker
+# Ignore all built images and container volumes
+/.docker
+
+# Python
+# Virtual environment directory
+.venv/
+venv/
+# Bytecode and build artifacts
+__pycache__/
+*.pyc
+/fastapi_gateway/build/
+/fastapi_gateway/.pytest_cache/
+/fastapi_gateway/dist/
+
+# Rust
+# Target directory for compilation output
+/rust_ws_hub/target/
+/rust_ws_hub/Cargo.lock
+
+# Node/Frontend
+# Dependency directory
+/frontend/node_modules
+/frontend/dist
+/frontend/.vite/

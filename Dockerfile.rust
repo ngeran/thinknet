@@ -1,0 +1,31 @@
+# Dockerfile.rust (Using latest stable Rust)
+
+# --- Stage 1: Builder ---
+# Using the latest stable Rust tag (1.78.0) which is guaranteed to exist.
+# NOTE: If your Cargo.toml requires edition="2024", you must change it to edition="2021".
+FROM rust:1.78.0 AS builder
+WORKDIR /app
+# Install dependencies needed for general compilation
+RUN apt-get update && apt-get install -y pkg-config libssl-dev
+
+# Copy project files from the source directory
+COPY backend/Cargo.toml backend/Cargo.lock ./
+
+# Build dependencies first to leverage caching
+RUN mkdir src
+RUN echo "fn main() {}" > src/main.rs
+RUN cargo build --release
+RUN rm -f target/release/deps/backend*
+
+# Copy source code and build final binary
+COPY backend/src src/
+RUN cargo build --release
+
+# --- Stage 2: Final Image ---
+FROM debian:bookworm-slim
+WORKDIR /app
+# Copy the compiled binary (named 'backend') from the builder stage
+COPY --from=builder /app/target/release/backend .
+# Set the port and run the binary
+EXPOSE 3100
+CMD ["/app/backend"]

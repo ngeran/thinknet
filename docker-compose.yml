@@ -1,0 +1,51 @@
+# docker-compose.yml
+services:
+  # ----------------------------------------------------
+  # 1. RUST WS HUB (Port 3100)
+  # ----------------------------------------------------
+  rust_backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.rust
+    container_name: rust_ws_hub
+    ports:
+      - "3100:3100"
+    restart: always
+    environment:
+      RUST_LOG: info
+
+  # ----------------------------------------------------
+  # 2. FASTAPI AUTOMATION GATEWAY (Port 8000)
+  # ----------------------------------------------------
+  fastapi_automation:
+    build:
+      context: .
+      dockerfile: Dockerfile.fastapi
+    container_name: fastapi_gateway
+    ports:
+      - "8000:8000"
+    depends_on:
+      - rust_backend
+    restart: always
+    environment:
+      RUST_WS_URL: ws://rust_backend:3100/ws
+
+  # ----------------------------------------------------
+  # 3. FRONTEND (React/Vite)
+  # ----------------------------------------------------
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: frontend_app
+    ports:
+      - "5173:5173"
+    depends_on:
+      - rust_backend
+      - fastapi_automation
+    # Expose the dev server to the Docker host for browser access
+    command: npm run dev -- --host 0.0.0.0
+    environment:
+      # Browser will connect to the ports exposed on your host machine (127.0.0.1)
+      VITE_RUST_WS_URL: ws://127.0.0.1:3100/ws 
+      VITE_API_GATEWAY_URL: http://127.0.0.1:8000

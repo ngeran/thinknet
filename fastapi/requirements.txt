@@ -1,0 +1,6 @@
+# fastapi_automation/requirements.txt
+fastapi==0.111.0
+uvicorn==0.30.1
+websockets==12.0 # Needed for the Python service to be a WS client to Rust
+pydantic==2.7.4
+loguru==0.7.2

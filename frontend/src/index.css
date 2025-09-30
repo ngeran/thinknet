@@ -1,0 +1,10 @@
+/* frontend/src/insex.css */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Add any global custom styles below here */
+body {
+    background-color: #f0f0f0;
+}

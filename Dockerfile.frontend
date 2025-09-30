@@ -1,0 +1,13 @@
+# Dockerfile.frontend
+FROM node:20-alpine AS base
+
+WORKDIR /app
+# NOTE: Copy from the 'frontend' folder
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm install
+
+# --- Development Server Stage ---
+FROM base AS dev
+WORKDIR /app
+COPY frontend/. /app/
+EXPOSE 5173
