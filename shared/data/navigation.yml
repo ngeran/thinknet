@@ -1,0 +1,57 @@
+# File Path: shared/data/navigation.yaml
+# Version: 1.1.0
+# Description: Defines the navigation structure for the application. Mirrors navData.json but written in YAML for backend usage.
+# Key Features:
+# - Defines a hierarchical navigation structure with menu items and sub-items.
+# - Includes metadata like icons and subtitles for frontend rendering.
+# - Validated against navigation.schema.json to ensure correct structure.
+# How-To Guide:
+# 1. Place this file under shared/data.
+# 2. Ensure navigation.schema.json is in shared/schemas.
+# 3. Backend will parse this YAML and expose it via /api/navigation/yaml.
+# 4. Frontend MegaMenu fetches the JSON representation.
+# Change Log:
+# - 1.1.0 (2025-09-13): Changed `href` to `url` to align with updated schema.
+# - 1.0.0 (2025-09-13): Initial navigation structure defined.
+
+- id: management
+  title: Management
+  icon: "🛠️"
+  children:
+    - title: Image Uploads
+      url: /management/image-uploads
+      icon: "🖼️"
+    - title: Code Upgrades
+      url: /management/code-upgrades
+      icon: "⬆️"
+
+- id: automation
+  title: Automation
+  icon: "⚡"
+  children:
+    - title: Configuration Templates
+      url: /automation/templates
+      icon: "📑"
+    - title: Validation (JSNAPy)
+      url: /automation/validation
+      icon: "✅"
+
+- id: reporting
+  title: Reporting
+  icon: "📊"
+  children:
+    - title: Device Reports
+      url: /reporting/device-reports
+      icon: "📋"
+
+- id: operations
+  title: Operations
+  subtitle: Maintenance Workflows
+  icon: "🔄"
+  children:
+    - title: Backup Configurations
+      url: /operations/backups
+      icon: "💾"
+    - title: Restore Configurations
+      url: /operations/restore
+      icon: "♻️"

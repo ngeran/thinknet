@@ -11,6 +11,8 @@ services:
     ports:
       - "3100:3100"
     restart: always
+    volumes:
+      - ./shared:/app/shared
     environment:
       RUST_LOG: info
 
@@ -46,6 +48,11 @@ services:
     # Expose the dev server to the Docker host for browser access
     command: npm run dev -- --host 0.0.0.0
     environment:
-      # Browser will connect to the ports exposed on your host machine (127.0.0.1)
+      # Keep the WS URL for the automation streaming connection
       VITE_RUST_WS_URL: ws://127.0.0.1:3100/ws 
+      
+      # Use the Rust HTTP URL for MegaMenu fetching
+      VITE_RUST_HTTP_URL: http://127.0.0.1:3100 # New explicit variable for clarity
+      
+      # Keep the FastAPI URL for the trigger POST
       VITE_API_GATEWAY_URL: http://127.0.0.1:8000
