@@ -1,117 +1,103 @@
-// src/routes/websocket.rs
+// File Path: backend/src/routes/websocket.rs
 
-//! # WebSocket Route Handler
-//! 
-//! This module defines the main logic for handling a single WebSocket connection. 
-//! It performs the WebSocket upgrade, sets up the bidirectional message loops 
-//! (sending broadcasts out, receiving client messages in), and handles cleanup.
-
-// Removed: use std::sync::Arc; (Warning Fix: Arc is only needed in the State and ConnectionManager definitions, not here.)
 use axum::{
-    // WebSocketUpgrade is for the handshake; Message/WebSocket are the core types; State holds AppState.
     extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State},
     response::IntoResponse,
 };
+use futures::{sink::SinkExt, stream::StreamExt};
+use tokio::sync::mpsc;
+use tracing::{info, warn};
 use uuid::Uuid;
-use tracing::{info, error, debug};
-// StreamExt and SinkExt provide convenient methods (like .next() and .send()) for async streams.
-use futures::{stream::StreamExt, sink::SinkExt};
+use std::time::Duration;
 
 use crate::api::state::AppState;
 
-// Removed: use crate::services::connection_manager::Tx; (Warning Fix: This type alias is not directly used here.)
+const CLIENT_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Handles the initial HTTP request to upgrade to a WebSocket connection.
-/// 
-/// Axum automatically injects `WebSocketUpgrade` and the application `State`.
+/// Main entry point for the WebSocket upgrade.
 pub async fn websocket_handler(
     ws: WebSocketUpgrade,
-    // The Axum 'State' extractor pulls AppState, which holds the ConnectionManager.
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    info!("Incoming WebSocket handshake request.");
-    
-    // The core of the upgrade: instructs Axum to call 'handle_socket' once the 
-    // WebSocket handshake is complete, passing the resulting 'WebSocket' stream.
-    ws.on_upgrade(move |socket| handle_socket(socket, state))
+    ws.on_upgrade(|socket| handle_socket(socket, state))
 }
 
-/// The main asynchronous loop for an individual WebSocket connection.
-/// 
-/// This function runs concurrently for every active client.
-// Fix: Removed 'mut' from 'socket' (Warning Fix: It's immediately consumed by .split(), so it never needs to be reassigned).
+/// Handles the WebSocket connection lifecycle and message passing.
 async fn handle_socket(socket: WebSocket, state: AppState) {
-    // Generate a unique identifier for this specific connection.
     let connection_id = Uuid::new_v4();
-    info!("New connection established: {}", connection_id);
+    info!("New WebSocket connection established: {}", connection_id);
 
-    // --- 1. Setup the Broadcast Receiver (Server -> Client) ---
-    
-    // Get a receiver bound to the manager's global broadcast channel.
-    // This channel is how all connections receive messages broadcasted by any other client/service.
-    let mut rx = state.connection_manager.broadcast_sender.subscribe();
+    // Split the socket into a sender and receiver
+    let (mut ws_sender, mut ws_receiver) = socket.split();
 
-    // Split the single WebSocket stream into two asynchronous halves: 
-    // a sender (to write messages) and a receiver (to read messages).
-    let (mut sender, mut receiver) = socket.split();
+    // 1. Create a channel to send messages from the broadcast worker to this client's ws_sender
+    let (_tx, mut rx) = mpsc::channel(32); // mpsc channel for targeted messages (if needed)
 
-    // --- 2. Spawn an Asynchronous Task for Outgoing Messages (Broadcast Loop) ---
-    
-    // This task runs in the background, listening only for broadcasts.
-    let broadcast_task = tokio::spawn(async move {
-        // Loop indefinitely, receiving messages from the broadcast channel.
-        while let Ok(msg) = rx.recv().await {
-            // The 'msg' is an Arc<Message>, so we clone the content (the Message itself)
-            // and send it down the WebSocket sender stream to the client.
-            if let Err(e) = sender.send(msg.as_ref().clone()).await {
-                // If the send fails, it usually means the client has disconnected unexpectedly.
-                error!("Error sending broadcast message to {}: {}", connection_id, e);
-                break; // Exit the loop on error, effectively closing the sender side.
+    // 2. Add the sender to the ConnectionManager for targeted messaging (if implemented)
+    // NOTE: This is skipped for simplicity, as only the broadcast is required by the current errors.
+
+    // 3. Subscribe to the global broadcast channel
+    // FIX: This field is now correctly available in ConnectionManager
+    let mut broadcast_rx = state.connection_manager.broadcast_sender.subscribe();
+
+    // Spawn a worker to handle sending broadcast messages to the client
+    let connection_id_clone = connection_id.to_string();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                // Channel for targeted messages (from tx above)
+                Some(msg) = rx.recv() => {
+                    if ws_sender.send(Message::Text(msg)).await.is_err() {
+                        warn!("Could not send targeted message to client {}.", connection_id_clone);
+                        break; 
+                    }
+                }
+                // Channel for global broadcast messages
+                Ok(msg) = broadcast_rx.recv() => {
+                    if ws_sender.send(Message::Text(msg)).await.is_err() {
+                        warn!("Could not send broadcast message to client {}.", connection_id_clone);
+                        break; 
+                    }
+                }
+                // If both channels are closed, or an error occurs, the loop exits.
+                else => break, 
             }
         }
-        info!("Broadcast task for {} finished.", connection_id);
+        info!("Broadcast worker stopped for client {}", connection_id_clone);
     });
-
-    // --- 3. Handle Incoming Messages (Client -> Server) ---
     
-    // Loop indefinitely, waiting for messages from the client on the receiver stream.
-    while let Some(result) = receiver.next().await {
+    // Receiver loop: Handles messages coming *from* the client
+    while let Some(result) = ws_receiver.next().await {
         match result {
             Ok(msg) => {
                 match msg {
                     Message::Text(text) => {
                         info!("Received message from {}: {}", connection_id, text);
                         
-                        // Core Logic: Take the received text and broadcast it back to ALL clients.
-                        let broadcast_msg = format!("Client {}: {}", connection_id, text);
+                        // Example: If a client sends a message, broadcast it to everyone
+                        let broadcast_msg = format!("Client {} says: {}", connection_id, text);
+                        
+                        // FIX: Calling the broadcast method on the manager
                         state.connection_manager.broadcast(&broadcast_msg).await;
                     }
-                    Message::Close(_) => {
-                        debug!("Client {} requested close.", connection_id);
-                        break; // Exit the loop if the client sends a close frame.
+                    Message::Close(c) => {
+                        info!("Client {} closed connection: {:?}", connection_id, c);
+                        break;
                     }
-                    _ => {
-                        // Ignore other WebSocket frame types (Binary, Ping, Pong, etc.).
-                        debug!("Received non-text message from {}", connection_id);
-                    }
+                    // Handle other message types
+                    _ => info!("Client {} sent non-text message.", connection_id),
                 }
             }
             Err(e) => {
-                // Log and break if a general WebSocket read error occurs.
-                error!("WebSocket error for {}: {}", connection_id, e);
+                warn!("WebSocket error for client {}: {}", connection_id, e);
                 break;
             }
         }
     }
 
-    // --- 4. Cleanup and Shutdown ---
-    
-    // When the incoming message loop (while let Some...) breaks, 
-    // we stop the complementary outgoing broadcast task.
-    broadcast_task.abort(); 
-
-    // Remove the connection ID from the ConnectionManager's internal tracking 
-    // to ensure subsequent broadcasts don't try to send to a closed receiver.
-    state.connection_manager.remove_connection(connection_id).await; 
-    info!("Connection {} closed.", connection_id);
+    // Cleanup: Remove the connection from the manager when the loop exits
+    let id_string = connection_id.to_string();
+    // FIX: Convert Uuid to &str for the remove_connection call (Fixes E0308)
+    state.connection_manager.remove_connection(&id_string).await;
+    info!("WebSocket handler finished for client {}", connection_id);
 }

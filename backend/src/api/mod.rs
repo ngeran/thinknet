@@ -6,3 +6,4 @@
 
 pub mod state;
 // pub mod error; // Placeholder for a dedicated error handling module
+pub mod navigation;

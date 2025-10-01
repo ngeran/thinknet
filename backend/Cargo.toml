@@ -22,8 +22,19 @@ uuid = { version = "1.8", features = ["v4", "fast-rng"] }
 # Serialization/Deserialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_yaml = "0.9"
 
 # Logging and error handling
 tracing = "0.1"
 # **FIX 1: Added "env-filter" feature**
 tracing-subscriber = { version = "0.3", features = ["env-filter"] } 
+
+# Date/time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Error handling
+thiserror = "1.0"
+
+# JSON Schema
+jsonschema = "0.17"
+

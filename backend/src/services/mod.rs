@@ -4,5 +4,7 @@
 //! 
 //! Contains all business logic and external interaction services (DB, API, etc.).
 
-pub mod connection_manager;
-// pub mod user_service; // Placeholder for a service to interact with users/DB
+
+// YAML configuration management service for schema validation and data handling
+pub mod yaml_service;
+

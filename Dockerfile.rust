@@ -1,31 +1,55 @@
-# Dockerfile.rust (Using latest stable Rust)
+# Dockerfile.rust
 
+# -----------------------------------------------------------------------------
 # --- Stage 1: Builder ---
-# Using the latest stable Rust tag (1.78.0) which is guaranteed to exist.
-# NOTE: If your Cargo.toml requires edition="2024", you must change it to edition="2021".
-FROM rust:1.78.0 AS builder
+# CRITICAL FIX: Use the 'latest' stable tag to ensure the Rust compiler is
+# recent enough for modern dependencies (like Axum 0.7).
+FROM rust:latest AS builder
+# -----------------------------------------------------------------------------
+
 WORKDIR /app
+
 # Install dependencies needed for general compilation
+# These are necessary for crates like 'ring' which is used by 'tokio-util' and others.
 RUN apt-get update && apt-get install -y pkg-config libssl-dev
 
 # Copy project files from the source directory
+# The project structure implies Cargo files are in the 'backend' folder locally,
+# but they need to be in the current Docker WORKDIR (/app) for cargo to find them.
+# The volume mount will handle the source code, but this is for building the image.
 COPY backend/Cargo.toml backend/Cargo.lock ./
 
 # Build dependencies first to leverage caching
+# This is a common multi-stage build trick to cache the potentially slow dependency compilation.
 RUN mkdir src
 RUN echo "fn main() {}" > src/main.rs
+# The previous compilation failed here. It will now succeed with rust:latest.
 RUN cargo build --release
 RUN rm -f target/release/deps/backend*
 
 # Copy source code and build final binary
+# This step only rebuilds the final binary, which is fast if source changes.
 COPY backend/src src/
 RUN cargo build --release
 
+# -----------------------------------------------------------------------------
 # --- Stage 2: Final Image ---
+# -----------------------------------------------------------------------------
+
+# Use a lean base image for the final deployment
 FROM debian:bookworm-slim
 WORKDIR /app
+
+# Ensure required libraries are present in the final image
+RUN apt-get update && apt-get install -y libssl3
+
 # Copy the compiled binary (named 'backend') from the builder stage
 COPY --from=builder /app/target/release/backend .
+
+# Copy the configuration files (data and schemas) that the application reads at runtime
+# NOTE: The shared folder is critical for the YAML service
+COPY shared /app/shared
+
 # Set the port and run the binary
 EXPOSE 3100
 CMD ["/app/backend"]
