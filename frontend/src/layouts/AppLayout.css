@@ -1,0 +1,119 @@
+/* ================================================
+   1. CSS VARIABLES (Default / Dark Theme)
+   ================================================ */
+
+:root {
+  --primary-color: #0066ff;
+  --secondary-color: #00d4ff;
+  --dark-bg: #0a0a0a;
+  --dark-surface: #1a1a1a;
+  --mega-menu-bg: #3b4144e6;
+  --text-primary: #ffffff;
+  --text-secondary: #a0a0a0;
+  --border-color: #2a2a2a;
+  --nav-height: 72px; /* Used for Header height and main content padding */
+  --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* WebSocket Status Dropdown */
+  --ws-dropdown-bg: var(--dark-surface);
+  --ws-dropdown-border: var(--border-color);
+  --ws-dropdown-text: var(--text-primary);
+  --ws-dropdown-secondary-text: var(--text-secondary);
+  --ws-dropdown-item-hover-bg: rgba(255, 255, 255, 0.08);
+
+  /* RGB versions for rgba() support */
+  --text-primary-rgb: 255, 255, 255;
+  --text-secondary-rgb: 160, 160, 160;
+  --primary-color-rgb: 0, 102, 255;
+  --border-color-rgb: 42, 42, 42;
+}
+
+/* ================================================
+   2. LIGHT THEME
+   ================================================ */
+
+[data-theme="light"] {
+  --primary-color: #0066ff;
+  --secondary-color: #00d4ff;
+  --dark-bg: #ffffff;
+  --dark-surface: #f5f5f5;
+  --mega-menu-bg: #ffffffe6;
+  --text-primary: #000000;
+  --text-secondary: #666666;
+  --border-color: #e0e0e0;
+
+  /* WebSocket Status Dropdown */
+  --ws-dropdown-bg: var(--dark-surface);
+  --ws-dropdown-border: var(--border-color);
+  --ws-dropdown-text: var(--text-primary);
+  --ws-dropdown-secondary-text: var(--text-secondary);
+  --ws-dropdown-item-hover-bg: rgba(0, 0, 0, 0.05);
+
+  --text-primary-rgb: 0, 0, 0;
+  --text-secondary-rgb: 102, 102, 102;
+  --primary-color-rgb: 0, 102, 255;
+  --border-color-rgb: 224, 224, 224;
+}
+
+/* ================================================
+   3. YELLOW THEME
+   ================================================ */
+
+[data-theme="yellow"] {
+  /* Primary / Accent */
+  --primary-color: #facc15;
+  --secondary-color: #fbbf24;
+  /* Surfaces */
+  --dark-bg: #1a1a00;
+  --dark-surface: #262600;
+  --mega-menu-bg: rgba(250, 204, 21, 0.08);
+  /* Text */
+  --text-primary: #fefce8;
+  --text-secondary: #eab308;
+  /* Borders & misc */
+  --border-color: #facc15;
+
+  /* WebSocket Status Dropdown */
+  --ws-dropdown-bg: var(--dark-surface);
+  --ws-dropdown-border: var(--border-color);
+  --ws-dropdown-text: var(--text-primary);
+  --ws-dropdown-secondary-text: var(--text-secondary);
+  --ws-dropdown-item-hover-bg: rgba(250, 204, 21, 0.08);
+
+  --text-primary-rgb: 254, 252, 232;
+  --text-secondary-rgb: 234, 179, 8;
+  --primary-color-rgb: 250, 204, 21;
+  --border-color-rgb: 250, 204, 21;
+}
+
+/* Yellow theme overrides to match the dark warm base */
+[data-theme="yellow"] .navbar {
+  background: rgba(38, 38, 0, 0.95);
+  border-bottom: 1px solid var(--border-color);
+}
+
+[data-theme="yellow"] footer {
+  background: rgba(26, 26, 0, 0.95);
+  border-top: 1px solid var(--border-color);
+  color: var(--text-primary);
+}
+
+/* ================================================
+   4. BASE LAYOUT & MAIN CONTENT
+   ================================================ */
+
+.app-layout-wrapper {
+  /* This ensures the background color is respected by the theme */
+  background-color: var(--dark-bg);
+  color: var(--text-primary);
+}
+
+/* FOOTER styles (If you add a Footer.jsx) */
+footer {
+  width: 100%;
+  padding: 1rem 20px;
+  background: rgba(10, 10, 10, 0.95);
+  border-top: 1px solid var(--border-color);
+  z-index: 999;
+  /* Add more footer styles here... */
+}

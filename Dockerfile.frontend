@@ -1,13 +1,19 @@
 # Dockerfile.frontend
 FROM node:20-alpine AS base
 
+# Set the working directory to /app
+# This /app directory will be OVERWRITTEN by the volume mount later
 WORKDIR /app
-# NOTE: Copy from the 'frontend' folder
-COPY frontend/package.json frontend/package-lock.json ./
+
+# The package files are in the 'frontend' folder, but the build context is '.'
+# We copy them into the /app directory which is required for running npm install
+COPY frontend/package.json frontend/package-lock.json ./ 
 RUN npm install
 
-# --- Development Server Stage ---
+# The development stage is simplified
 FROM base AS dev
-WORKDIR /app
-COPY frontend/. /app/
+WORKDIR /app 
+# ❌ REMOVE: COPY frontend/. /app/ 
+# This step is now handled by the volume mount in docker-compose.yml
+
 EXPOSE 5173

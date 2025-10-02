@@ -1,0 +1,167 @@
+/* ================================================
+   1. ANIMATIONS & SCROLLBAR
+   ================================================ */
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.header__mega-menu-dropdown {
+  animation: slideDown 0.2s ease;
+}
+
+/* Custom Scrollbar for Mega Menu Content */
+.header__mega-menu-content::-webkit-scrollbar {
+  width: 6px;
+}
+.header__mega-menu-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+.header__mega-menu-content::-webkit-scrollbar-thumb {
+  background: rgba(var(--text-primary-rgb, 255, 255, 255), 0.2);
+  border-radius: 3px;
+}
+.header__mega-menu-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(var(--text-primary-rgb, 255, 255, 255), 0.3);
+}
+
+/* ================================================
+   2. MEGA MENU STRUCTURE
+   ================================================ */
+
+.floating__nav-modules {
+  position: fixed;
+  top: var(--nav-height); /* Positioning starts immediately below the header */
+  left: 50%;
+  transform: translateX(-50%) translateY(-10px);
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.3s ease, visibility 0.3s ease, transform 0.3s ease;
+  z-index: 999;
+  max-width: 90vw;
+  max-height: calc(100vh - var(--nav-height) - 40px);
+  /* The active class is controlled by the React state */
+}
+
+.floating__nav-modules.active {
+  pointer-events: auto;
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+
+.mega-menu-wrapper {
+  backdrop-filter: blur(50px);
+  background-color: var(--mega-menu-bg);
+  border-radius: 0.75rem;
+  outline: 0.13em solid var(--mega-menu-bg);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+.mega-menu-container {
+  position: relative;
+  padding: 0.75rem;
+}
+
+/* 2.1. Module Layouts */
+
+/* Products Grid Layout (Example) */
+.grid-layout-products-compact {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 0.75rem;
+  min-width: 720px;
+}
+
+.products-grid-compact {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: 0.5rem;
+}
+
+/* 2.2. Module Styles (The link/card items) */
+
+.nav__module-inner {
+  display: flex;
+  align-items: center;
+  padding: 0.75rem;
+  border-radius: 8px;
+  text-decoration: none;
+  color: var(--text-primary);
+  transition: var(--transition);
+  position: relative;
+  background: var(--dark-surface);
+  border: 1px solid var(--border-color);
+}
+
+.nav__module-inner.is-hero-compact {
+  flex-direction: column;
+  justify-content: center;
+  text-align: center;
+  padding: 1.25rem;
+  height: 100%;
+}
+
+.nav__module-inner.is-item-compact {
+  gap: 0.75rem;
+  padding: 0.75rem;
+}
+
+.nav__module-inner:hover:not(.is-coming-soon) {
+  transform: translateY(-2px);
+  border-color: var(--primary-color);
+  box-shadow: 0 8px 20px rgba(var(--primary-color-rgb, 0, 102, 255), 0.15);
+}
+
+/* 2.3. Typography and Icons */
+
+.heading-style-h6 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.p-tiny {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.nav__icon-wrap-compact {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.nav__module-text {
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+/* 2.4. Dotted Background (Hero item style) */
+
+.dotted-bg-wrap {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  border-radius: 8px;
+  z-index: 0;
+}
+
+.dotted-bg {
+  width: 100%;
+  height: 100%;
+  background-image: radial-gradient(circle, rgba(var(--text-primary-rgb), 0.08) 1px, transparent 1px);
+  background-size: 16px 16px;
+  opacity: 0.3;
+}

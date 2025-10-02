@@ -1,0 +1,125 @@
+/* ================================================
+   1. NAVIGATION BAR STRUCTURE
+   ================================================ */
+
+.navbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: rgba(10, 10, 10, 0.95); /* Inherits from AppLayout.css themes */
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border-color);
+  z-index: 1000;
+  height: var(--nav-height);
+  display: flex;
+  align-items: center;
+}
+
+[data-theme="light"] .navbar {
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.nav-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 100%;
+}
+
+.nav-logo .logo-img {
+  height: 32px;
+  width: auto;
+}
+
+/* ================================================
+   2. NAVIGATION LINKS (.nav-menu)
+   ================================================ */
+
+.nav-menu {
+  display: flex;
+  gap: 2rem;
+  align-items: center;
+  position: relative;
+  height: 100%; /* Important for centering links */
+}
+
+.nav-link {
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 0.95rem;
+  font-weight: 500;
+  transition: var(--transition);
+  padding: 0.5rem 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: 100%; /* Align with nav-menu height */
+}
+
+.nav-link:hover,
+.nav-link.active {
+  color: var(--text-primary);
+}
+
+.icon-plus {
+  width: 10px;
+  height: 10px;
+  transition: transform 0.3s ease;
+}
+
+.nav-link.active .icon-plus {
+  transform: rotate(45deg);
+}
+
+/* ================================================
+   3. ACTION BUTTONS (.nav-actions)
+   ================================================ */
+
+.nav-actions {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+
+.icon-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition);
+  position: relative;
+}
+
+.icon-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--primary-color);
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.icon-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* Theme Toggle Icons (Requires ThemeToggle to manage classes) */
+#themeToggle .sun-icon,
+#themeToggle .moon-icon {
+  position: absolute;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+/* ... (Include responsive media queries for header here if needed) ... */
