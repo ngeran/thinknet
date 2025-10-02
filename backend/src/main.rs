@@ -56,7 +56,7 @@ async fn main() {
     let app = create_router(state);
 
     // 4. Configure Server Listener
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3100));
+    let addr = SocketAddr::from(([0, 0, 0, 0], 3100));
     
     let listener = match TcpListener::bind(addr).await {
         Ok(l) => l,

@@ -1,10 +1,16 @@
 # Dockerfile.fastapi
 FROM python:3.11-slim
+# Set WORKDIR to the root where the service will run from
 WORKDIR /app
-# Updated path: Copy requirements.txt from the new 'fastapi' folder
-COPY fastapi/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-# Updated path: Copy source files from the new 'fastapi' folder
-COPY fastapi/. .
+
+# 1. Copy requirements.txt from the new folder name
+COPY app_gateway/requirements.txt /tmp/requirements.txt 
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+# 2. Copy the entire 'app_gateway' source folder into '/app/app_gateway'
+COPY app_gateway/ /app/app_gateway/
+
 EXPOSE 8000
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# 3. The CMD now uses the correct package path: 'app_gateway.main:app'
+CMD ["uvicorn", "app_gateway.main:app", "--host", "0.0.0.0", "--port", "8000"]

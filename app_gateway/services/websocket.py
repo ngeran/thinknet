@@ -1,29 +1,31 @@
-# fastapi_automation/ws_client.py
+# File Path: fastapi_automation/services/websocket.py
+"""
+WebSocket Service Client
+Handles connections and message passing to the Rust WebSocket Hub.
+"""
 
 import websockets
 import asyncio
-import os
 import json
 from loguru import logger
-
-# --- Configuration ---
-# RUST_WS_URL will be set by Docker Compose to point to the Rust service name
-RUST_WS_URL = os.getenv("RUST_WS_URL", "ws://localhost:3100/ws")
+from ..core.config import settings
 
 # --- Core Sending Function ---
+# Description: Connects, sends a message, and disconnects gracefully.
 async def send_to_rust_hub(message: dict):
     """Connects to the Rust Hub, sends a single JSON message, and disconnects."""
     try:
-        # Connect to the Rust server as a client
-        async with websockets.connect(RUST_WS_URL) as websocket:
+        # Get the URL from centralized configuration
+        async with websockets.connect(settings.RUST_WS_URL) as websocket:
             await websocket.send(json.dumps(message))
             logger.info(f"Sent feedback to Rust Hub: {message.get('event', 'UNKNOWN')}")
     except ConnectionRefusedError:
-        logger.error(f"Could not connect to Rust Hub at {RUST_WS_URL}. Check Docker Compose network and Rust port.")
+        logger.error(f"Could not connect to Rust Hub at {settings.RUST_WS_URL}. Check Docker Compose network and Rust port.")
     except Exception as e:
         logger.error(f"Error sending message to Rust Hub: {e}")
 
-# --- Automation Simulation ---
+# --- Automation Simulation Service ---
+# Description: Simulates the steps of a background job (like a PyEZ script).
 async def simulate_juniper_execution(device_name: str):
     """Simulates a real-time execution feed transmitted via WebSocket."""
     logger.info(f"Starting simulation for device: {device_name}")

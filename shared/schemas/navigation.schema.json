@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "NavigationSchema",
+  "description": "Schema for validating navigation.yaml",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["id", "title", "children"],
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "Unique identifier for the menu section"
+      },
+      "title": {
+        "type": "string",
+        "description": "Top-level menu label"
+      },
+      "subtitle": {
+        "type": "string",
+        "description": "Optional subtitle for grouping"
+      },
+      "icon": {
+        "type": "string",
+        "description": "Optional emoji or icon string"
+      },
+      "children": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["title", "url"],
+          "properties": {
+            "title": { "type": "string" },
+            "url": { "type": "string", "description": "URL for the navigation item" },
+            "icon": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

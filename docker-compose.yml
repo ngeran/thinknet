@@ -1,4 +1,3 @@
-# docker-compose.yml
 services:
   # ----------------------------------------------------
   # 1. RUST WS HUB (Port 3100)
@@ -12,7 +11,10 @@ services:
       - "3100:3100"
     restart: always
     volumes:
-      - ./shared:/app/shared
+      # This maps your local shared/data folder to the container's expected path
+      - ./shared/data:/app/shared/data 
+      # This maps your local shared/schemas folder to the container's expected path
+      - ./shared/schemas:/app/shared/schemas
     environment:
       RUST_LOG: info
 
@@ -30,7 +32,14 @@ services:
       - rust_backend
     restart: always
     environment:
+      # FastAPI needs to use the Docker service name to talk to the Rust backend
       RUST_WS_URL: ws://rust_backend:3100/ws
+    
+    # OPTIONAL: Add volumes here if you want live Python development in FastAPI
+    # volumes:
+    #   - ./app_gateway:/app_gateway
+    #   - ./core:/core
+    #   - ./main.py:/main.py 
 
   # ----------------------------------------------------
   # 3. FRONTEND (React/Vite)
@@ -43,16 +52,24 @@ services:
     ports:
       - "5173:5173"
     depends_on:
-      - rust_backend
       - fastapi_automation
+      
+    # --- CRITICAL FIX: VOLUMES FOR LIVE RELOAD ---
+    # This mounts your local frontend code into the container, allowing instant updates.
+    volumes:
+      # Maps your local source code directory to the container's working directory (/app)
+      - ./frontend:/app 
+      # Explicitly ignore the node_modules folder from the host to prevent slow I/O
+      - /app/node_modules 
+      
     # Expose the dev server to the Docker host for browser access
     command: npm run dev -- --host 0.0.0.0
+    
     environment:
-      # Keep the WS URL for the automation streaming connection
-      VITE_RUST_WS_URL: ws://127.0.0.1:3100/ws 
+      # The browser (running on the host) needs to talk to the mapped ports (localhost).
+      #
+      # CORS Fix: Frontend now fetches navigation data from the FastAPI Gateway (8000)
+      VITE_API_GATEWAY_URL: http://localhost:8000 
       
-      # Use the Rust HTTP URL for MegaMenu fetching
-      VITE_RUST_HTTP_URL: http://127.0.0.1:3100 # New explicit variable for clarity
-      
-      # Keep the FastAPI URL for the trigger POST
-      VITE_API_GATEWAY_URL: http://127.0.0.1:8000
+      # WebSocket connection to the Rust backend's mapped port
+      VITE_RUST_WS_URL: ws://localhost:3100/ws

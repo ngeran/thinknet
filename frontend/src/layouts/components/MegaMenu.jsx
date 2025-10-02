@@ -1,44 +1,53 @@
-// frontend/src/layouts/components/MegaMenu.jsx
+// File: MegaMenu.jsx (UPDATED FOR FASTAPI GATEWAY FETCH)
+
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { Loader2 } from 'lucide-react';
+// Assuming 'Button' is a component you defined
 import { Button } from '@/components/ui/button';
-import { Loader2 } from 'lucide-react'; // Example icon for loading
 
-// The environment variable pointing to Rust HTTP (e.g., http://127.0.0.1:3100)
-const RUST_BASE_URL = import.meta.env.VITE_RUST_HTTP_URL || 'http://127.0.0.1:3100'; 
+// --- Configuration ---
+// Access the environment variable defined in the .env file.
+// This URL MUST point to the FastAPI Gateway (http://localhost:8000) 
+// to avoid CORS issues and utilize the proxy logic.
+const API_GATEWAY_URL = import.meta.env.VITE_API_BASE_URL;
 
-// ================================================
-// MEGA MENU COMPONENT
-// (Styling simplified to use Tailwind/shadcn classes)
-// ================================================
-
-const MegaMenu = ({ activeMenu, onMenuEnter, onMenuLeave, onError }) => {
+const MegaMenu = ({ onError }) => {
+  const [activeMenu, setActiveMenu] = useState(null);
   const [menuData, setMenuData] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // Fetch navigation data from Rust backend API
+  const onMenuEnter = (menuId) => setActiveMenu(menuId);
+  const onMenuLeave = () => setActiveMenu(null);
+
   useEffect(() => {
     const fetchNavigationData = async () => {
       try {
         setLoading(true);
         setError(null);
-        
-        // Fetch from the Rust API endpoint
-        const response = await fetch(`${RUST_BASE_URL}/api/navigation`);
-        
+
+        // --- FIX: Fetching from FastAPI Gateway (http://localhost:8000) ---
+        // The Gateway (which proxies to Rust) handles CORS correctly.
+        const response = await fetch(`${API_GATEWAY_URL}/api/navigation`);
+
         if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
+          // If the FastAPI gateway or Rust returns an error status (4xx/5xx)
+          const errorText = await response.text();
+          throw new Error(`HTTP error! Status: ${response.status} - ${errorText}`);
         }
-        
+
         const result = await response.json();
-        
-        // Rust returns data wrapped in { valid: true, data: [...] }
+
+        // The FastAPI proxy endpoint already returns the raw navigation array 
+        // that it gets from Rust, so we likely don't need the `result.data || result` unwrapping,
+        // but we keep it safe for now.
         const navigationData = result.data || result;
-        
+
         setMenuData(navigationData);
       } catch (err) {
-        console.error('Failed to fetch navigation data from Rust:', err);
+        // Updated console log to reflect the Gateway as the target
+        console.error('Failed to fetch navigation data from API Gateway:', err);
         setError(err.message);
         onError?.(err, 'navigation-fetch');
         setMenuData([]);
@@ -63,7 +72,7 @@ const MegaMenu = ({ activeMenu, onMenuEnter, onMenuLeave, onError }) => {
         </Button>
       );
     }
-    
+
     if (error) {
       return (
         <Button variant="ghost" className="text-red-500 hover:bg-red-50" title={error}>
@@ -96,12 +105,12 @@ const MegaMenu = ({ activeMenu, onMenuEnter, onMenuLeave, onError }) => {
     return (
       <div
         className="absolute top-16 left-0 right-0 border-b border-x bg-background shadow-xl p-8"
-        onMouseEnter={() => onMenuEnter(activeMenu)}
+        onMouseEnter={() => onMenuEnter(activeData.id)} // Used activeData.id here for robustness
         onMouseLeave={onMenuLeave}
       >
         <div className="max-w-7xl mx-auto">
           <h3 className="text-lg font-semibold text-primary mb-4">{activeData.subtitle || activeData.title}</h3>
-          
+
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
             {activeData.children?.map((child, idx) => (
               <Link
@@ -140,5 +149,5 @@ const MegaMenu = ({ activeMenu, onMenuEnter, onMenuLeave, onError }) => {
 };
 
 MegaMenu.displayName = 'MegaMenu';
-// ... (defaultProps remain the same)
+// ... (You can add defaultProps if needed)
 export default MegaMenu;
