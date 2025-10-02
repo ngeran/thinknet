@@ -1,11 +1,17 @@
 // frontend/src/layouts/components/Header.jsx (Tailwind/shadcn)
+
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import { User } from 'lucide-react';
+
+// External Components (Now verified correct paths)
 import MegaMenu from './MegaMenu.jsx';
 import { ThemeToggle } from '@/components/theme-toggle.jsx';
 import { useLayoutContext } from '../context/LayoutContext.jsx';
-import { User } from 'lucide-react';
+
+// ✅ NEW IMPORT: The WebSocketStatus component
+import WebSocketStatus from './WebSocketStatus';
 
 // =============================================================
 // SVG Logo Component Definition (Renamed to ThinkNet)
@@ -20,7 +26,7 @@ const ThinkNetLogoSVG = () => (
         viewBox="0 0 19 20"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
-        className="icon"
+        className="icon text-primary hover:text-primary/80 transition-colors" // Added color classes for better visibility
       >
         <path d="M6.20742 9.02441H0.12651C0.0566404 9.02441 0 9.08105 0 9.15092V9.85095C0 9.92081 0.0566404 9.97745 0.12651 9.97745H6.20742C6.27728 9.97745 6.33392 9.92081 6.33392 9.85095V9.15092C6.33392 9.08105 6.27728 9.02441 6.20742 9.02441Z" fill="currentColor"></path>
         <path d="M18.8754 9.02441H12.7945C12.7246 9.02441 12.668 9.08105 12.668 9.15092V9.85095C12.668 9.92081 12.7246 9.97745 12.7945 9.97745H18.8754C18.9453 9.97745 19.0019 9.92081 19.0019 9.85095V9.15092C19.0019 9.08105 18.9453 9.02441 18.8754 9.02441Z" fill="currentColor"></path>
@@ -46,12 +52,12 @@ const Header = () => {
 
         {/* ==================== 1. LEFT: Logo ==================== */}
         <div className="flex-shrink-0">
-          <ThinkNetLogoSVG /> {/* Updated Component Name */}
+          <ThinkNetLogoSVG />
         </div>
 
         {/* ==================== 2. CENTER: MegaMenu ==================== */}
         <div
-          className="flex flex-1 justify-center h-full"
+          className="flex justify-center h-full"
           onMouseLeave={onMenuLeave}
         >
           <MegaMenu
@@ -61,9 +67,16 @@ const Header = () => {
           />
         </div>
 
-        {/* ==================== 3. RIGHT: Theme Toggle and User Icon ==================== */}
+        {/* ==================== 3. RIGHT: Utility Icons ==================== */}
         <div className="flex items-center space-x-2 sm:space-x-4 flex-shrink-0">
+
+          {/* ✅ 1. WebSocket Status Button */}
+          <WebSocketStatus />
+
+          {/* 2. Theme Toggle */}
           <ThemeToggle />
+
+          {/* 3. User Profile Button */}
           <Button variant="ghost" size="icon">
             <User className="w-5 h-5" />
           </Button>
