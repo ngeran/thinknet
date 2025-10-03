@@ -1,7 +1,7 @@
 // frontend/src/layouts/components/MegaMenuCard.jsx
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight } from 'lucide-react';
+import * as LucideIcons from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 
 /**
@@ -9,19 +9,29 @@ import { Card, CardContent } from '@/components/ui/card';
  * 
  * Renders an individual card within the MegaMenu dropdown.
  * Handles all card-specific styling, interactions, and presentation.
+ * Supports both emoji icons and Lucide React icons.
  * 
  * @component
  * @param {Object} props - Component props
  * @param {Object} props.item - The menu item data
  * @param {string} props.item.title - Card title
  * @param {string} props.item.description - Card description (optional)
- * @param {string} props.item.icon - Card icon - emoji or string (optional)
+ * @param {string} props.item.icon - Card icon - emoji string or Lucide icon name (e.g., "Settings", "Upload")
  * @param {string} props.item.url - Navigation URL
  * @param {string} props.item.badge - Optional badge text (e.g., "New", "Popular")
  * @param {boolean} props.isHero - Whether this is a hero card (larger, featured styling)
  * @param {number} props.index - Card index for key generation
  * 
  * @example
+ * // Using Lucide icon
+ * <MegaMenuCard 
+ *   item={{ title: "Analytics", icon: "BarChart3", url: "/analytics" }} 
+ *   isHero={false}
+ *   index={0}
+ * />
+ * 
+ * @example
+ * // Using emoji (fallback)
  * <MegaMenuCard 
  *   item={{ title: "Analytics", icon: "📊", url: "/analytics" }} 
  *   isHero={false}
@@ -29,6 +39,31 @@ import { Card, CardContent } from '@/components/ui/card';
  * />
  */
 const MegaMenuCard = ({ item, isHero = false, index = 0 }) => {
+  /**
+   * Renders the appropriate icon - either Lucide React icon or emoji fallback
+   * @returns {JSX.Element} Icon component
+   */
+  const renderIcon = () => {
+    // Check if icon is a Lucide icon name (PascalCase string)
+    if (item.icon && typeof item.icon === 'string') {
+      // Try to get the Lucide icon component
+      const LucideIcon = LucideIcons[item.icon];
+
+      if (LucideIcon) {
+        // Render Lucide icon with appropriate size
+        return (
+          <LucideIcon
+            className={isHero ? 'w-8 h-8' : 'w-6 h-6'}
+            strokeWidth={2}
+          />
+        );
+      }
+    }
+
+    // Fallback to emoji or default link icon
+    return <span className={isHero ? 'text-3xl' : 'text-2xl'}>{item.icon || '🔗'}</span>;
+  };
+
   return (
     <Link
       to={item.url}
@@ -58,16 +93,14 @@ const MegaMenuCard = ({ item, isHero = false, index = 0 }) => {
             <div
               className={`flex items-center justify-center ${
                 // Hero cards get larger icons
-                isHero ? 'w-16 h-16 text-3xl' : 'w-12 h-12 text-2xl'
+                isHero ? 'w-16 h-16' : 'w-12 h-12'
                 } rounded-lg bg-primary/10 text-primary group-hover:bg-primary group-hover:text-primary-foreground transition-colors duration-300`}
             >
-              <span>
-                {item.icon || '🔗'}
-              </span>
+              {renderIcon()}
             </div>
 
             {/* Arrow Icon - Appears on hover */}
-            <ArrowRight
+            <LucideIcons.ArrowRight
               className={`${isHero ? 'w-5 h-5' : 'w-4 h-4'
                 } text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity duration-300`}
             />

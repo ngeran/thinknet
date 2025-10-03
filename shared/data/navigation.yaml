@@ -16,42 +16,42 @@
 
 - id: management
   title: Management
-  icon: "🛠️"
+  icon: "Settings"
   children:
     - title: Image Uploads
       url: /management/image-uploads
-      icon: "🖼️"
+      icon: "Image"
     - title: Code Upgrades
       url: /management/code-upgrades
-      icon: "⬆️"
+      icon: "ArrowUpCircle"
 
 - id: automation
   title: Automation
-  icon: "⚡"
+  icon: "Zap"
   children:
     - title: Configuration Templates
       url: /automation/templates
-      icon: "📑"
+      icon: "FileText"
     - title: Validation (JSNAPy)
       url: /automation/validation
-      icon: "✅"
+      icon: "CheckCircle"
 
 - id: reporting
   title: Reporting
-  icon: "📊"
+  icon: "BarChart3"
   children:
     - title: Device Reports
       url: /reporting/device-reports
-      icon: "📋"
+      icon: "FileBarChart"
 
 - id: operations
   title: Operations
   subtitle: Maintenance Workflows
-  icon: "🔄"
+  icon: "RefreshCw"
   children:
     - title: Backup Configurations
       url: /operations/backups
-      icon: "💾"
+      icon: "Save"
     - title: Restore Configurations
       url: /operations/restore
-      icon: "♻️"
+      icon: "RotateCcw"
