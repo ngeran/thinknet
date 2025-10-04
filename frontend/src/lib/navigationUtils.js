@@ -10,7 +10,7 @@ import React from 'react';
 export const PageMap = {
   // Top-level pages
   'dashboard': React.lazy(() => import('../pages/Dashboard.jsx')),
-  'automation': React.lazy(() => import('../pages/Automation.jsx')),
+  //  'automation': React.lazy(() => import('../pages/Automation.jsx')),
 
   // Management Pages
   'management/image-uploads': React.lazy(() => import('../pages/Management/ImageUploads.jsx')),

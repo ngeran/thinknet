@@ -5,16 +5,16 @@ edition = "2021"
 
 [dependencies]
 # Web framework
-axum = { version = "0.7", features = ["ws"] } # Axum with WebSocket feature
+axum = { version = "0.7", features = ["ws"] }
 
 # Async runtime
-tokio = { version = "1", features = ["full"] } # Tokio with "full" features for convenience
+tokio = { version = "1", features = ["full"] }
 # Required to access the TcpListener for axum::serve
 tokio-util = { version = "0.7", features = ["io"] }
 
 # Shared state/concurrency
 tokio-stream = "0.1" 
-futures = "0.3"
+# 🛑 REMOVED: futures = "0.3" 
 
 # Unique identifier for connections
 uuid = { version = "1.8", features = ["v4", "fast-rng"] } 
@@ -26,7 +26,6 @@ serde_yaml = "0.9"
 
 # Logging and error handling
 tracing = "0.1"
-# **FIX 1: Added "env-filter" feature**
 tracing-subscriber = { version = "0.3", features = ["env-filter"] } 
 
 # Date/time handling
@@ -38,3 +37,8 @@ thiserror = "1.0"
 # JSON Schema
 jsonschema = "0.17"
 
+# 🚀 REDIS INTEGRATION
+redis = { version = "0.23", features = ["tokio-comp"] }
+
+# ✅ KEEP THIS ONE: Provides the necessary 'async-await' features for Redis/Tokio integration.
+futures = { version = "0.3", features = ["async-await"] }

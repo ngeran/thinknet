@@ -1,5 +1,15 @@
 services:
   # ----------------------------------------------------
+  # 0. 🚀 NEW SERVICE: REDIS MESSAGE BROKER
+  # ----------------------------------------------------
+  redis_broker:
+    image: redis:7.2-alpine
+    container_name: redis_broker
+    # Expose port 6379 only internally
+    command: redis-server --appendonly no
+    restart: always
+
+  # ----------------------------------------------------
   # 1. RUST WS HUB (Port 3100)
   # ----------------------------------------------------
   rust_backend:
@@ -15,8 +25,13 @@ services:
       - ./shared/data:/app/shared/data 
       # This maps your local shared/schemas folder to the container's expected path
       - ./shared/schemas:/app/shared/schemas
+    depends_on:
+      - redis_broker # 👈 DEPENDS ON REDIS
     environment:
       RUST_LOG: info
+      # 👈 NEW: REDIS CONFIG FOR RUST
+      REDIS_HOST: redis_broker
+      REDIS_PORT: 6379
 
   # ----------------------------------------------------
   # 2. FASTAPI AUTOMATION GATEWAY (Port 8000)
@@ -30,10 +45,14 @@ services:
       - "8000:8000"
     depends_on:
       - rust_backend
+      - redis_broker
     restart: always
     environment:
       # FastAPI needs to use the Docker service name to talk to the Rust backend
       RUST_WS_URL: ws://rust_backend:3100/ws
+      # 👈 NEW: REDIS CONFIG FOR FASTAPI (for testing and later for Python scripts)
+      REDIS_HOST: redis_broker
+      REDIS_PORT: 6379
     
     # OPTIONAL: Add volumes here if you want live Python development in FastAPI
     # volumes:
