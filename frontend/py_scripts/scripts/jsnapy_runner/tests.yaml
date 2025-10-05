@@ -1,0 +1,52 @@
+# This file defines all runnable tests for our reporter.
+# Adding a new entry here makes it available to the script.
+
+test_bgp_summary:
+  title: "BGP Neighbor Summary"
+  category: "Routing"
+  rpc: "get-bgp-summary-information"
+  xpath: ".//bgp-peer"
+  fields:
+    Address: "peer-address"
+    "Remote AS": "peer-as"
+    Flaps: "flap-count"
+    State: "peer-state"
+    "Up/Down Time": "elapsed-time"
+
+test_interfaces:
+  title: "Interface Status Summary"
+  category: "Interfaces"
+  rpc: "get-interface-information"
+  # We can pass arguments to the RPC call
+  rpc_args:
+    terse: true
+  xpath: ".//physical-interface"
+  fields:
+    "Interface Name": "name"
+    "Admin Status": "admin-status"
+    "Link Status": "oper-status"
+
+test_ospf:
+  title: "OSPF Summary"
+  category: "Routing"
+  rpc: "get-ospf-neighbor-information"
+  # We can pass arguments to the RPC call
+  rpc_args:
+    terse: true
+  xpath: "/ospf-interface-information/ospf-interface"
+  fields:
+    "Interface Name": "name"
+    "Admin Status": "admin-status"
+    "Link Status": "oper-status"
+
+
+
+# You can easily add more tests here in the future
+# test_chassis_alarms:
+#   title: "Active Chassis Alarms"
+#   rpc: "get-alarm-information"
+#   xpath: ".//alarm-detail"
+#   fields:
+#     Class: "alarm-class"
+#     Description: "alarm-description"
+#     Time: "alarm-time"

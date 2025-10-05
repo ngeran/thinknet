@@ -22,7 +22,7 @@ services:
     restart: always
     volumes:
       # This maps your local shared/data folder to the container's expected path
-      - ./shared/data:/app/shared/data 
+      - ./shared/data:/app/shared/data
       # This maps your local shared/schemas folder to the container's expected path
       - ./shared/schemas:/app/shared/schemas
     depends_on:
@@ -53,12 +53,12 @@ services:
       # 👈 NEW: REDIS CONFIG FOR FASTAPI (for testing and later for Python scripts)
       REDIS_HOST: redis_broker
       REDIS_PORT: 6379
-    
-    # OPTIONAL: Add volumes here if you want live Python development in FastAPI
-    # volumes:
-    #   - ./app_gateway:/app_gateway
-    #   - ./core:/core
-    #   - ./main.py:/main.py 
+
+    volumes:
+      # CRITICAL FIX: Mount the application code to see the updated routers
+      - ./app_gateway:/app_gateway
+      # CRITICAL FIX: Mount the shared data directory (needed for the inventory router to find files)
+      - ./shared:/app/shared
 
   # ----------------------------------------------------
   # 3. FRONTEND (React/Vite)
@@ -72,23 +72,23 @@ services:
       - "5173:5173"
     depends_on:
       - fastapi_automation
-      
+
     # --- CRITICAL FIX: VOLUMES FOR LIVE RELOAD ---
     # This mounts your local frontend code into the container, allowing instant updates.
     volumes:
       # Maps your local source code directory to the container's working directory (/app)
-      - ./frontend:/app 
+      - ./frontend:/app
       # Explicitly ignore the node_modules folder from the host to prevent slow I/O
-      - /app/node_modules 
-      
+      - /app/node_modules
+
     # Expose the dev server to the Docker host for browser access
     command: npm run dev -- --host 0.0.0.0
-    
+
     environment:
       # The browser (running on the host) needs to talk to the mapped ports (localhost).
       #
       # CORS Fix: Frontend now fetches navigation data from the FastAPI Gateway (8000)
-      VITE_API_GATEWAY_URL: http://localhost:8000 
-      
+      VITE_API_GATEWAY_URL: http://localhost:8000
+
       # WebSocket connection to the Rust backend's mapped port
       VITE_RUST_WS_URL: ws://localhost:3100/ws

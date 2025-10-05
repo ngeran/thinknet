@@ -7,7 +7,7 @@ Initializes the application, applies middleware, and includes all necessary rout
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
-from .api.routers import automation, proxy, test_redis # Import the new router file
+from .api.routers import automation, proxy, test_redis, inventory # Import the new router file
 from .core.config import settings
 
 # --- FastAPI Setup ---
@@ -29,6 +29,8 @@ app.add_middleware(
 app.include_router(automation.router, prefix="/api")
 app.include_router(proxy.router, prefix="/api")
 app.include_router(test_redis.router, prefix="/api")
+# NEW LINE: Include the inventory router
+app.include_router(inventory.router, prefix="/api") # <-- ADD THIS LINE
 
 # --- Root Health Check ---
 # Description: Simple health check for the application root.

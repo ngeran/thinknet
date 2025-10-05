@@ -1,0 +1,61 @@
+# /python_pipeline/tools/code_upgrade/data/SoftwareVersions.yml
+# This file serves as the master inventory for all software versions available for upgrade.
+# The structure is designed to be easily parsed by the backend and used by the
+# SelectImageRelease.jsx component in the frontend.
+
+# The root element is 'vendors', which is an array of vendor objects.
+vendors:
+  # Each vendor has a unique name and a list of supported platforms.
+  - name: "Juniper"
+    platforms:
+      # Each platform has a name and a list of available software releases.
+      - name: "MX240"
+        releases:
+          # Each release has a version string (used as 'target_version') and a list of image files.
+          - version: "23.4R1-S3"
+            images:
+              # Each image has a 'file' which is the exact filename on the device.
+              - file: "junos-mx-x86-64-23.4R1-S3.9.tgz"
+          - version: "23.2R2"
+            images:
+              - file: "junos-mx-x86-64-23.2R2.8.tgz"
+      - name: "SRX320"
+        releases:
+          - version: "24.2R2-S1.7"
+            images:
+              - file: "junos-srxsme-24.2R2-S1.7.tgz"
+          - version: "24.4R1-S2"
+            images:
+              - file: "junos-install-srxsme-mips-64-24.4R1-S2.9.tgz"
+      - name: "ACX5448"
+        releases:
+          - version: "21.4R3-S5"
+            images:
+              - file: "junos-evo-install-acx-7.0-x86-64-21.4R3-S5.4.tgz"
+
+  - name: "Cisco"
+    platforms:
+      - name: "Catalyst 9300"
+        releases:
+          - version: "17.9.5"
+            images:
+              - file: "cat9k_iosxe.17.09.05.SPA.bin"
+          - version: "17.6.6"
+            images:
+              - file: "cat9k_iosxe.17.06.06.SPA.bin"
+      - name: "Nexus 9000"
+        releases:
+          - version: "10.4(2)"
+            images:
+              - file: "nxos64-uk9.10.4.2.F.bin"
+
+  - name: "Palo Alto"
+    platforms:
+      - name: "PA-440"
+        releases:
+          - version: "11.1.3"
+            images:
+              - file: "PanOS_pa-400-11.1.3"
+          - version: "10.2.8"
+            images:
+              - file: "PanOS_pa-400-10.2.8-h3"

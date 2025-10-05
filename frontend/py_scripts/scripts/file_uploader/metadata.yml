@@ -1,0 +1,70 @@
+# =================================================================================================
+# METADATA FILE: Univarsal File Uploader
+#
+# PURPOSE:
+#   - Controls UI rendering, option visibility, and validation for backup and restore operations.
+#   - Uses `show_if` to control visibility of parameters per action (backup or restore).
+#   - Uses `active: true/false` to allow easy toggling of parameter visibility without deleting or commenting.
+#   - Only parameters with dynamicOptionsEndpoint/apiEndpoint get fetch buttons.
+#
+# -------------------------------------------------------------------------------------------------
+# SECTION 1: BASIC INFORMATION
+# -------------------------------------------------------------------------------------------------
+displayName: "File Uploader"
+description: "Select and Upload any file."
+category: "Device Management"
+runnerComponent: "FileUploaderRunner"
+
+# -------------------------------------------------------------------------------------------------
+# SECTION 2: CAPABILITIES
+# -------------------------------------------------------------------------------------------------
+capabilities:
+  deviceTargeting: true
+  deviceAuth: true
+  resultsDisplay: true
+  enableDebug: true
+  hideSidebar: false
+# -------------------------------------------------------------------------------------------------
+# SECTION 3: CAPABILITY CONFIGURATION
+# -------------------------------------------------------------------------------------------------
+deviceTargeting:
+  title: "Target Device Selection"
+  description: "Choose target devices for backup or restore operations"
+  requiredFields: ["hostname", "inventory_file"]  # At least one must be provided
+
+deviceAuth:
+  title: "Device Authentication"
+  description: "Provide credentials to access the target device(s)"
+  requiredFields: ["username", "password"]
+
+resultsDisplay:
+  title: "Final Execution Summary"
+  description: "A detailed summary of all successful and failed operations."
+
+# -------------------------------------------------------------------------------------------------
+# SECTION 4: PARAMETERS (WITH show_if AND active FOR VISIBILITY CONTROL)
+# -------------------------------------------------------------------------------------------------
+parameters:
+  - name: hostname
+    label: "Target Hostname"
+    type: string
+    layout: form
+    active: true
+
+  - name: inventory_file
+    label: "Inventory File"
+    type: file
+    layout: form
+    active: true
+
+  - name: username
+    label: "Username"
+    type: string
+    layout: form
+    active: true
+
+  - name: password
+    label: "Password"
+    type: password
+    layout: form
+    active: true

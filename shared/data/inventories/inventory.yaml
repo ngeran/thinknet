@@ -1,0 +1,67 @@
+# File Path: shared/data/inventory.yaml
+# Version: 1.2.0
+# Description: Network inventory file
+# Key Features:
+# - Grouped by location
+# - Supports routers, switches, and firewalls
+# - Each device has host_name, vendor, ip_address, and platform
+
+locations:
+  BASEMENT:
+    routers:
+      - host_name: "MLRDCIENGDJRX01"
+        vendor: "JUNIPER"
+        ip_address: "172.27.200.200"
+        platform: "SRX320"
+      - host_name: "MLRDCIENGDJRX02"
+        vendor: "JUNIPER"
+        ip_address: "172.27.200.201"
+        platform: "SRX210H"
+    switches:
+      - host_name: "MLRDCIENGDSW01"
+        vendor: "CISCO"
+        ip_address: "172.27.200.210"
+        platform: "C9300"
+    firewalls:
+      - host_name: "MLRDCIENGDFW01"
+        vendor: "PALO ALTO"
+        ip_address: "172.27.200.220"
+        platform: "PA-3220"
+
+  DATACENTER:
+    routers:
+      - host_name: "MLRDCIDCRO01"
+        vendor: "CISCO"
+        ip_address: "10.10.10.1"
+        platform: "ASR1001-X"
+    switches:
+      - host_name: "MLRDCIDCSW01"
+        vendor: "ARISTA"
+        ip_address: "10.10.10.2"
+        platform: "7050SX"
+      - host_name: "MLRDCIDCSW02"
+        vendor: "ARISTA"
+        ip_address: "10.10.10.3"
+        platform: "7050SX"
+    firewalls:
+      - host_name: "MLRDCIDCFW01"
+        vendor: "FORTINET"
+        ip_address: "10.10.10.4"
+        platform: "FortiGate-600D"
+
+  BRANCH01:
+    routers:
+      - host_name: "MLRDCIBRRO01"
+        vendor: "JUNIPER"
+        ip_address: "192.168.1.1"
+        platform: "MX104"
+    switches:
+      - host_name: "MLRDCIBRSW01"
+        vendor: "HP"
+        ip_address: "192.168.1.2"
+        platform: "Aruba2930F"
+    firewalls:
+      - host_name: "MLRDCIBRFW01"
+        vendor: "CHECK POINT"
+        ip_address: "192.168.1.3"
+        platform: "3200"

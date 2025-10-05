@@ -1,0 +1,80 @@
+# ===============================================
+# METADATA: Code Upgrade Tool (v2 - with Custom UI)
+# ===============================================
+
+# --- Basic Information ---
+displayName: "Code Upgrade"
+description: "Select a device image from the inventory to perform a software upgrade."
+category: "Device Management"
+runnerComponent: "CodeUpgradeRunner"
+
+# --- Capabilities ---
+# Defines the special behaviors and UI components for this script.
+capabilities:
+  # This capability ensures the standard username/password/hostname fields
+  # are available to be rendered in the main content area.
+  deviceAuth: true
+  # ✨ THIS IS THE KEY: It tells ScriptOptionsRenderer to load our custom component
+  # instead of the default form generator. The string must match the `case`
+  # in ScriptOptionsRenderer.jsx.
+  sidebarComponent: 'MultiLevelSelect'
+  # Enables device targeting functionality (manual hostname entry or inventory file selection)
+  deviceTargeting: true
+  # We can keep this if the script doesn't produce a saveable report.
+  enableReportSaving: false
+# -------------------------------------------------------------------------------------------------
+# SECTION 3: CAPABILITY CONFIGURATION
+# -------------------------------------------------------------------------------------------------
+deviceTargeting:
+  title: "Target Device Selection"
+  description: "Choose target devices for backup or restore operations"
+  requiredFields: ["hostname", "inventory_file"]  # At least one must be provided
+
+deviceAuth:
+  title: "Device Authentication"
+  description: "Provide credentials to access the target device(s)"
+  requiredFields: ["username", "password"]
+
+resultsDisplay:
+  title: "Final Execution Summary"
+  description: "A detailed summary of all successful and failed operations."
+
+
+# -------------------------------------------------------------------------------------------------
+# SECTION 4: PARAMETERS (WITH show_if AND active FOR VISIBILITY CONTROL)
+# -------------------------------------------------------------------------------------------------
+parameters:
+  # 1. PARAMETER FOR THE CUSTOM SIDEBAR COMPONENT
+  # This parameter receives its value *from* the MultiLevelSelect component.
+  # It is the single source of truth for the selected image.
+  - name: "image_path"
+    label: "Full Image Path"
+    type: "text"
+    required: true
+    # ❗️ CRITICAL: This parameter *must* have `layout: "sidebar"` so that
+    # PythonScriptRunner knows to render the sidebar container. Without this,
+    # the sidebar would not appear at all.
+    layout: "sidebar"
+    description: "The full path to the selected firmware image, populated by the selector."
+
+  # 2. STANDARD PARAMETERS FOR THE MAIN CONTENT AREA
+  # These are now defined for the main layout, where they will be handled
+  # by the <DeviceAuthFields /> component because `deviceAuth` is true.
+  - name: "hostname"
+    label: "Target Hostname"
+    type: "text"
+    required: true
+    layout: "main"
+    description: "The IP address or hostname of the device to upgrade."
+
+  - name: "username"
+    label: "Username"
+    type: "text"
+    required: true
+    layout: "main"
+
+  - name: "password"
+    label: "Password"
+    type: "password"
+    required: true
+    layout: "main"

@@ -1,0 +1,21 @@
+{# BGP Configuration Template #}
+routing-options {
+    router-id {{ router_id }};
+    autonomous-system {{ local_as }};
+}
+
+protocols {
+    bgp {
+        group external {
+            type external;
+            {% if policy_import %}
+            import {{ policy_import }};
+            {% endif %}
+            {% if policy_export %}
+            export {{ policy_export }};
+            {% endif %}
+            peer-as {{ neighbor_as }};
+            neighbor {{ neighbor_ip }};
+        }
+    }
+}

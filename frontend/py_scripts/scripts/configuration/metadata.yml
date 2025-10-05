@@ -1,0 +1,63 @@
+# =================================================================================================
+# METADATA FILE: Configuration Templates Tool
+#
+# PURPOSE:
+#   - Controls UI rendering, capabilities, and parameters for the template_workflow script.
+#   - Defines capabilities for template selection, generation, device authentication, and results display.
+#   - Uses capabilityConfiguration to customize UI behavior (e.g., template source, required fields).
+#   - Supports conditional UI rendering based on capabilities (e.g., sidebar for template selection).
+#
+# -------------------------------------------------------------------------------------------------
+# SECTION 1: BASIC INFORMATION
+# -------------------------------------------------------------------------------------------------
+id: "template_workflow"
+displayName: "Configuration Templates"
+description: "Generate a device configuration from a Jinja2 template and apply it to a target device."
+category: "Configuration"
+runnerComponent: "DeviceConfigurationRunner"
+
+# -------------------------------------------------------------------------------------------------
+# SECTION 2: CAPABILITIES
+# -------------------------------------------------------------------------------------------------
+capabilities:
+  templateSelection: true    # Enables sidebar for selecting Jinja2 templates
+  templateGeneration: true  # Enables two-step workflow (Generate Preview and Apply to Device)
+  deviceAuth: true          # Enables device authentication inputs
+  deviceTargeting: false    # Disables device targeting (not used in this workflow)
+  enableReportSaving: false # Disables report saving
+  resultsDisplay: true      # Enables execution summary display
+  enableDebug: true         # Enables debug mode for detailed logging
+
+# -------------------------------------------------------------------------------------------------
+# SECTION 3: CAPABILITY CONFIGURATION
+# -------------------------------------------------------------------------------------------------
+templateSelection:
+  title: "Template Selection"
+  description: "Select a Jinja2 template from the available library to generate a configuration."
+  templateSource: "/api/templates/list"  # Endpoint for fetching template metadata
+
+templateGeneration:
+  title: "Configuration Generation"
+  description: "Generate and apply configurations based on selected templates and parameters."
+
+deviceAuth:
+  title: "Device Authentication"
+  description: "Provide credentials to access the target device(s)."
+  requiredFields: ["hostname", "username", "password"]  # Updated to include hostname
+
+resultsDisplay:
+  title: "Final Execution Summary"
+  description: "A detailed summary of all successful and failed operations."
+
+# -------------------------------------------------------------------------------------------------
+# SECTION 4: PARAMETERS (WITH show_if AND active FOR VISIBILITY CONTROL)
+# -------------------------------------------------------------------------------------------------
+parameters:
+  - name: "hostname"
+    label: "Target Hostname"
+    type: "text"
+    required: true
+    placeholder: "e.g., vmx-1"
+    description: "The IP address or hostname of the target device."
+    active: true
+    layout: "main"

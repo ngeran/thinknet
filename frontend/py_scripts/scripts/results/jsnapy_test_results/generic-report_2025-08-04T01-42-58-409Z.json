@@ -1,0 +1,214 @@
+{
+  "type": "result",
+  "data": {
+    "results_by_host": [
+      {
+        "hostname": "172.27.200.200",
+        "status": "success",
+        "test_results": [
+          {
+            "title": "BGP Neighbor Summary for 172.27.200.200",
+            "headers": [
+              "Address",
+              "Remote AS",
+              "Flaps",
+              "State",
+              "Up/Down Time"
+            ],
+            "data": [
+              {
+                "Address": "10.100.250.2",
+                "Remote AS": "64790",
+                "Flaps": "0",
+                "State": "Established",
+                "Up/Down Time": "5d 5:59:45"
+              }
+            ],
+            "error": null
+          },
+          {
+            "title": "Interface Status Summary for 172.27.200.200",
+            "headers": [
+              "Interface Name",
+              "Admin Status",
+              "Link Status"
+            ],
+            "data": [
+              {
+                "Interface Name": "\nge-0/0/0\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\nup\n"
+              },
+              {
+                "Interface Name": "\ngr-0/0/0\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\nup\n"
+              },
+              {
+                "Interface Name": "\nip-0/0/0\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\nup\n"
+              },
+              {
+                "Interface Name": "\nlsq-0/0/0\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\nup\n"
+              },
+              {
+                "Interface Name": "\nlt-0/0/0\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\nup\n"
+              },
+              {
+                "Interface Name": "\nmt-0/0/0\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\nup\n"
+              },
+              {
+                "Interface Name": "\nsp-0/0/0\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\nup\n"
+              },
+              {
+                "Interface Name": "\nge-0/0/1\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\ndown\n"
+              },
+              {
+                "Interface Name": "\nge-0/0/2\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\nup\n"
+              },
+              {
+                "Interface Name": "\nge-0/0/3\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\ndown\n"
+              },
+              {
+                "Interface Name": "\nge-0/0/4\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\ndown\n"
+              },
+              {
+                "Interface Name": "\nge-0/0/5\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\ndown\n"
+              },
+              {
+                "Interface Name": "\nge-0/0/6\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\ndown\n"
+              },
+              {
+                "Interface Name": "\nge-0/0/7\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\ndown\n"
+              },
+              {
+                "Interface Name": "\ndl0\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\nup\n"
+              },
+              {
+                "Interface Name": "\nesi\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\nup\n"
+              },
+              {
+                "Interface Name": "\nfti0\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\nup\n"
+              },
+              {
+                "Interface Name": "\nfxp2\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\nup\n"
+              },
+              {
+                "Interface Name": "\ngre\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\nup\n"
+              },
+              {
+                "Interface Name": "\nipip\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\nup\n"
+              },
+              {
+                "Interface Name": "\nirb\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\nup\n"
+              },
+              {
+                "Interface Name": "\njsrv\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\nup\n"
+              },
+              {
+                "Interface Name": "\nlo0\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\nup\n"
+              },
+              {
+                "Interface Name": "\nlsi\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\nup\n"
+              },
+              {
+                "Interface Name": "\nmtun\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\nup\n"
+              },
+              {
+                "Interface Name": "\npimd\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\nup\n"
+              },
+              {
+                "Interface Name": "\npime\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\nup\n"
+              },
+              {
+                "Interface Name": "\npp0\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\nup\n"
+              },
+              {
+                "Interface Name": "\nppd0\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\nup\n"
+              },
+              {
+                "Interface Name": "\nppe0\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\nup\n"
+              },
+              {
+                "Interface Name": "\nrbeb\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\nup\n"
+              },
+              {
+                "Interface Name": "\nst0\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\nup\n"
+              },
+              {
+                "Interface Name": "\ntap\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\nup\n"
+              },
+              {
+                "Interface Name": "\nvtep\n",
+                "Admin Status": "\nup\n",
+                "Link Status": "\nup\n"
+              }
+            ],
+            "error": null
+          }
+        ]
+      }
+    ]
+  }
+}
