@@ -14,6 +14,17 @@ export default defineConfig({
     // network interfaces, making it accessible to the host machine.
     host: '0.0.0.0',
     port: 5173, // Matches the exposed port in docker-compose.yml
+
+    // ⭐️ CRITICAL FIX: Add Proxy for API Gateway ⭐️
+    proxy: {
+      // All requests starting with '/api' (e.g., /api/sidebar-data/...)
+      '/api': {
+        // Are redirected to the FastAPI service running on port 8000
+        target: 'http://localhost:8000',
+        // Necessary for correctly handling host headers
+        changeOrigin: true,
+      },
+    },
   },
 
   // 2. Alias configuration (already correct)

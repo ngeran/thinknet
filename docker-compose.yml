@@ -56,8 +56,12 @@ services:
 
     volumes:
       # CRITICAL FIX: Mount the application code to see the updated routers
-      - ./app_gateway:/app_gateway
+      # **OLD: - ./app_gateway:/app_gateway**
+      # **NEW:** Mount the local 'app_gateway' folder to '/app/app_gateway' inside the container.
+      # This assumes the Dockerfile's WORKDIR is /app and Uvicorn runs app_gateway.main:app.
+      - ./app_gateway:/app/app_gateway
       # CRITICAL FIX: Mount the shared data directory (needed for the inventory router to find files)
+      # This mount was already correct, but we'll ensure the /app path is consistent.
       - ./shared:/app/shared
 
   # ----------------------------------------------------

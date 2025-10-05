@@ -1,0 +1,24 @@
+items:
+  - id: backup
+    title: "Backup Device"
+    subtitle: "Create device backups"
+    icon: "Download"
+    route: "/backup"
+
+  - id: restore
+    title: "Restore Device"
+    subtitle: "Restore from backup"
+    icon: "Upload"
+    route: "/restore"
+
+  - id: history
+    title: "Backup History"
+    subtitle: "View backup records"
+    icon: "History"
+    route: "/backup/history"
+
+  - id: settings
+    title: "Backup Settings"
+    subtitle: "Configure backup options"
+    icon: "Settings"
+    route: "/backup/settings"

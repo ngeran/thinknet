@@ -2,18 +2,26 @@
 FROM node:20-alpine AS base
 
 # Set the working directory to /app
-# This /app directory will be OVERWRITTEN by the volume mount later
 WORKDIR /app
 
-# The package files are in the 'frontend' folder, but the build context is '.'
-# We copy them into the /app directory which is required for running npm install
-COPY frontend/package.json frontend/package-lock.json ./ 
+# 1. Copy package files for dependency installation
+# This is essential for npm install to run correctly and enables layer caching
+COPY frontend/package.json frontend/package-lock.json ./
+
+# 2. Install dependencies. This is the permanent fix for 'axios' not found.
 RUN npm install
 
-# The development stage is simplified
+# --- Development Stage ---
 FROM base AS dev
-WORKDIR /app 
-# ❌ REMOVE: COPY frontend/. /app/ 
-# This step is now handled by the volume mount in docker-compose.yml
+WORKDIR /app
+
+# 3. Copy the rest of the application source code
+# This copies all JS/React files. This layer is then replaced by the volume mount 
+# in docker-compose for instant development updates, but it ensures the image 
+# is complete.
+COPY frontend/. /app/
 
 EXPOSE 5173
+
+# Define the command to run the development server
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]

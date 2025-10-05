@@ -16,31 +16,38 @@ export function CollapsibleSidebar({
   const location = useLocation();
   const [isCollapsed, setIsCollapsed] = useState(false);
 
-  const isActive = (href) => location.pathname === href;
+  // FIX: Use item.route to check against location.pathname
+  const isActive = (route) => location.pathname === route;
 
   // --- Core Sidebar Content (Desktop and Sheet) ---
   const SidebarContent = ({ isMobile = false }) => (
     <ScrollArea className="h-full">
-      {/* FIX 1: Remove fixed width (w-56) when not mobile */}
       <div className={`flex flex-col space-y-4 p-4 ${isMobile ? 'w-full' : ''}`}>
-        {navItems.map((section, index) => (
+
+        {/* CRITICAL FIX: Ensure navItems is an array before calling map */}
+        {(Array.isArray(navItems) ? navItems : []).map((section, index) => (
           <div key={index} className="space-y-2">
             <h4 className={`mb-1 px-3 text-sm font-semibold tracking-wider text-muted-foreground ${isCollapsed && !isMobile ? 'text-center' : ''}`}>
+              {/* FIX: Use item.title (backend returns full title) */}
               {isCollapsed && !isMobile ? (section.title[0]) : section.title}
             </h4>
             <div className="space-y-1">
               {section.items.map((item) => (
                 <Button
-                  key={item.href}
+                  // FIX: Use item.id or item.route for the key
+                  key={item.id || item.route}
                   asChild
-                  variant={isActive(item.href) ? "secondary" : "ghost"}
+                  // FIX: Pass item.route to the isActive check
+                  variant={isActive(item.route) ? "secondary" : "ghost"}
                   // CRITICAL: Collapse to icon-only size 
                   className={`w-full justify-start font-normal ${isCollapsed && !isMobile ? 'justify-center p-0 h-9' : ''}`}
                 >
                   {/* CRITICAL: Add w-full flex to the Link */}
-                  <Link to={item.href} className="w-full flex items-center">
+                  {/* FIX: Use item.route for the Link's 'to' prop */}
+                  <Link to={item.route} className="w-full flex items-center">
                     {/* Icon Container: Ensures the icon is the focus when collapsed */}
                     <div className={`flex items-center transition-all duration-200 ${isCollapsed && !isMobile ? 'justify-center w-full' : 'w-4'}`}>
+                      {/* TODO: You need a component to render the icon string (item.icon) here */}
                       {item.icon}
                     </div>
                     {/* Text: Hides the span text */}

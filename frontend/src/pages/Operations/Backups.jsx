@@ -1,32 +1,21 @@
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
-import { ArrowRight, CloudDownload, Terminal, List, Loader2, CheckCircle, XCircle } from 'lucide-react';
+import { ArrowRight, Loader2, CheckCircle, XCircle } from 'lucide-react';
 
-// Shadcn UI Tabs Components
+// Shadcn UI Tabs and Progress Components
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 
-// Your existing components
+// Local Components
 import BackupForm from '../../forms/BackupForm';
 import DeviceTargetSelector from '../../shared/DeviceTargetSelector';
-import { CollapsibleSidebar } from '../../components/blocks/CollapsibleSidebar';
-
-// --- MOCK DATA for Sidebar (same as before) ---
-const sidebarNavItems = [
-  {
-    title: "Backup & Restore",
-    items: [
-      { title: "Standard Backup", icon: <CloudDownload size={16} />, href: "/operations/backups" },
-      { title: "Custom Backup Script", icon: <Terminal size={16} />, href: "/automation/templates" },
-      { title: "Restore Configuration", icon: <ArrowRight size={16} />, href: "/operations/restore" },
-    ],
-  },
-  // ... other items
-];
+// The new component responsible for fetching sidebar data dynamically
+import SidebarLoader from '../../components/blocks/SidebarLoader';
 
 /**
- * Main component for the Backup page, integrating tabs for workflow management.
+ * Main component for the Backup page, integrating a guided workflow 
+ * using three tabs (Configure, Execute, Results) and a dynamic sidebar.
  */
 export default function BackupPage() {
 
@@ -71,7 +60,7 @@ export default function BackupPage() {
     setProgress(0);
     setJobOutput([]);
 
-    // --- Mock Execution Logic (Replace with your FastAPI/WebSocket logic) ---
+    // --- Mock Execution Logic (REPLACE THIS SECTION with API call to FastAPI) ---
     console.log("Starting Backup Job with parameters:", backupParams);
 
     // Simulate progress updates
@@ -85,8 +74,12 @@ export default function BackupPage() {
 
     // Final state transition
     await new Promise(resolve => setTimeout(resolve, 1000));
-    setJobStatus("success"); // or 'failed'
-    setJobOutput(prev => [...prev, { time: new Date().toLocaleTimeString(), message: "Job completed successfully." }]);
+    const finalStatus = Math.random() > 0.8 ? "failed" : "success"; // Add a small chance of failure
+    setJobStatus(finalStatus);
+
+    const finalMessage = finalStatus === "success" ? "Job completed successfully." : "Job failed during configuration capture.";
+    setJobOutput(prev => [...prev, { time: new Date().toLocaleTimeString(), message: finalMessage }]);
+
     setActiveTab("results");
     // --- End Mock Execution Logic ---
   };
@@ -103,11 +96,10 @@ export default function BackupPage() {
   return (
     <div className="flex min-h-screen bg-background">
 
-      {/* 1. Collapsible Sidebar */}
-      <CollapsibleSidebar
+      {/* 1. Dynamic Sidebar (Replaced CollapsibleSidebar with SidebarLoader) */}
+      <SidebarLoader
         title="Automation Scripts"
-        navItems={sidebarNavItems}
-        activePath="/operations/backups"
+        activePath="/operations/backups" // The route for the current page
       />
 
       {/* 2. Main Content Area */}
@@ -121,7 +113,7 @@ export default function BackupPage() {
         {/* --- TABS IMPLEMENTATION --- */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
 
-          {/* Tabs List */}
+          {/* Tabs List (Disabled while running) */}
           <TabsList className="grid w-full grid-cols-3 mb-6">
             <TabsTrigger value="config" disabled={jobStatus === 'running'}>Configure</TabsTrigger>
             <TabsTrigger value="execute">Execute</TabsTrigger>
@@ -199,9 +191,9 @@ export default function BackupPage() {
               <div className="space-y-2">
                 <p className="font-medium">Summary:</p>
                 <ul className="list-disc list-inside text-muted-foreground ml-4">
-                  <li>Target(s): {backupParams.hostname || backupParams.inventory_file}</li>
-                  <li>Duration: ~5 seconds (Mock)</li>
-                  <li>Output Lines: {jobOutput.length}</li>
+                  <li>Target(s): {backupParams.hostname || backupParams.inventory_file || 'N/A'}</li>
+                  <li>Credentials: {backupParams.username ? 'Provided' : 'Missing'}</li>
+                  <li>Final Status: <span className={jobStatus === 'success' ? 'text-green-500 font-semibold' : 'text-destructive font-semibold'}>{jobStatus.toUpperCase()}</span></li>
                 </ul>
               </div>
 

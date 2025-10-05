@@ -7,7 +7,11 @@ Initializes the application, applies middleware, and includes all necessary rout
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
-from .api.routers import automation, proxy, test_redis, inventory # Import the new router file
+
+# ❌ OLD: from .api.routers import automation, proxy, test_redis, inventory, sidebar_metadata
+# ✅ FIX: Changed to absolute import to ensure correct loading within Docker/Uvicorn
+from app_gateway.api.routers import automation, proxy, test_redis, inventory, sidebar_metadata
+
 from .core.config import settings
 
 # --- FastAPI Setup ---
@@ -30,8 +34,9 @@ app.include_router(automation.router, prefix="/api")
 app.include_router(proxy.router, prefix="/api")
 app.include_router(test_redis.router, prefix="/api")
 # NEW LINE: Include the inventory router
-app.include_router(inventory.router, prefix="/api") # <-- ADD THIS LINE
-
+app.include_router(inventory.router, prefix="/api") 
+# Update this line to include the sidebar_metadata router
+app.include_router(sidebar_metadata.router, prefix="/api") # Now includes sidebar_metadata
 # --- Root Health Check ---
 # Description: Simple health check for the application root.
 @app.get("/")

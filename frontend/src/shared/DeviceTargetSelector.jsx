@@ -4,15 +4,15 @@
  * =============================================================================
  *
  * File Path: src/shared/DeviceTargetSelector.jsx
- * Version: 3.1.1
- * 
+ * Version: 3.1.2 (Nested Form Fix)
+ *
  * DESCRIPTION:
  * An advanced device targeting component that provides two input modes: manual
  * hostname entry and inventory file selection. Features real-time API integration,
  * intelligent mode switching, comprehensive error handling, and modern UI styling.
  *
- * UPDATE (v3.1.1): Added form wrapper and keydown event handling to prevent page refreshes
- * on input, ensuring Enter key and other keypresses do not trigger unwanted form submissions.
+ * UPDATE (v3.1.2): REMOVED the outer <form> element to prevent illegal nesting 
+ * within the parent form in BackupPage.jsx. Changed component wrapper to <div>.
  *
  * KEY FEATURES:
  * • Dual input modes: Manual hostname or inventory file selection
@@ -23,7 +23,7 @@
  * • Accessibility-compliant with ARIA labels and keyboard navigation
  * • Auto-retry mechanism for failed API requests
  * • Visual feedback for connection status and data loading
- * • Form submission prevention for input fields
+ * • Form submission prevention for input fields (now handled by parent form only)
  *
  * DEPENDENCIES:
  * • react: ^18.0.0 (useState, useEffect, useCallback, useRef hooks)
@@ -35,20 +35,20 @@
  * import DeviceTargetSelector from "../shared/DeviceTargetSelector";
  *
  * function MyApp() {
- *   const [params, setParams] = useState({});
+ *  const [params, setParams] = useState({});
  *
- *   const handleParamChange = (name, value) => {
- *     setParams(prev => ({ ...prev, [name]: value }));
- *   };
+ *  const handleParamChange = (name, value) => {
+ *    setParams(prev => ({ ...prev, [name]: value }));
+ *  };
  *
- *   return (
- *     <DeviceTargetSelector
- *       parameters={params}
- *       onParamChange={handleParamChange}
- *       title="Target Device"
- *       description="Choose the device to operate on"
- *     />
- *   );
+ *  return (
+ *    <DeviceTargetSelector
+ *      parameters={params}
+ *      onParamChange={handleParamChange}
+ *      title="Target Device"
+ *      description="Choose the device to operate on"
+ *    />
+ *  );
  * }
  * ```
  */
@@ -78,7 +78,7 @@ export default function DeviceTargetSelector({
   const [backendAvailable, setBackendAvailable] = useState(true);
   const [retryCount, setRetryCount] = useState(0);
   const usingFallbackRef = useRef(false);
-  const componentRef = useRef(null);
+  const componentRef = useRef(null); // Used for keydown handling
 
   // =============================================================================
   // VALIDATION LOGIC SECTION
@@ -188,11 +188,16 @@ export default function DeviceTargetSelector({
     }
   }, [fetchInventoryFiles, inputMode, retryCount]);
 
-  // Prevents Enter key from triggering page refresh
+  // Prevents Enter key from triggering parent form submission when focus is inside this component
   useEffect(() => {
     const handleKeyDown = (e) => {
+      // IMPORTANT: e.key === 'Enter' will still allow the main form to submit
+      // unless the active element is a multi-line field (textarea).
+      // This prevention is now mostly handled by ensuring internal buttons are type="button".
+      // Since we removed the inner <form>, this is less critical but still useful for inputs.
       if (componentRef.current && componentRef.current.contains(document.activeElement)) {
-        if (e.key === 'Enter') {
+        if (e.key === 'Enter' && document.activeElement.tagName !== 'TEXTAREA') {
+          // Prevent the Enter key from triggering the *parent* form submit action
           e.preventDefault();
           e.stopPropagation();
         }
@@ -232,12 +237,7 @@ export default function DeviceTargetSelector({
     setRetryCount(prev => prev + 1);
   };
 
-  // Prevents default form submission
-  const handleFormSubmit = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    return false;
-  };
+  // NOTE: handleFormSubmit removed as the <form> wrapper was removed.
 
   // =============================================================================
   // UI HELPER FUNCTIONS SECTION
@@ -268,34 +268,36 @@ export default function DeviceTargetSelector({
   };
 
   const getModeButtonClasses = (mode) => `
-    flex-1 flex items-center justify-center gap-2 py-2 px-3
-    rounded-md text-sm font-medium transition-all duration-200
-    ${inputMode === mode
+        flex-1 flex items-center justify-center gap-2 py-2 px-3
+        rounded-md text-sm font-medium transition-all duration-200
+        ${inputMode === mode
       ? 'bg-primary text-primary-foreground shadow-sm'
       : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
     }
-  `.trim();
+    `.trim();
 
   const getInputClasses = (isValid) => `
-    w-full px-3 py-2.5 text-sm border rounded-lg
-    transition-all duration-200 placeholder:text-muted-foreground
-    focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2
-    hover:border-muted-foreground/50 disabled:opacity-50 disabled:cursor-not-allowed
-    ${isValid
+        w-full px-3 py-2.5 text-sm border rounded-lg
+        transition-all duration-200 placeholder:text-muted-foreground
+        focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2
+        hover:border-muted-foreground/50 disabled:opacity-50 disabled:cursor-not-allowed
+        ${isValid
       ? 'border-border bg-background'
       : 'border-destructive/50 bg-destructive/5 focus:ring-destructive/20'
     }
-  `.trim();
+    `.trim();
 
   // =============================================================================
   // COMPONENT RENDER SECTION
   // =============================================================================
+  // CRITICAL FIX: The outer <form> is replaced by a <div>.
   return (
     <div
       className={`
-        bg-card border rounded-xl shadow-sm backdrop-blur-sm
-        ${className}
-      `.trim()}
+                bg-card border rounded-xl shadow-sm backdrop-blur-sm
+                ${className}
+            `.trim()}
+      ref={componentRef} // Ref attached to the main div for keydown detection
     >
       {/* HEADER SECTION */}
       <div className="px-6 py-4 border-b">
@@ -328,7 +330,7 @@ export default function DeviceTargetSelector({
         {/* MODE TOGGLE SECTION */}
         <div className="flex bg-muted/30 rounded-lg p-1 mt-4">
           <button
-            type="button"
+            type="button" // Important: use type="button" to prevent submission
             onClick={() => handleModeSwitch("manual")}
             className={getModeButtonClasses("manual")}
             aria-pressed={inputMode === "manual"}
@@ -337,7 +339,7 @@ export default function DeviceTargetSelector({
             Manual
           </button>
           <button
-            type="button"
+            type="button" // Important: use type="button" to prevent submission
             onClick={() => handleModeSwitch("inventory")}
             className={getModeButtonClasses("inventory")}
             aria-pressed={inputMode === "inventory"}
@@ -349,8 +351,8 @@ export default function DeviceTargetSelector({
         </div>
       </div>
 
-      {/* INPUT FIELDS SECTION */}
-      <form onSubmit={handleFormSubmit} ref={componentRef} className="p-6">
+      {/* INPUT FIELDS SECTION - Uses a standard <div> container */}
+      <div className="p-6">
         {inputMode === "manual" ? (
           /* MANUAL MODE - Hostname input field */
           <div className="space-y-2">
@@ -399,7 +401,7 @@ export default function DeviceTargetSelector({
 
               {/* Refresh button */}
               <button
-                type="button"
+                type="button" // Important: use type="button"
                 onClick={handleRetry}
                 disabled={loading}
                 className="absolute right-8 top-2.5 h-4 w-4 text-muted-foreground hover:text-foreground transition-colors"
@@ -429,6 +431,7 @@ export default function DeviceTargetSelector({
                     Unable to connect to the backend service. Please check if the server is running.
                   </p>
                   <button
+                    type="button" // Important: use type="button"
                     onClick={handleRetry}
                     className="text-xs bg-destructive/10 hover:bg-destructive/20 text-destructive px-2 py-1 rounded transition-colors"
                   >
@@ -442,7 +445,7 @@ export default function DeviceTargetSelector({
                 <p className="flex items-center gap-1 text-xs text-destructive animate-in fade-in duration-200">
                   <AlertCircle className="h-3 w-3" /> {error}
                   <button
-                    type="button"
+                    type="button" // Important: use type="button"
                     onClick={handleRetry}
                     className="ml-1 text-destructive underline hover:no-underline text-xs"
                   >
@@ -477,7 +480,7 @@ export default function DeviceTargetSelector({
             </div>
           </div>
         )}
-      </form>
+      </div>
     </div>
   );
 }
