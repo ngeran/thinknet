@@ -48,10 +48,5 @@
   title: Operations
   subtitle: Maintenance Workflows
   icon: "RefreshCw"
-  children:
-    - title: Backup Configurations
-      url: /operations/backups
-      icon: "Save"
-    - title: Restore Configurations
-      url: /operations/restore
-      icon: "RotateCcw"
+  url: /operations/backups
+  children: []

@@ -1,29 +1,30 @@
-// frontend/src/lib/navigationUtils.js (Simplified)
+// frontend/src/lib/navigationUtils.js (FINALIZED)
 
 import React from 'react';
 
 // =================================================================
 // PAGE MAP (URL Key -> Component Loader)
-// Description: Maps the URL path (without leading slash) to the lazy-loaded component.
-// This is the static instruction set for React Router.
+// The key here MUST match the path segment after the leading slash 
+// (e.g., 'operations' for '/operations')
 // =================================================================
 export const PageMap = {
-  // Top-level pages
+  // --- Core Route ---
   'dashboard': React.lazy(() => import('../pages/Dashboard.jsx')),
-  //  'automation': React.lazy(() => import('../pages/Automation.jsx')),
 
-  // Management Pages
+  // 🛑 FIX: The base route for the 'Operations' main menu link now loads the Layout
+  'operations': React.lazy(() => import('../pages/Operations/OperationsLayout.jsx')),
+
+  // --- Operations Child Routes ---
+  // These are the targets loaded by the Layout's <Outlet>
+  'operations/backups': React.lazy(() => import('../pages/Operations/BackupHistory.jsx')),
+  'operations/backups/new-job': React.lazy(() => import('../pages/Operations/Backup.jsx')),
+  'operations/restore': React.lazy(() => import('../pages/Operations/RestorePage.jsx')),
+  'operations/backup/settings': React.lazy(() => import('../pages/Operations/BackupSettings.jsx')),
+
+  // --- Other Top-Level Routes ---
   'management/image-uploads': React.lazy(() => import('../pages/Management/ImageUploads.jsx')),
   'management/code-upgrades': React.lazy(() => import('../pages/Management/CodeUpgrades.jsx')),
-
-  // Automation Child Pages
   'automation/templates': React.lazy(() => import('../pages/Automation/Templates.jsx')),
   'automation/validation': React.lazy(() => import('../pages/Automation/Validation.jsx')),
-
-  // Reporting Pages
   'reporting/device-reports': React.lazy(() => import('../pages/Reporting/DeviceReports.jsx')),
-
-  // Operations Pages
-  'operations/backups': React.lazy(() => import('../pages/Operations/Backups.jsx')),
-  'operations/restore': React.lazy(() => import('../pages/Operations/Restore.jsx')),
 };

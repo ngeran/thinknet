@@ -1,86 +1,193 @@
-
-// frontend/src/context/NavigationContext.jsx
+// frontend/src/context/NavigationContext.jsx (FINAL SYNTAX AND ROUTE FIX)
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { PageMap } from '../lib/navigationUtils'; // Import the component mapping
+import { PageMap } from '../lib/navigationUtils'; // Component-to-path mapping
+import { Navigate } from 'react-router-dom'; // For redirection
 
 // =================================================================
-// CONFIGURATION
+// CONFIGURATION & CONTEXT
 // =================================================================
-// API Gateway base URL from environment variables (assuming it's VITE_API_BASE_URL)
+
 const API_GATEWAY_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 const NAVIGATION_ENDPOINT = `${API_GATEWAY_URL}/api/navigation`;
 
-// Create the Context
 const NavigationContext = createContext();
 
 /**
- * Hook to consume navigation data (routes and menu structure)
- * @returns {{loading: boolean, menuData: Array, routes: Array}}
+ * Custom hook to access navigation context.
  */
 export const useNavigation = () => useContext(NavigationContext);
 
 // =================================================================
-// ROUTE GENERATOR (Moved/Modified from navigationUtils.js)
+// ROUTE GENERATOR (Fixed for Nested Layouts)
 // =================================================================
 
 /**
- * Flattens the nested navigation data into a single array of routes.
- * @param {Array<Object>} navigationData - The nested data array fetched from FastAPI.
- * @returns {Array<{path: string, Element: React.Component, ...}>}
+ * Helper function to build nested children routes from PageMap keys.
+ */
+const buildNestedChildren = (parentKey, registeredPaths) => {
+  const childrenMap = {};
+  const allPageMapKeys = Object.keys(PageMap);
+
+  // 1. Traverse PageMap keys and build the nested map structure
+  allPageMapKeys.forEach(key => {
+    if (key.startsWith(parentKey + '/') && PageMap[key] && !registeredPaths.has(key)) {
+      const relativePath = key.substring(parentKey.length + 1);
+      const segments = relativePath.split('/');
+
+      let currentLevel = childrenMap;
+
+      for (let i = 0; i < segments.length; i++) {
+        const segment = segments[i];
+
+        if (!currentLevel[segment]) {
+          currentLevel[segment] = { path: segment, children: {} };
+        }
+
+        // CRITICAL FIX BLOCK: Assigns component as index or element based on segment count
+        if (i === segments.length - 1) {
+          const ChildRouteComponent = PageMap[key];
+
+          if (segments.length === 1) {
+            // e.g., 'backups' -> BackupHistory.jsx (as index)
+            currentLevel[segment].indexElement = <ChildRouteComponent />;
+          } else {
+            // e.g., 'backups/new' -> Backup.jsx (as a regular element)
+            currentLevel[segment].element = <ChildRouteComponent />;
+          }
+          registeredPaths.add(key);
+        }
+        currentLevel = currentLevel[segment].children;
+      }
+    }
+  });
+
+  // 2. Recursive function to convert the map structure back to a clean array of route objects
+  const convertMapToArray = (map) => {
+    return Object.values(map).map(route => {
+      const childrenArray = convertMapToArray(route.children);
+
+      delete route.children;
+
+      // This ensures the index element is added as the first child, 
+      // and the 'element' property is cleared from the parent route.
+      if (route.indexElement) {
+        childrenArray.unshift({ index: true, element: route.indexElement });
+        delete route.indexElement;
+        delete route.element; // Ensure we don't accidentally set both element and index
+      }
+
+      return {
+        ...route,
+        children: childrenArray.length > 0 ? childrenArray : undefined,
+      };
+    });
+  };
+
+  return convertMapToArray(childrenMap);
+};
+
+
+/**
+ * Generates nested routes structure from backend navigation data.
+ * The output is directly consumed by React Router's useRoutes.
  */
 const generateRoutes = (navigationData) => {
   const routes = [];
+  const registeredPaths = new Set();
+  const allPageMapKeys = Object.keys(PageMap);
 
-  // 1. Add the Dashboard as the primary index route
-  routes.push({
-    path: '/',
-    Element: PageMap['dashboard'], // Assuming 'dashboard' is mapped in PageMap
-    title: 'Dashboard',
-    index: true,
-  });
+  // 1. Hardcoded Dashboard route
+  if (PageMap['dashboard']) {
+    routes.push({
+      path: 'dashboard',
+      element: <PageMap.dashboard />,
+      title: 'Dashboard',
+    });
+    registeredPaths.add('dashboard');
+  }
 
+  // 2. Process backend-provided navigation tree
   navigationData.forEach(parent => {
-    // Handle base route like /automation if it exists in PageMap
-    const baseRouteKey = parent.id;
-    if (PageMap[baseRouteKey] && parent.id !== 'dashboard') {
-      routes.push({
-        path: `/${baseRouteKey}`,
-        Element: PageMap[baseRouteKey],
-        title: parent.title,
-        baseRoute: true,
+    const parentKey = parent.url
+      ? parent.url.startsWith('/')
+        ? parent.url.slice(1)
+        : parent.url
+      : parent.id;
+
+    const isTopLevelLayout =
+      parent.url &&
+      parent.url.startsWith('/') &&
+      parent.url.slice(1).indexOf('/') === -1;
+
+    // 🚀 2A. Register Parent/Layout Route (e.g., 'operations')
+    if (isTopLevelLayout && PageMap[parentKey] && !registeredPaths.has(parentKey)) {
+      const LayoutComponent = PageMap[parentKey];
+
+      // 1. Generate nested children routes using the helper function
+      let layoutChildren = buildNestedChildren(parentKey, registeredPaths);
+
+      // 2. Add the index redirect (e.g., /operations -> /operations/backups)
+      const redirectPathSegment = layoutChildren.length > 0 ? layoutChildren[0].path : '/';
+      layoutChildren.unshift({
+        index: true,
+        element: <Navigate to={redirectPathSegment} replace />,
       });
+
+
+      const routeObject = {
+        path: parentKey, // e.g., 'operations'
+        element: <LayoutComponent />, // Renders OperationsLayout.jsx
+        title: parent.title,
+        children: layoutChildren, // Contains the index redirect and all relative sub-pages
+      };
+
+      routes.push(routeObject);
+      registeredPaths.add(parentKey); // Mark the layout path as handled
     }
 
-    // 2. Iterate through all child links and create a route for each
-    parent.children.forEach(child => {
+    // 2B. Register standalone pages from YAML children 
+    parent.children?.forEach(child => {
       const pathKey = child.url.startsWith('/') ? child.url.slice(1) : child.url;
-      const Component = PageMap[pathKey];
+      const ChildComponent = PageMap[pathKey];
 
-      if (Component) {
+      if (ChildComponent && !registeredPaths.has(pathKey)) {
         routes.push({
-          path: child.url,
-          Element: Component,
+          path: pathKey,
+          element: <ChildComponent />,
           title: child.title,
-          parentTitle: parent.title,
         });
-      } else {
-        console.warn(`[Routing Error] Component not mapped for URL: ${child.url}. Key: ${pathKey}`);
+        registeredPaths.add(pathKey);
       }
     });
+  });
+
+  // 3. Register any unmatched static routes from PageMap 
+  Object.keys(PageMap).forEach(key => {
+    if (!registeredPaths.has(key) && key !== 'dashboard') {
+      const Component = PageMap[key];
+      if (Component) {
+        routes.push({
+          path: key,
+          element: <Component />,
+        });
+        registeredPaths.add(key);
+      }
+    }
   });
 
   return routes;
 };
 
+// =================================================================
+// CONTEXT PROVIDER COMPONENT
+// =================================================================
 
-// =================================================================
-// CONTEXT PROVIDER
-// =================================================================
+/**
+ * Provides navigation routes and menu structure to the app.
+ */
 export const NavigationProvider = ({ children }) => {
-  // raw nested data for the UI (MegaMenu, Sidebar)
   const [menuData, setMenuData] = useState([]);
-  // flat routes for React Router (App.jsx)
   const [routes, setRoutes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -88,9 +195,7 @@ export const NavigationProvider = ({ children }) => {
   useEffect(() => {
     const fetchNavigationData = async () => {
       try {
-        // Ensure PageMap has loaded before fetching and generating
         if (!PageMap['dashboard']) {
-          // This scenario should be rare if imports are correct
           throw new Error("PageMap is incomplete. Cannot generate routes.");
         }
 
@@ -102,21 +207,23 @@ export const NavigationProvider = ({ children }) => {
         }
 
         const result = await response.json();
-
-        // Use result.data if the backend wraps the array, otherwise use result directly
         const rawData = result.data || result;
 
-        // Set the raw nested data for UI components
-        setMenuData(rawData);
+        // Ensure children is always an array
+        const sanitizedData = rawData.map(item => ({
+          ...item,
+          children: item.children || [],
+        }));
 
-        // Generate the flat routes array for React Router
-        const generatedRoutes = generateRoutes(rawData);
+        setMenuData(sanitizedData);
+
+        const generatedRoutes = generateRoutes(sanitizedData);
         setRoutes(generatedRoutes);
-
       } catch (err) {
         console.error('Failed to fetch and generate navigation:', err);
         setError(err.message);
-        // On failure, set routes only to the dashboard route to keep the app running
+
+        // Safe fallback: at least return dashboard if possible
         setRoutes(generateRoutes([]));
       } finally {
         setLoading(false);

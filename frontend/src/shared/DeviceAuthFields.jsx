@@ -169,7 +169,7 @@ export default function DeviceAuthFields({
       </div>
 
       {/* FORM FIELDS SECTION - Username and password inputs with validation */}
-      <form onSubmit={handleFormSubmit} ref={componentRef} className="p-6">
+      <div onSubmit={handleFormSubmit} ref={componentRef} className="p-6">
         <div className="grid gap-4 md:grid-cols-2">
           {/* Username Input Field */}
           <div className="space-y-2">
@@ -229,7 +229,8 @@ export default function DeviceAuthFields({
             )}
           </div>
         </div>
-      </form>
+      </div>
     </div>
   );
 }
+

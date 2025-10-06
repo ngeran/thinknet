@@ -1,11 +1,18 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "NavigationSchema",
-  "description": "Schema for validating navigation.yaml",
+  "description": "Schema for validating navigation.yaml, allowing top-level URL or children.",
   "type": "array",
   "items": {
     "type": "object",
-    "required": ["id", "title", "children"],
+    "required": ["id", "title"],
+    
+    // 🚀 FIX 1: Enforce EITHER a 'url' (direct link) OR 'children' (dropdown)
+    "oneOf": [
+      { "required": ["url"] },
+      { "required": ["children"] }
+    ],
+
     "properties": {
       "id": {
         "type": "string",
@@ -23,8 +30,16 @@
         "type": "string",
         "description": "Optional emoji or icon string"
       },
+      
+      // 🚀 FIX 2: Allow 'url' property on the top-level object
+      "url": { 
+        "type": "string", 
+        "description": "URL for a direct top-level navigation item" 
+      },
+
       "children": {
         "type": "array",
+        "description": "Sub-items for the mega-menu dropdown",
         "items": {
           "type": "object",
           "required": ["title", "url"],
@@ -32,9 +47,11 @@
             "title": { "type": "string" },
             "url": { "type": "string", "description": "URL for the navigation item" },
             "icon": { "type": "string" }
-          }
+          },
+          "additionalProperties": false
         }
       }
-    }
+    },
+    "additionalProperties": false 
   }
 }

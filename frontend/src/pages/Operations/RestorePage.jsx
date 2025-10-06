@@ -8,47 +8,49 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 
 // Local Components
-import BackupForm from '../../forms/BackupForm';
-import DeviceTargetSelector from '../../shared/DeviceTargetSelector';
-// The new component responsible for fetching sidebar data dynamically
+// 🛑 IMPORTANT: This is the new component for the dependent dropdowns
+import RestoreDeviceConfig from './components/RestoreDeviceConfig';
+import DeviceAuthFields from '../../shared/DeviceAuthFields'; // Re-use the shared Auth component
+// The dynamic sidebar component
 import SidebarLoader from '../../components/blocks/SidebarLoader';
 
 /**
- * Main component for the Backup page, integrating a guided workflow 
+ * Main component for the Restore page, integrating a guided workflow 
  * using three tabs (Configure, Execute, Results) and a dynamic sidebar.
  */
-export default function BackupPage() {
+export default function RestorePage() {
 
-  // State to hold all form parameters (Configuration)
-  const [backupParams, setBackupParams] = useState({
-    username: "",
-    password: "",
-    hostname: "",
-    inventory_file: "",
+  // State to hold all form parameters. NOTE: This state will be managed by RestoreDeviceConfig
+  // and passed up when ready for execution. For simplicity here, we track the final selected values.
+  const [restoreParams, setRestoreParams] = useState({
+    username: "", // For DeviceAuthFields
+    password: "", // For DeviceAuthFields
+    device_name: "", // Selected from dependent dropdown 1
+    backup_id: "",   // Selected from dependent dropdown 2
   });
 
   // State to manage the active tab: 'config', 'execute', 'results'
   const [activeTab, setActiveTab] = useState("config");
 
-  // State for the execution phase
+  // State for the execution phase (Copied from BackupPage)
   const [jobStatus, setJobStatus] = useState("idle"); // 'idle', 'running', 'success', 'failed'
   const [progress, setProgress] = useState(0);
   const [jobOutput, setJobOutput] = useState([]);
 
-
   // Unified handler to update any parameter from any sub-component
   const handleParamChange = (name, value) => {
-    setBackupParams(prev => ({ ...prev, [name]: value }));
+    setRestoreParams(prev => ({ ...prev, [name]: value }));
   };
 
-  // Determine if the form is valid (requires credentials AND a target)
+  // Determine if the form is valid (requires credentials AND both selections)
   const isFormValid = (
-    backupParams.username.trim() !== "" &&
-    backupParams.password.trim() !== "" &&
-    (backupParams.hostname.trim() !== "" || backupParams.inventory_file.trim() !== "")
+    restoreParams.username.trim() !== "" &&
+    restoreParams.password.trim() !== "" &&
+    restoreParams.device_name.trim() !== "" &&
+    restoreParams.backup_id.trim() !== ""
   );
 
-  // --- EXECUTION LOGIC ---
+  // --- EXECUTION LOGIC (Mocked, copied from BackupPage) ---
   const startJobExecution = async (e) => {
     e.preventDefault();
 
@@ -61,15 +63,15 @@ export default function BackupPage() {
     setJobOutput([]);
 
     // --- Mock Execution Logic (REPLACE THIS SECTION with API call to FastAPI) ---
-    console.log("Starting Backup Job with parameters:", backupParams);
+    console.log("Starting Restore Job with parameters:", restoreParams);
 
     // Simulate progress updates
     for (let p = 0; p <= 100; p += 10) {
       await new Promise(resolve => setTimeout(resolve, 300));
       setProgress(p);
-      if (p === 30) setJobOutput(prev => [...prev, { time: new Date().toLocaleTimeString(), message: "Connecting to devices..." }]);
-      if (p === 60) setJobOutput(prev => [...prev, { time: new Date().toLocaleTimeString(), message: "Starting configuration capture..." }]);
-      if (p === 90) setJobOutput(prev => [...prev, { time: new Date().toLocaleTimeString(), message: "Transferring files to server..." }]);
+      if (p === 30) setJobOutput(prev => [...prev, { time: new Date().toLocaleTimeString(), message: `Connecting to ${restoreParams.device_name}...` }]);
+      if (p === 60) setJobOutput(prev => [...prev, { time: new Date().toLocaleTimeString(), message: `Starting restore from backup ${restoreParams.backup_id}...` }]);
+      if (p === 90) setJobOutput(prev => [...prev, { time: new Date().toLocaleTimeString(), message: "Verifying device state..." }]);
     }
 
     // Final state transition
@@ -77,7 +79,7 @@ export default function BackupPage() {
     const finalStatus = Math.random() > 0.8 ? "failed" : "success"; // Add a small chance of failure
     setJobStatus(finalStatus);
 
-    const finalMessage = finalStatus === "success" ? "Job completed successfully." : "Job failed during configuration capture.";
+    const finalMessage = finalStatus === "success" ? "Restore job completed successfully." : "Restore job failed during configuration transfer.";
     setJobOutput(prev => [...prev, { time: new Date().toLocaleTimeString(), message: finalMessage }]);
 
     setActiveTab("results");
@@ -86,7 +88,7 @@ export default function BackupPage() {
 
   // Reset function
   const resetWorkflow = () => {
-    setBackupParams({ username: "", password: "", hostname: "", inventory_file: "" });
+    setRestoreParams({ username: "", password: "", device_name: "", backup_id: "" });
     setJobStatus("idle");
     setProgress(0);
     setJobOutput([]);
@@ -96,24 +98,23 @@ export default function BackupPage() {
   return (
     <div className="flex min-h-screen bg-background">
 
-      {/* 1. Dynamic Sidebar (Replaced CollapsibleSidebar with SidebarLoader) */}
+      {/* 1. Dynamic Sidebar (Must match the existing pattern) */}
       <SidebarLoader
         title="Automation Scripts"
-        activePath="/operations/backups" // The route for the current page
+        activePath="/operations/restore" // 🛑 UPDATED PATH
       />
 
-      {/* 2. Main Content Area */}
+      {/* 2. Main Content Area (Copied from BackupPage) */}
       <main className="flex-1 p-8 pt-6">
-        <h1 className="text-3xl font-bold tracking-tight mb-2">Device Backup Operation</h1>
+        <h1 className="text-3xl font-bold tracking-tight mb-2">Device Restore Operation</h1>
         <p className="text-muted-foreground mb-6">
-          A guided workflow to configure, execute, and view results for device backups.
+          A guided workflow to select a device and backup, execute the restore, and view results.
         </p>
         <Separator className="mb-8" />
 
-        {/* --- TABS IMPLEMENTATION --- */}
+        {/* --- TABS IMPLEMENTATION (Copied from BackupPage) --- */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
 
-          {/* Tabs List (Disabled while running) */}
           <TabsList className="grid w-full grid-cols-3 mb-6">
             <TabsTrigger value="config" disabled={jobStatus === 'running'}>Configure</TabsTrigger>
             <TabsTrigger value="execute">Execute</TabsTrigger>
@@ -123,12 +124,15 @@ export default function BackupPage() {
           {/* --- 1. CONFIGURE TAB --- */}
           <TabsContent value="config">
             <form onSubmit={startJobExecution} className="space-y-8 max-w-4xl">
-              <DeviceTargetSelector
-                parameters={backupParams}
+              {/* 🛑 INTEGRATE NEW DROPDOWN COMPONENT */}
+              <RestoreDeviceConfig
+                parameters={restoreParams}
                 onParamChange={handleParamChange}
               />
-              <BackupForm
-                parameters={backupParams}
+
+              {/* 🛑 USE EXISTING AUTH FIELDS COMPONENT */}
+              <DeviceAuthFields
+                parameters={restoreParams}
                 onParamChange={handleParamChange}
               />
 
@@ -138,13 +142,13 @@ export default function BackupPage() {
                   disabled={!isFormValid || jobStatus !== 'idle'}
                   className="w-full sm:w-auto"
                 >
-                  Start Backup Job <ArrowRight className="ml-2 h-4 w-4" />
+                  Start Restore Job <ArrowRight className="ml-2 h-4 w-4" />
                 </Button>
               </div>
             </form>
           </TabsContent>
 
-          {/* --- 2. EXECUTE TAB --- */}
+          {/* --- 2. EXECUTE TAB (Copied from BackupPage) --- */}
           <TabsContent value="execute">
             <div className="space-y-6 p-4 border rounded-lg max-w-4xl">
               <h2 className="text-xl font-semibold flex items-center gap-2">
@@ -154,7 +158,6 @@ export default function BackupPage() {
               <Progress value={progress} className="w-full" />
               <p className="text-sm text-muted-foreground">Progress: {progress}%</p>
 
-              {/* Real-time Log Output */}
               <div className="h-64 overflow-y-auto bg-muted/50 p-4 rounded-md font-mono text-sm border">
                 {jobOutput.length === 0 ? (
                   <p className="text-center text-muted-foreground">Awaiting job start...</p>
@@ -169,18 +172,14 @@ export default function BackupPage() {
             </div>
           </TabsContent>
 
-          {/* --- 3. RESULTS TAB --- */}
+          {/* --- 3. RESULTS TAB (Copied from BackupPage) --- */}
           <TabsContent value="results">
             <div className="space-y-6 p-6 border rounded-lg max-w-4xl">
               <h2 className="text-2xl font-bold flex items-center gap-3">
                 {jobStatus === 'success' ? (
-                  <>
-                    <CheckCircle className="h-6 w-6 text-green-500" /> Job Complete!
-                  </>
+                  <><CheckCircle className="h-6 w-6 text-green-500" /> Restore Complete!</>
                 ) : jobStatus === 'failed' ? (
-                  <>
-                    <XCircle className="h-6 w-6 text-destructive" /> Job Failed
-                  </>
+                  <><XCircle className="h-6 w-6 text-destructive" /> Restore Failed</>
                 ) : (
                   "Awaiting Execution"
                 )}
@@ -191,15 +190,16 @@ export default function BackupPage() {
               <div className="space-y-2">
                 <p className="font-medium">Summary:</p>
                 <ul className="list-disc list-inside text-muted-foreground ml-4">
-                  <li>Target(s): {backupParams.hostname || backupParams.inventory_file || 'N/A'}</li>
-                  <li>Credentials: {backupParams.username ? 'Provided' : 'Missing'}</li>
+                  <li>Device: {restoreParams.device_name || 'N/A'}</li>
+                  <li>Backup ID: {restoreParams.backup_id || 'N/A'}</li>
+                  <li>Credentials: {restoreParams.username ? 'Provided' : 'Missing'}</li>
                   <li>Final Status: <span className={jobStatus === 'success' ? 'text-green-500 font-semibold' : 'text-destructive font-semibold'}>{jobStatus.toUpperCase()}</span></li>
                 </ul>
               </div>
 
               <div className="flex justify-end pt-4">
                 <Button onClick={resetWorkflow} variant="outline">
-                  Start New Backup
+                  Start New Restore
                 </Button>
               </div>
             </div>

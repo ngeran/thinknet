@@ -20,7 +20,7 @@ export default defineConfig({
       // All requests starting with '/api' (e.g., /api/sidebar-data/...)
       '/api': {
         // Are redirected to the FastAPI service running on port 8000
-        target: 'http://localhost:8000',
+        target: 'http://fastapi_gateway:8000',
         // Necessary for correctly handling host headers
         changeOrigin: true,
       },
