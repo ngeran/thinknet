@@ -1,13 +1,13 @@
+// SidebarLoader.jsx
+
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { CollapsibleSidebar } from './CollapsibleSidebar';
-import { Loader2, AlertTriangle, Menu } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Loader2, AlertTriangle } from 'lucide-react';
 
 /**
  * Component responsible for fetching sidebar configuration from the FastAPI backend
  * and rendering the CollapsibleSidebar with the dynamic data.
- * * It calls: GET /api/sidebar-data/sidebar/operations_sidebar_config
  */
 export default function SidebarLoader({ title, activePath }) {
   const [navItems, setNavItems] = useState([]);
@@ -17,19 +17,18 @@ export default function SidebarLoader({ title, activePath }) {
   useEffect(() => {
     const fetchSidebarConfig = async () => {
       const configId = 'operations_sidebar_config';
-      // Use the updated, precise path defined in sidebar_metadata.py
       const url = `/api/sidebar-data/sidebar/${configId}`;
 
       try {
         const response = await axios.get(url);
-        setNavItems(response.data); // FastAPI returns the grouped list
+        setNavItems(response.data);
         setError(null);
       } catch (err) {
         console.error("Failed to load sidebar configuration:", err);
-        // Check if it's a 404 (file not found) or connection error
         if (err.response && err.response.status === 404) {
           setError("Configuration file not found (404). Check backend and YAML path.");
         } else {
+          // This captures the 500 error from the backend
           setError("Could not connect to API gateway or backend failed.");
         }
         setNavItems([]);
@@ -41,15 +40,13 @@ export default function SidebarLoader({ title, activePath }) {
     fetchSidebarConfig();
   }, []);
 
-
-  // --- Loading State (Minimal UI to prevent blank screen) ---
+  // --- Loading State ---
   if (isLoading) {
     return (
       <div className="hidden md:flex flex-col items-center justify-center w-[72px] h-screen border-r">
         <Loader2 className="h-5 w-5 animate-spin text-primary" />
         <p className="text-xs text-primary mt-2">Loading</p>
       </div>
-      // Mobile trigger remains visible even while loading
     );
   }
 
@@ -67,7 +64,7 @@ export default function SidebarLoader({ title, activePath }) {
   return (
     <CollapsibleSidebar
       title={title}
-      navItems={navItems}
+      menuItems={navItems}
       activePath={activePath}
     />
   );

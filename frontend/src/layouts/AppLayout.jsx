@@ -16,7 +16,7 @@ const AppLayout = () => {
 
   // Check if the current route starts with '/operations' (Full-width route logic)
   const isFullWidthLayout = location.pathname.startsWith('/operations');
-  const centeringClasses = "max-w-7xl mx-auto p-4 md:p-8";
+  const centeringClasses = "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4";
 
   return (
     <LayoutProvider>

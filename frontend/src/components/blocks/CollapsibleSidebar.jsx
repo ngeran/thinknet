@@ -56,17 +56,18 @@ const SidebarContent = ({ navItems, isCollapsed = false, isMobile = false }) => 
                 <Button
                   key={item.id || item.route}
                   asChild
-                  variant={isActive(item.url) ? "secondary" : "ghost"}
+                  // ✅ FIX 1: Use item.route for the active state check
+                  variant={isActive(item.route) ? "secondary" : "ghost"}
                   // Use px-2 (padding-x) for subtle padding in collapsed state
                   className={`w-full justify-start font-normal ${isCollapsed && !isMobile ? 'justify-center px-2 h-9' : ''}`}
                 >
-                  {/* Link: Must be w-full flex to control children layout */}
-                  <Link to={item.url} className="w-full flex items-center">
+                  {/* ✅ FIX 2: Use item.route for the navigation Link's destination */}
+                  <Link to={item.route} className="w-full flex items-center">
 
                     {/* Icon Container: Handles spacing and centering */}
                     <div
                       className={`flex items-center transition-all duration-200
-                                                        ${isCollapsed && !isMobile ? 'justify-center w-full' : 'w-5 h-5'}`}
+                                       ${isCollapsed && !isMobile ? 'justify-center w-full' : 'w-5 h-5'}`}
                     >
                       {getIconComponent(item.icon)}
                     </div>
@@ -112,7 +113,7 @@ export function CollapsibleSidebar({
       <aside
         // The 'md:flex' class is removed here as OperationsLayout is already handling the flex context
         className={`hidden md:flex flex-col border-r transition-all duration-300 ease-in-out flex-shrink-0 
-                            ${isCollapsed ? 'w-[72px]' : 'w-60'} ${className}`}
+                                 ${isCollapsed ? 'w-[72px]' : 'w-60'} ${className}`}
       >
         {/* Header/Toggle Section: Fixed height area */}
         <div className={`flex items-center p-4 h-[65px] ${isCollapsed ? 'justify-center' : 'justify-between'}`}>
@@ -135,14 +136,12 @@ export function CollapsibleSidebar({
 
         {/* Navigation Links Area */}
         <div className="flex-1 overflow-hidden">
-          {/* Pass the correct props */}
+          {/* Pass the correct prop data to SidebarContent */}
           <SidebarContent navItems={menuItems} isCollapsed={isCollapsed} />
         </div>
       </aside>
 
       {/* 2. Mobile Sheet: Full sidebar content displayed in a slide-out panel */}
-      {/* 💡 NOTE: This should ideally be moved to a component that lives in the fixed Header,
-                 but if kept here, it must be outside the desktop flow. */}
       <div className="md:hidden">
         <Sheet open={isSheetOpen} onOpenChange={setIsSheetOpen}>
           <SheetTrigger asChild>
@@ -163,7 +162,3 @@ export function CollapsibleSidebar({
     </>
   );
 }
-
-// NOTE: Since you are using named exports in this project, ensure you use the named export.
-// If you must use default:
-// export default CollapsibleSidebar;
