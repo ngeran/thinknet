@@ -1,9 +1,10 @@
+// frontend/src/components/blocks/CollapsibleSidebar.jsx (FINAL CORRECTED VERSION)
+
 import React, { useState } from 'react';
 import { useLocation, Link } from 'react-router-dom';
 import { ChevronRight, Menu } from 'lucide-react';
 
 // IMPORTANT: Import all necessary Lucide icons for dynamic rendering
-// For production, you might only import the ones you need, but for demonstration:
 import * as LucideIcons from 'lucide-react';
 
 // Reusable UI components (assuming shadcn/ui)
@@ -26,56 +27,53 @@ const getIconComponent = (iconName) => {
 };
 
 
-export function CollapsibleSidebar({
-  title,
-  navItems,
-  className
-}) {
+// --- Core Sidebar Content Component ---
+const SidebarContent = ({ navItems, isCollapsed = false, isMobile = false }) => {
   const location = useLocation();
-  const [isCollapsed, setIsCollapsed] = useState(false);
-
-  // Helper: Checks if the current route matches the item's route
   const isActive = (route) => location.pathname === route;
 
-  // --- Core Sidebar Content (Desktop and Sheet) ---
-  const SidebarContent = ({ isMobile = false }) => (
+  // Flatten menuItems array if it contains a single top-level object without sections
+  const sections = Array.isArray(navItems) && navItems.length > 0 && !navItems[0].title
+    ? [{ title: '', items: navItems }] // Treat as a single section if no titles
+    : navItems;
+
+  return (
     <ScrollArea className="h-full">
       <div className={`flex flex-col space-y-4 p-4 ${isMobile ? 'w-full' : ''}`}>
 
-        {(Array.isArray(navItems) ? navItems : []).map((section, index) => (
-          <div key={index} className="space-y-2">
+        {(Array.isArray(sections) ? sections : []).map((section, sectionIndex) => (
+          <div key={sectionIndex} className="space-y-2">
 
-            {/* Section Title: Shows only the first letter when collapsed on desktop */}
-            <h4 className={`mb-1 px-3 text-sm font-semibold tracking-wider text-muted-foreground ${isCollapsed && !isMobile ? 'text-center' : ''}`}>
-              {isCollapsed && !isMobile ? (section.title[0]) : section.title}
-            </h4>
+            {/* Section Title: Conditionally displays title or first letter */}
+            {section.title && (
+              <h4 className={`mb-1 px-3 text-sm font-semibold tracking-wider text-muted-foreground ${isCollapsed && !isMobile ? 'text-center' : ''}`}>
+                {isCollapsed && !isMobile ? (section.title[0]) : section.title}
+              </h4>
+            )}
 
             <div className="space-y-1">
               {section.items.map((item) => (
                 <Button
                   key={item.id || item.route}
                   asChild
-                  variant={isActive(item.route) ? "secondary" : "ghost"}
-                  // FIX: Use px-2 (padding-x) for subtle padding in collapsed state
+                  variant={isActive(item.url) ? "secondary" : "ghost"}
+                  // Use px-2 (padding-x) for subtle padding in collapsed state
                   className={`w-full justify-start font-normal ${isCollapsed && !isMobile ? 'justify-center px-2 h-9' : ''}`}
                 >
                   {/* Link: Must be w-full flex to control children layout */}
-                  <Link to={item.route} className="w-full flex items-center">
+                  <Link to={item.url} className="w-full flex items-center">
 
-                    {/* Icon Container: Fixed size in expanded state, centered in collapsed state */}
+                    {/* Icon Container: Handles spacing and centering */}
                     <div
-                      // FIX: Use consistent w-5 h-5 (20px square) for icon placement
-                      className={`flex items-center transition-all duration-200 
-                                ${isCollapsed && !isMobile ? 'justify-center w-full' : 'w-5 h-5'}`}
+                      className={`flex items-center transition-all duration-200
+                                                        ${isCollapsed && !isMobile ? 'justify-center w-full' : 'w-5 h-5'}`}
                     >
-                      {/* CRITICAL FIX: Dynamically render the icon component */}
                       {getIconComponent(item.icon)}
                     </div>
 
                     {/* Text: Hides completely when collapsed on desktop */}
                     {!(isCollapsed && !isMobile) && (
                       <span
-                        // FIX: Ensure text occupies the remaining width and aligns left
                         className="ml-3 truncate transition-opacity duration-200 w-full text-left"
                       >
                         {item.title}
@@ -85,19 +83,36 @@ export function CollapsibleSidebar({
                 </Button>
               ))}
             </div>
-            {index < navItems.length - 1 && <Separator className="my-4" />}
+            {sectionIndex < sections.length - 1 && <Separator className="my-4" />}
           </div>
         ))}
       </div>
     </ScrollArea>
   );
+};
 
-  // --- Main Component Structure ---
+
+// --- Main CollapsibleSidebar Component Structure ---
+export function CollapsibleSidebar({
+  title,
+  menuItems, // Renamed from navItems to menuItems to match prop usage
+  className
+}) {
+  const location = useLocation();
+  const [isCollapsed, setIsCollapsed] = useState(false);
+
+  // State to manage the mobile sheet open/close state
+  const [isSheetOpen, setIsSheetOpen] = useState(false);
+
+
   return (
     <>
       {/* 1. Desktop Sidebar: Width adjusts based on isCollapsed state */}
+      {/* 🔑 CRITICAL FIX: The entire desktop sidebar is wrapped in an <aside> */}
       <aside
-        className={`hidden md:flex flex-col border-r transition-all duration-300 ease-in-out ${isCollapsed ? 'w-[72px]' : 'w-60'} ${className}`}
+        // The 'md:flex' class is removed here as OperationsLayout is already handling the flex context
+        className={`hidden md:flex flex-col border-r transition-all duration-300 ease-in-out flex-shrink-0 
+                            ${isCollapsed ? 'w-[72px]' : 'w-60'} ${className}`}
       >
         {/* Header/Toggle Section: Fixed height area */}
         <div className={`flex items-center p-4 h-[65px] ${isCollapsed ? 'justify-center' : 'justify-between'}`}>
@@ -120,15 +135,19 @@ export function CollapsibleSidebar({
 
         {/* Navigation Links Area */}
         <div className="flex-1 overflow-hidden">
-          <SidebarContent />
+          {/* Pass the correct props */}
+          <SidebarContent navItems={menuItems} isCollapsed={isCollapsed} />
         </div>
       </aside>
 
       {/* 2. Mobile Sheet: Full sidebar content displayed in a slide-out panel */}
-      <div className="md:hidden absolute top-4 left-4 z-50">
-        <Sheet>
+      {/* 💡 NOTE: This should ideally be moved to a component that lives in the fixed Header,
+                 but if kept here, it must be outside the desktop flow. */}
+      <div className="md:hidden">
+        <Sheet open={isSheetOpen} onOpenChange={setIsSheetOpen}>
           <SheetTrigger asChild>
-            <Button variant="outline" size="icon" aria-label="Open menu">
+            {/* We use 'absolute' here because this trigger MUST float over the content on mobile */}
+            <Button variant="outline" size="icon" aria-label="Open menu" className="absolute top-4 left-4 z-50">
               <Menu className="h-4 w-4" />
             </Button>
           </SheetTrigger>
@@ -137,11 +156,14 @@ export function CollapsibleSidebar({
               <h3 className="font-bold">{title}</h3>
             </div>
             <Separator />
-            <SidebarContent isMobile={true} />
+            <SidebarContent navItems={menuItems} isMobile={true} />
           </SheetContent>
         </Sheet>
       </div>
     </>
   );
 }
-export default CollapsibleSidebar;
+
+// NOTE: Since you are using named exports in this project, ensure you use the named export.
+// If you must use default:
+// export default CollapsibleSidebar;

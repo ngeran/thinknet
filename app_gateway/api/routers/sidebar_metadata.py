@@ -1,4 +1,5 @@
 # app_gateway/routers/sidebar_metadata.py
+
 from fastapi import APIRouter, HTTPException
 import yaml
 from pathlib import Path
@@ -6,11 +7,12 @@ from typing import List, Dict, Any
 
 # Use the most descriptive name and a relevant prefix
 router = APIRouter(
-    prefix="/sidebar-data",  # Updated prefix for clarity: /api/sidebar-data/sidebar/...
+    prefix="/sidebar-data",  # /api/sidebar-data/sidebar/...
     tags=["Sidebar Metadata"],
 )
 
 # IMPORTANT: This path must match your Docker volume mount point 
+# Based on your shell output, /app/shared/data is the correct root.
 DATA_DIR = Path("/app/shared/data")
 
 @router.get("/sidebar/{sidebar_id}")
@@ -18,8 +20,6 @@ async def get_sidebar_data(sidebar_id: str):
     """
     Reads and returns the content of a specific sidebar YAML file, 
     grouping the flat list into the structure expected by the frontend.
-    
-    Expected sidebar_id: 'operations_sidebar_config'
     """
     
     # 1. Construct the file path using the dynamic ID
@@ -36,20 +36,23 @@ async def get_sidebar_data(sidebar_id: str):
         with open(file_path, 'r') as f:
             data = yaml.safe_load(f)
         
-        # --- FIX FOR YAML STRUCTURE ERROR ---
-        # The previous 500 error indicated 'data' was a list, not a dict with 'get'.
-        # We check the type and extract the item list correctly.
-        item_list: List[Dict[str, Any]]
-        if isinstance(data, list):
-            # The YAML file is a top-level list (like the one provided)
+        # 🎯 CRITICAL FIX: Handle case where file is empty (yaml.safe_load returns None)
+        if data is None:
+            item_list: List[Dict[str, Any]] = []
+        
+        # --- YAML STRUCTURE PARSING ---
+        elif isinstance(data, list):
+            # If the YAML file is a top-level list
             item_list = data
+        
         elif isinstance(data, dict):
-            # The YAML file is a dictionary and expects a key like 'items'
+            # If the YAML file is a dictionary (like your provided file with the 'items' key)
             item_list = data.get('items', [])
+        
         else:
-            # Handle empty or invalid YAML load result
+            # Handle any other invalid type
             item_list = []
-        # ----------------------------------
+        # ------------------------------
         
         # 3. Restructure the flat list (from the YAML) into the grouped format 
         grouped_data = {}

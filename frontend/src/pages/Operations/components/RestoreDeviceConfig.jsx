@@ -1,9 +1,12 @@
+// frontend/src/pages/Operations/components/RestoreDeviceConfig.jsx
+
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+// ✅ Check for capital 'L' and 'S' in your file system!
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
-// NOTE: Use the environment variable VITE_API_GATEWAY_URL from your Docker setup
+// NOTE: Use the environment variable VITE_API_GATEWAY_URL
 const API_URL = import.meta.env.VITE_API_GATEWAY_URL || 'http://localhost:8000';
 
 /**
@@ -16,8 +19,8 @@ export default function RestoreDeviceConfig({ parameters, onParamChange }) {
   const [error, setError] = useState(null);
 
   // Track selections locally before sending to parent
-  const [localDevice, setLocalDevice] = useState(parameters.device_name);
-  const [localBackup, setLocalBackup] = useState(parameters.backup_id);
+  const [localDevice, setLocalDevice] = useState(parameters.device_name || ''); // Initialize with empty string
+  const [localBackup, setLocalBackup] = useState(parameters.backup_id || ''); // Initialize with empty string
 
   // 1. Fetch data on component mount
   useEffect(() => {

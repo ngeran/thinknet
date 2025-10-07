@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import CollapsibleSidebar from './CollapsibleSidebar';
+import { CollapsibleSidebar } from './CollapsibleSidebar';
 import { Loader2, AlertTriangle, Menu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 

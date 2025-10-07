@@ -1,8 +1,6 @@
-// frontend/src/context/NavigationContext.jsx (FINAL SYNTAX AND ROUTE FIX)
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { PageMap } from '../lib/navigationUtils'; // Component-to-path mapping
-import { Navigate } from 'react-router-dom'; // For redirection
+import { PageMap } from '../lib/navigationUtils';
 
 // =================================================================
 // CONFIGURATION & CONTEXT
@@ -13,179 +11,87 @@ const NAVIGATION_ENDPOINT = `${API_GATEWAY_URL}/api/navigation`;
 
 const NavigationContext = createContext();
 
-/**
- * Custom hook to access navigation context.
- */
 export const useNavigation = () => useContext(NavigationContext);
 
 // =================================================================
-// ROUTE GENERATOR (Fixed for Nested Layouts)
+// ROUTE GENERATOR (Simple Top-Level Routes Only)
 // =================================================================
-
-/**
- * Helper function to build nested children routes from PageMap keys.
- */
-const buildNestedChildren = (parentKey, registeredPaths) => {
-  const childrenMap = {};
-  const allPageMapKeys = Object.keys(PageMap);
-
-  // 1. Traverse PageMap keys and build the nested map structure
-  allPageMapKeys.forEach(key => {
-    if (key.startsWith(parentKey + '/') && PageMap[key] && !registeredPaths.has(key)) {
-      const relativePath = key.substring(parentKey.length + 1);
-      const segments = relativePath.split('/');
-
-      let currentLevel = childrenMap;
-
-      for (let i = 0; i < segments.length; i++) {
-        const segment = segments[i];
-
-        if (!currentLevel[segment]) {
-          currentLevel[segment] = { path: segment, children: {} };
-        }
-
-        // CRITICAL FIX BLOCK: Assigns component as index or element based on segment count
-        if (i === segments.length - 1) {
-          const ChildRouteComponent = PageMap[key];
-
-          if (segments.length === 1) {
-            // e.g., 'backups' -> BackupHistory.jsx (as index)
-            currentLevel[segment].indexElement = <ChildRouteComponent />;
-          } else {
-            // e.g., 'backups/new' -> Backup.jsx (as a regular element)
-            currentLevel[segment].element = <ChildRouteComponent />;
-          }
-          registeredPaths.add(key);
-        }
-        currentLevel = currentLevel[segment].children;
-      }
-    }
-  });
-
-  // 2. Recursive function to convert the map structure back to a clean array of route objects
-  const convertMapToArray = (map) => {
-    return Object.values(map).map(route => {
-      const childrenArray = convertMapToArray(route.children);
-
-      delete route.children;
-
-      // This ensures the index element is added as the first child, 
-      // and the 'element' property is cleared from the parent route.
-      if (route.indexElement) {
-        childrenArray.unshift({ index: true, element: route.indexElement });
-        delete route.indexElement;
-        delete route.element; // Ensure we don't accidentally set both element and index
-      }
-
-      return {
-        ...route,
-        children: childrenArray.length > 0 ? childrenArray : undefined,
-      };
-    });
-  };
-
-  return convertMapToArray(childrenMap);
-};
-
-
-/**
- * Generates nested routes structure from backend navigation data.
- * The output is directly consumed by React Router's useRoutes.
- */
 const generateRoutes = (navigationData) => {
+  // 🔑 FIX: Initialize routes with the static Dashboard route.
   const routes = [];
-  const registeredPaths = new Set();
-  const allPageMapKeys = Object.keys(PageMap);
+  const registeredPaths = new Set(); // Reset set to allow 'dashboard' to be added once
 
-  // 1. Hardcoded Dashboard route
+  // 1. Manually add the Dashboard route first, using PageMap
   if (PageMap['dashboard']) {
     routes.push({
       path: 'dashboard',
-      element: <PageMap.dashboard />,
-      title: 'Dashboard',
+      element: React.createElement(PageMap['dashboard']),
+      title: 'Dashboard'
     });
-    registeredPaths.add('dashboard');
+    registeredPaths.add('dashboard'); // Now mark it as registered
   }
+  // If PageMap['dashboard'] is not defined, the error is thrown in useEffect, so this is safe.
 
-  // 2. Process backend-provided navigation tree
+
   navigationData.forEach(parent => {
-    const parentKey = parent.url
-      ? parent.url.startsWith('/')
-        ? parent.url.slice(1)
-        : parent.url
-      : parent.id;
+    const getParentKey = function () {
+      if (parent.url && parent.url.startsWith('/')) return parent.url.slice(1);
+      if (parent.url) return parent.url;
+      return parent.id;
+    };
+    const parentKey = getParentKey();
 
-    const isTopLevelLayout =
-      parent.url &&
-      parent.url.startsWith('/') &&
-      parent.url.slice(1).indexOf('/') === -1;
+    // Continue to skip 'operations' since it's handled statically in App.jsx
+    if (parentKey === 'operations') return;
 
-    // 🚀 2A. Register Parent/Layout Route (e.g., 'operations')
-    if (isTopLevelLayout && PageMap[parentKey] && !registeredPaths.has(parentKey)) {
-      const LayoutComponent = PageMap[parentKey];
-
-      // 1. Generate nested children routes using the helper function
-      let layoutChildren = buildNestedChildren(parentKey, registeredPaths);
-
-      // 2. Add the index redirect (e.g., /operations -> /operations/backups)
-      const redirectPathSegment = layoutChildren.length > 0 ? layoutChildren[0].path : '/';
-      layoutChildren.unshift({
-        index: true,
-        element: <Navigate to={redirectPathSegment} replace />,
-      });
-
-
-      const routeObject = {
-        path: parentKey, // e.g., 'operations'
-        element: <LayoutComponent />, // Renders OperationsLayout.jsx
-        title: parent.title,
-        children: layoutChildren, // Contains the index redirect and all relative sub-pages
-      };
-
-      routes.push(routeObject);
-      registeredPaths.add(parentKey); // Mark the layout path as handled
+    // Top-Level Pages (will include any other top-level pages besides dashboard/operations)
+    if (PageMap[parentKey]) {
+      if (!registeredPaths.has(parentKey)) {
+        if (parentKey.indexOf('/') === -1) {
+          routes.push({
+            path: parentKey,
+            element: React.createElement(PageMap[parentKey]),
+            title: parent.title
+          });
+          registeredPaths.add(parentKey);
+        }
+      }
     }
 
-    // 2B. Register standalone pages from YAML children 
-    parent.children?.forEach(child => {
-      const pathKey = child.url.startsWith('/') ? child.url.slice(1) : child.url;
-      const ChildComponent = PageMap[pathKey];
+    // Child Pages (nested dynamic routes)
+    if (parent.children) {
+      parent.children.forEach(child => {
+        const getPathKey = function () {
+          // ... (logic remains the same) ...
+          if (child.url && child.url.startsWith('/')) return child.url.slice(1);
+          if (child.url) return child.url;
+          return child.id;
+        };
+        const pathKey = getPathKey();
 
-      if (ChildComponent && !registeredPaths.has(pathKey)) {
-        routes.push({
-          path: pathKey,
-          element: <ChildComponent />,
-          title: child.title,
-        });
-        registeredPaths.add(pathKey);
-      }
-    });
-  });
+        const ChildComponent = PageMap[pathKey];
 
-  // 3. Register any unmatched static routes from PageMap 
-  Object.keys(PageMap).forEach(key => {
-    if (!registeredPaths.has(key) && key !== 'dashboard') {
-      const Component = PageMap[key];
-      if (Component) {
-        routes.push({
-          path: key,
-          element: <Component />,
-        });
-        registeredPaths.add(key);
-      }
+        if (ChildComponent && !registeredPaths.has(pathKey)) {
+          routes.push({
+            // NOTE: If the child path is relative (e.g., 'reports/billing'), 
+            // this will only work if the parent's component acts as a layout.
+            // Since all dynamic routes are children of AppLayout, these should be top-level paths.
+            path: pathKey,
+            element: React.createElement(ChildComponent),
+            title: child.title
+          });
+          registeredPaths.add(pathKey);
+        }
+      });
     }
   });
 
   return routes;
 };
-
 // =================================================================
 // CONTEXT PROVIDER COMPONENT
 // =================================================================
 
-/**
- * Provides navigation routes and menu structure to the app.
- */
 export const NavigationProvider = ({ children }) => {
   const [menuData, setMenuData] = useState([]);
   const [routes, setRoutes] = useState([]);
@@ -193,7 +99,7 @@ export const NavigationProvider = ({ children }) => {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    const fetchNavigationData = async () => {
+    const fetchNavigationData = async function () {
       try {
         if (!PageMap['dashboard']) {
           throw new Error("PageMap is incomplete. Cannot generate routes.");
@@ -209,21 +115,17 @@ export const NavigationProvider = ({ children }) => {
         const result = await response.json();
         const rawData = result.data || result;
 
-        // Ensure children is always an array
         const sanitizedData = rawData.map(item => ({
           ...item,
           children: item.children || [],
         }));
 
         setMenuData(sanitizedData);
-
         const generatedRoutes = generateRoutes(sanitizedData);
         setRoutes(generatedRoutes);
       } catch (err) {
         console.error('Failed to fetch and generate navigation:', err);
         setError(err.message);
-
-        // Safe fallback: at least return dashboard if possible
         setRoutes(generateRoutes([]));
       } finally {
         setLoading(false);
@@ -236,8 +138,6 @@ export const NavigationProvider = ({ children }) => {
   const value = { menuData, routes, loading, error };
 
   return (
-    <NavigationContext.Provider value={value}>
-      {children}
-    </NavigationContext.Provider>
+    React.createElement(NavigationContext.Provider, { value }, children) // ✅ Replaces JSX
   );
 };

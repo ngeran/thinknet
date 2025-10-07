@@ -1,4 +1,5 @@
-// frontend/src/main.jsx
+// frontend/src/main.jsx (FINAL WITH REACT ROUTER WARNINGS FIXED)
+
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
@@ -10,8 +11,8 @@ ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     {/* Provides dark/light theme functionality */}
     <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
-      {/* Provides routing functionality */}
-      <BrowserRouter>
+      {/* 🔑 REACT ROUTER FIX: Add future flags to silence warnings and opt-in to v7 behavior */}
+      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <App />
       </BrowserRouter>
     </ThemeProvider>

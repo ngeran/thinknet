@@ -1,11 +1,18 @@
 // frontend/src/App.jsx
 
 import React from 'react';
-// 🛑 FIX: BrowserRouter is removed from imports as it now resides only in main.jsx
 import { useRoutes, Navigate } from 'react-router-dom';
 import { ThemeProvider } from './providers/ThemeProvider';
 import AppLayout from './layouts/AppLayout.jsx';
 import { NavigationProvider, useNavigation } from './context/NavigationContext';
+
+// Import the specific layout and components for the Operations route (Static Import)
+import OperationsLayout from './pages/Operations/OperationsLayout.jsx';
+import BackupHistory from './pages/Operations/BackupHistory.jsx';
+import Backup from './pages/Operations/Backup.jsx';
+import RestorePage from './pages/Operations/RestorePage.jsx';
+import BackupSettings from './pages/Operations/BackupSettings.jsx';
+
 
 // =================================================================
 // ROUTE STRUCTURE GENERATOR
@@ -13,24 +20,38 @@ import { NavigationProvider, useNavigation } from './context/NavigationContext';
 
 /**
  * Creates the final route array structure for React Router's useRoutes hook.
- * All dynamic routes are placed as children of the AppLayout (path: '/').
- * * @param {Array<Object>} dynamicRoutes - Routes fetched and processed by NavigationContext.
+ * @param {Array<Object>} dynamicRoutes - Routes fetched (excluding operations).
  * @returns {Array<Object>} The complete, structured array for useRoutes.
  */
 const createRouteStructure = (dynamicRoutes) => {
   return [
     {
       path: '/',
-      element: <AppLayout />, // The main application layout component
+      element: <AppLayout />,
       children: [
-        // 1. Root Redirect: Redirects the base URL (/) to /dashboard
+        // 1. Root Redirect
         { index: true, element: <Navigate to="/dashboard" replace /> },
 
-        // 2. Dynamic Routes: Routes built from the backend configuration.
-        // This includes top-level pages and layout routes (e.g., 'operations' with its children).
+        // 2. STATIC OPERATIONS LAYOUT
+        {
+          path: 'operations',
+          element: <OperationsLayout />,
+          children: [
+            // Index Redirect: /operations -> /operations/backups
+            { index: true, element: <Navigate to="backups" replace /> },
+
+            // Nested Children (Path is relative to parent: 'operations')
+            { path: 'backups', element: <BackupHistory /> },
+            { path: 'backups/new-job', element: <Backup /> },
+            { path: 'restore', element: <RestorePage /> },
+            { path: 'backup/settings', element: <BackupSettings /> },
+          ],
+        },
+
+        // 3. Dynamic Routes (All other top-level pages)
         ...dynamicRoutes,
 
-        // 3. Fallback Route: Catches any unhandled URL (404)
+        // 4. Fallback Route
         { path: '*', element: <div className="p-4 text-center">404: Page Not Found</div> }
       ]
     }
@@ -38,25 +59,27 @@ const createRouteStructure = (dynamicRoutes) => {
 };
 
 // =================================================================
-// ROUTER CONTENT CONSUMER
+// ROUTER CONTENT CONSUMER & APP
 // =================================================================
-function AppRouterContent() {
-  // 🚀 FIX: The useNavigation hook is called unconditionally here, preventing 
-  // the "change in the order of Hooks" violation.
-  const { loading, routes } = useNavigation();
 
-  if (loading) {
+/**
+ * Component responsible for rendering the routes using useRoutes.
+ * It is mounted only when loading is complete.
+ */
+function RouteElements({ routes, error }) {
+
+  if (error) {
     return (
-      <div className="flex items-center justify-center h-screen text-xl text-muted-foreground">
-        <p>Loading application configuration...</p>
+      <div className="p-8 text-center text-red-600">
+        <h1>Configuration Load Error</h1>
+        <p>{error}</p>
       </div>
     );
   }
 
-  // 🛑 CRITICAL: useRoutes consumes the structured route array and returns the 
-  // rendered component tree, applying the routing logic dynamically.
+  // Call useRoutes ONLY when the data is guaranteed to be available
   const finalRoutes = createRouteStructure(routes);
-  const routeElements = useRoutes(finalRoutes);
+  const routeElements = useRoutes(finalRoutes); // ⬅️ Hook called consistently here
 
   return (
     <React.Suspense fallback={<div className="p-4 text-center">Loading Content...</div>}>
@@ -65,16 +88,39 @@ function AppRouterContent() {
   );
 }
 
-// =================================================================
-// FINAL APP COMPONENT
-// =================================================================
+
+/**
+ * Main component that manages the Navigation Context and determines the loading state.
+ */
+function AppRouterContent() {
+  // 🔑 HOOKS FIX: Call useNavigation once and unconditionally at the top.
+  const { loading, routes, error } = useNavigation(); // ⬅️ Hook called consistently here
+
+  // Handle Loading State (Return early before rendering routes)
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen text-xl text-muted-foreground">
+        <p>Loading application configuration...</p>
+      </div>
+    );
+  }
+
+  // Render the route-dependent component only after loading is false.
+  return (
+    <RouteElements
+      routes={routes}
+      error={error}
+    />
+  );
+}
+
+/**
+ * Root Application component that wraps providers.
+ */
 function App() {
   return (
     <ThemeProvider defaultTheme="system" storageKey="vite-ui-theme">
-      {/* 🛑 FIX: The BrowserRouter is now REMOVED from here. 
-                The router context is provided by <BrowserRouter> in main.jsx. */}
       <NavigationProvider>
-        {/* AppRouterContent uses useNavigation and useRoutes to render the dynamic routing */}
         <AppRouterContent />
       </NavigationProvider>
     </ThemeProvider>
