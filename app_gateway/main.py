@@ -10,7 +10,7 @@ from loguru import logger
 
 # ❌ OLD: from .api.routers import automation, proxy, test_redis, inventory, sidebar_metadata
 # ✅ FIX: Changed to absolute import to ensure correct loading within Docker/Uvicorn
-from app_gateway.api.routers import automation, proxy, test_redis, inventory, sidebar_metadata, restore
+from app_gateway.api.routers import automation, proxy, test_redis, inventory, sidebar_metadata, restore, operations
 
 from .core.config import settings
 
@@ -38,6 +38,8 @@ app.include_router(inventory.router, prefix="/api")
 # Update this line to include the sidebar_metadata router
 app.include_router(sidebar_metadata.router, prefix="/api") # Now includes sidebar_metadata
 app.include_router(restore.router, prefix="/api")
+# 🔑 NEW LINE: Include the operations router
+app.include_router(operations.router, prefix="/api") 
 
 # --- Root Health Check ---
 # Description: Simple health check for the application root.

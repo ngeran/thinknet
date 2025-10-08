@@ -63,6 +63,9 @@ services:
       # CRITICAL FIX: Mount the shared data directory (needed for the inventory router to find files)
       # This mount was already correct, but we'll ensure the /app path is consistent.
       - ./shared:/app/shared
+      # 🔑 NEW FIX: Map the local scripts folder into the expected path within /app/app_gateway
+    # Local Path: ./frontend/py_scripts -> Container Path: /app/app_gateway/py_scripts
+      - ./frontend/py_scripts:/app/app_gateway/py_scripts 
 
   # ----------------------------------------------------
   # 3. FRONTEND (React/Vite)
