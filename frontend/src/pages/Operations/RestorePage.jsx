@@ -1,3 +1,5 @@
+// frontend/src/pages/Operations/RestorePage.jsx (FIXED)
+
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -8,31 +10,28 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 
 // Local Components
-// 🛑 IMPORTANT: This is the new component for the dependent dropdowns
 import RestoreDeviceConfig from './components/RestoreDeviceConfig';
-import DeviceAuthFields from '../../shared/DeviceAuthFields'; // Re-use the shared Auth component
-// The dynamic sidebar component
-import SidebarLoader from '../../components/blocks/SidebarLoader';
+import DeviceAuthFields from '../../shared/DeviceAuthFields';
+// 🛑 REMOVE: import SidebarLoader from '../../components/blocks/SidebarLoader'; 
 
 /**
  * Main component for the Restore page, integrating a guided workflow 
- * using three tabs (Configure, Execute, Results) and a dynamic sidebar.
+ * using three tabs (Configure, Execute, Results).
  */
 export default function RestorePage() {
 
-  // State to hold all form parameters. NOTE: This state will be managed by RestoreDeviceConfig
-  // and passed up when ready for execution. For simplicity here, we track the final selected values.
+  // State to hold all form parameters.
   const [restoreParams, setRestoreParams] = useState({
-    username: "", // For DeviceAuthFields
-    password: "", // For DeviceAuthFields
-    device_name: "", // Selected from dependent dropdown 1
-    backup_id: "",   // Selected from dependent dropdown 2
+    username: "",
+    password: "",
+    device_name: "",
+    backup_id: "",
   });
 
   // State to manage the active tab: 'config', 'execute', 'results'
   const [activeTab, setActiveTab] = useState("config");
 
-  // State for the execution phase (Copied from BackupPage)
+  // State for the execution phase
   const [jobStatus, setJobStatus] = useState("idle"); // 'idle', 'running', 'success', 'failed'
   const [progress, setProgress] = useState(0);
   const [jobOutput, setJobOutput] = useState([]);
@@ -42,7 +41,7 @@ export default function RestorePage() {
     setRestoreParams(prev => ({ ...prev, [name]: value }));
   };
 
-  // Determine if the form is valid (requires credentials AND both selections)
+  // Determine if the form is valid
   const isFormValid = (
     restoreParams.username.trim() !== "" &&
     restoreParams.password.trim() !== "" &&
@@ -50,22 +49,20 @@ export default function RestorePage() {
     restoreParams.backup_id.trim() !== ""
   );
 
-  // --- EXECUTION LOGIC (Mocked, copied from BackupPage) ---
+  // --- EXECUTION LOGIC (Mocked) ---
   const startJobExecution = async (e) => {
     e.preventDefault();
 
     if (!isFormValid || jobStatus === 'running') return;
 
-    // 1. Transition to the Execute tab
     setActiveTab("execute");
     setJobStatus("running");
     setProgress(0);
     setJobOutput([]);
 
-    // --- Mock Execution Logic (REPLACE THIS SECTION with API call to FastAPI) ---
+    // --- Mock Execution Logic ---
     console.log("Starting Restore Job with parameters:", restoreParams);
 
-    // Simulate progress updates
     for (let p = 0; p <= 100; p += 10) {
       await new Promise(resolve => setTimeout(resolve, 300));
       setProgress(p);
@@ -76,7 +73,7 @@ export default function RestorePage() {
 
     // Final state transition
     await new Promise(resolve => setTimeout(resolve, 1000));
-    const finalStatus = Math.random() > 0.8 ? "failed" : "success"; // Add a small chance of failure
+    const finalStatus = Math.random() > 0.8 ? "failed" : "success";
     setJobStatus(finalStatus);
 
     const finalMessage = finalStatus === "success" ? "Restore job completed successfully." : "Restore job failed during configuration transfer.";
@@ -96,23 +93,27 @@ export default function RestorePage() {
   };
 
   return (
-    <div className="flex min-h-screen bg-background">
+    // 🔑 FIX: Remove the outer div that wrapped the unnecessary sidebar.
+    // The main content area now inherits the layout from OperationsLayout.jsx
+    // and correctly applies the padding (as fixed in the last step).
+    // The class 'min-h-screen bg-background' is now redundant here and should be removed.
+    <>
+      {/* 🛑 REMOVE SidebarLoader and the wrapper div that held it */}
 
-      {/* 1. Dynamic Sidebar (Must match the existing pattern) */}
-      <SidebarLoader
-        title="Automation Scripts"
-        activePath="/operations/restore" // 🛑 UPDATED PATH
-      />
-
-      {/* 2. Main Content Area (Copied from BackupPage) */}
-      <main className="flex-1 p-8 pt-6">
+      {/* 2. Main Content Area (Now the only content rendered by this component) */}
+      {/* The p-8 pt-6 padding here is fine for spacing content *inside* the page, 
+        but remember the alignment padding (px-4 sm:px-6 lg:px-8 py-4) 
+        was applied to the <main> tag in OperationsLayout.jsx. 
+        If you see double padding, remove p-8 pt-6 here.
+      */}
+      <div className="p-8 pt-6">
         <h1 className="text-3xl font-bold tracking-tight mb-2">Device Restore Operation</h1>
         <p className="text-muted-foreground mb-6">
           A guided workflow to select a device and backup, execute the restore, and view results.
         </p>
         <Separator className="mb-8" />
 
-        {/* --- TABS IMPLEMENTATION (Copied from BackupPage) --- */}
+        {/* --- TABS IMPLEMENTATION --- */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
 
           <TabsList className="grid w-full grid-cols-3 mb-6">
@@ -124,13 +125,13 @@ export default function RestorePage() {
           {/* --- 1. CONFIGURE TAB --- */}
           <TabsContent value="config">
             <form onSubmit={startJobExecution} className="space-y-8 max-w-4xl">
-              {/* 🛑 INTEGRATE NEW DROPDOWN COMPONENT */}
+              {/* INTEGRATE NEW DROPDOWN COMPONENT */}
               <RestoreDeviceConfig
                 parameters={restoreParams}
                 onParamChange={handleParamChange}
               />
 
-              {/* 🛑 USE EXISTING AUTH FIELDS COMPONENT */}
+              {/* USE EXISTING AUTH FIELDS COMPONENT */}
               <DeviceAuthFields
                 parameters={restoreParams}
                 onParamChange={handleParamChange}
@@ -148,7 +149,7 @@ export default function RestorePage() {
             </form>
           </TabsContent>
 
-          {/* --- 2. EXECUTE TAB (Copied from BackupPage) --- */}
+          {/* --- 2. EXECUTE TAB --- */}
           <TabsContent value="execute">
             <div className="space-y-6 p-4 border rounded-lg max-w-4xl">
               <h2 className="text-xl font-semibold flex items-center gap-2">
@@ -172,7 +173,7 @@ export default function RestorePage() {
             </div>
           </TabsContent>
 
-          {/* --- 3. RESULTS TAB (Copied from BackupPage) --- */}
+          {/* --- 3. RESULTS TAB --- */}
           <TabsContent value="results">
             <div className="space-y-6 p-6 border rounded-lg max-w-4xl">
               <h2 className="text-2xl font-bold flex items-center gap-3">
@@ -206,7 +207,7 @@ export default function RestorePage() {
           </TabsContent>
 
         </Tabs>
-      </main>
-    </div>
+      </div>
+    </>
   );
 }

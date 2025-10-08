@@ -44,7 +44,9 @@ const createRouteStructure = (dynamicRoutes) => {
             { path: 'backups', element: <BackupHistory /> },
             { path: 'backups/new-job', element: <Backup /> },
             { path: 'restore', element: <RestorePage /> },
-            { path: 'backup/settings', element: <BackupSettings /> },
+
+            // ✅ FIX: Path changed to match the sidebar's YAML route: /operations/backup/new
+            { path: 'backup/new', element: <BackupSettings /> },
           ],
         },
 

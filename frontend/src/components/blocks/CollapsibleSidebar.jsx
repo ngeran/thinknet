@@ -30,7 +30,23 @@ const getIconComponent = (iconName) => {
 // --- Core Sidebar Content Component ---
 const SidebarContent = ({ navItems, isCollapsed = false, isMobile = false }) => {
   const location = useLocation();
-  const isActive = (route) => location.pathname === route;
+
+  // Utility function to make the path relative for nested routing
+  const getRelativeRoute = (route) => {
+    // Remove leading slash if present, e.g., "/restore" -> "restore"
+    return route.startsWith('/') ? route.substring(1) : route;
+  };
+
+  // FIX for active state: Checks if the current URL ends with the route segment.
+  // This is necessary because the links are relative, but location.pathname is absolute (/operations/...).
+  const isActive = (route) => {
+    // Ensure both are absolute for comparison: 
+    // Example: location.pathname = "/operations/backups/new-job"
+    // Example: item.route = "/backups/new-job"
+    // Use endsWith for basic highlighting in nested routes
+    return location.pathname.endsWith(route);
+  };
+
 
   // Flatten menuItems array if it contains a single top-level object without sections
   const sections = Array.isArray(navItems) && navItems.length > 0 && !navItems[0].title
@@ -56,13 +72,13 @@ const SidebarContent = ({ navItems, isCollapsed = false, isMobile = false }) => 
                 <Button
                   key={item.id || item.route}
                   asChild
-                  // ✅ FIX 1: Use item.route for the active state check
+                  // Use item.route for the active state check (it contains the path segment)
                   variant={isActive(item.route) ? "secondary" : "ghost"}
                   // Use px-2 (padding-x) for subtle padding in collapsed state
                   className={`w-full justify-start font-normal ${isCollapsed && !isMobile ? 'justify-center px-2 h-9' : ''}`}
                 >
-                  {/* ✅ FIX 2: Use item.route for the navigation Link's destination */}
-                  <Link to={item.route} className="w-full flex items-center">
+                  {/* 🔑 CRITICAL FIX: Use getRelativeRoute() on the link target */}
+                  <Link to={getRelativeRoute(item.route)} className="w-full flex items-center">
 
                     {/* Icon Container: Handles spacing and centering */}
                     <div
@@ -109,9 +125,7 @@ export function CollapsibleSidebar({
   return (
     <>
       {/* 1. Desktop Sidebar: Width adjusts based on isCollapsed state */}
-      {/* 🔑 CRITICAL FIX: The entire desktop sidebar is wrapped in an <aside> */}
       <aside
-        // The 'md:flex' class is removed here as OperationsLayout is already handling the flex context
         className={`hidden md:flex flex-col border-r transition-all duration-300 ease-in-out flex-shrink-0 
                                  ${isCollapsed ? 'w-[72px]' : 'w-60'} ${className}`}
       >
