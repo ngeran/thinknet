@@ -1,3 +1,4 @@
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import asyncio
@@ -108,7 +109,7 @@ async def execute_juniper_job(trigger: JobTrigger):
     
     # 🔑 Path to your orchestrator script inside the container's working directory /app
     # Based on your structure: /app/app_gateway/py_scripts/backup_and_restore/run.py
-    script_path = Path("/app/app_gateway/py_scripts/backup_and_restore/run.py")
+    script_path = Path("/app/app_gateway/py_scripts/scripts/backup_and_restore/run.py")
 
     if not script_path.is_file():
         raise HTTPException(

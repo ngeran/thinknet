@@ -7,12 +7,6 @@
     "type": "object",
     "required": ["id", "title"],
     
-    // 🚀 FIX 1: Enforce EITHER a 'url' (direct link) OR 'children' (dropdown)
-    "oneOf": [
-      { "required": ["url"] },
-      { "required": ["children"] }
-    ],
-
     "properties": {
       "id": {
         "type": "string",

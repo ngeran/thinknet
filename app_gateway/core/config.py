@@ -11,7 +11,7 @@ import os
 # In a Docker environment, 'rust_ws_hub' is the service name defined in docker-compose.yml,
 # and it is resolvable as a hostname on the Docker internal network.
 
-RUST_WS_URL: str = os.getenv("RUST_WS_URL", "ws://rust_ws_hub:3100/ws")
+RUST_WS_URL: str = os.getenv("RUST_WS_URL", "ws://localhost:3100/ws")
 # Note: Using 'rust_ws_hub' ensures inter-container communication works correctly.
 # The default 'ws://localhost:3100/ws' is a fallback for local testing outside Docker.
 

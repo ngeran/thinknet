@@ -1,13 +1,14 @@
 services:
   # ----------------------------------------------------
-  # 0. 🚀 NEW SERVICE: REDIS MESSAGE BROKER
+  # 0. REDIS MESSAGE BROKER
   # ----------------------------------------------------
   redis_broker:
     image: redis:7.2-alpine
     container_name: redis_broker
-    # Expose port 6379 only internally
     command: redis-server --appendonly no
     restart: always
+    networks:
+      - internal_net
 
   # ----------------------------------------------------
   # 1. RUST WS HUB (Port 3100)
@@ -21,20 +22,20 @@ services:
       - "3100:3100"
     restart: always
     volumes:
-      # This maps your local shared/data folder to the container's expected path
       - ./shared/data:/app/shared/data
-      # This maps your local shared/schemas folder to the container's expected path
       - ./shared/schemas:/app/shared/schemas
     depends_on:
-      - redis_broker # 👈 DEPENDS ON REDIS
+      - redis_broker
     environment:
       RUST_LOG: info
-      # 👈 NEW: REDIS CONFIG FOR RUST
+      # Internal Docker DNS name
       REDIS_HOST: redis_broker
       REDIS_PORT: 6379
+    networks:
+      - internal_net
 
   # ----------------------------------------------------
-  # 2. FASTAPI AUTOMATION GATEWAY (Port 8000)
+  # 2. FASTAPI AUTOMATION GATEWAY (Port 8000) - 🔑 CRITICAL: Dual Network
   # ----------------------------------------------------
   fastapi_automation:
     build:
@@ -48,24 +49,18 @@ services:
       - redis_broker
     restart: always
     environment:
-      # FastAPI needs to use the Docker service name to talk to the Rust backend
+      # Talks to rust_backend over the internal_net
       RUST_WS_URL: ws://rust_backend:3100/ws
-      # 👈 NEW: REDIS CONFIG FOR FASTAPI (for testing and later for Python scripts)
       REDIS_HOST: redis_broker
       REDIS_PORT: 6379
-
     volumes:
-      # CRITICAL FIX: Mount the application code to see the updated routers
-      # **OLD: - ./app_gateway:/app_gateway**
-      # **NEW:** Mount the local 'app_gateway' folder to '/app/app_gateway' inside the container.
-      # This assumes the Dockerfile's WORKDIR is /app and Uvicorn runs app_gateway.main:app.
       - ./app_gateway:/app/app_gateway
-      # CRITICAL FIX: Mount the shared data directory (needed for the inventory router to find files)
-      # This mount was already correct, but we'll ensure the /app path is consistent.
       - ./shared:/app/shared
-      # 🔑 NEW FIX: Map the local scripts folder into the expected path within /app/app_gateway
-    # Local Path: ./frontend/py_scripts -> Container Path: /app/app_gateway/py_scripts
-      - ./frontend/py_scripts:/app/app_gateway/py_scripts 
+      - ./frontend/py_scripts:/app/app_gateway/py_scripts
+    # 🔑 FIX: Attached to both internal_net AND the existing crpd-net
+    networks:
+      - internal_net
+      - crpd-net 
 
   # ----------------------------------------------------
   # 3. FRONTEND (React/Vite)
@@ -79,23 +74,20 @@ services:
       - "5173:5173"
     depends_on:
       - fastapi_automation
-
-    # --- CRITICAL FIX: VOLUMES FOR LIVE RELOAD ---
-    # This mounts your local frontend code into the container, allowing instant updates.
     volumes:
-      # Maps your local source code directory to the container's working directory (/app)
       - ./frontend:/app
-      # Explicitly ignore the node_modules folder from the host to prevent slow I/O
       - /app/node_modules
-
-    # Expose the dev server to the Docker host for browser access
     command: npm run dev -- --host 0.0.0.0
-
     environment:
-      # The browser (running on the host) needs to talk to the mapped ports (localhost).
-      #
-      # CORS Fix: Frontend now fetches navigation data from the FastAPI Gateway (8000)
       VITE_API_GATEWAY_URL: http://localhost:8000
-
-      # WebSocket connection to the Rust backend's mapped port
       VITE_RUST_WS_URL: ws://localhost:3100/ws
+    networks:
+      - internal_net
+
+# 🔑 DEFINE: Define both networks
+networks:
+  internal_net:
+    driver: bridge
+  crpd-net:
+    # This network must already exist on your Docker host
+    external: true

@@ -3,14 +3,25 @@ FROM python:3.11-slim
 # Set WORKDIR to the root where the service will run from
 WORKDIR /app
 
-# 1. Copy requirements.txt from the new folder name
-COPY app_gateway/requirements.txt /tmp/requirements.txt 
+# 1. Install necessary system packages for external network debugging
+# iputils-ping and netcat are essential for verifying the connection to 192.168.100.10
+RUN apt-get update && \
+    apt-get install -y iputils-ping netcat-openbsd && \
+    rm -rf /var/lib/apt/lists/*
+
+# 2. Copy requirements.txt and install Python dependencies
+# This includes junos-eznc, lxml, and all other necessary packages.
+COPY app_gateway/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
-# 2. Copy the entire 'app_gateway' source folder into '/app/app_gateway'
+# 3. Copy the main application code (app_gateway folder)
 COPY app_gateway/ /app/app_gateway/
+
+# 4. Copy the Python scripts into their expected location
+# This ensures the subprocess can find and execute run.py
+COPY frontend/py_scripts /app/app_gateway/py_scripts
 
 EXPOSE 8000
 
-# 3. The CMD now uses the correct package path: 'app_gateway.main:app'
+# 5. Set the default command to run Uvicorn
 CMD ["uvicorn", "app_gateway.main:app", "--host", "0.0.0.0", "--port", "8000"]

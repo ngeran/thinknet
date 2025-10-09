@@ -1,0 +1,25 @@
+<configuration changed-seconds="1759985560" changed-localtime="2025-10-09 04:52:40 UTC">
+  <version>20230616.051920_builder.r1345402</version>
+  <system>
+    <host-name>crpd1</host-name>
+    <root-authentication>
+      <encrypted-password>$6$ZaamO$/xb1Me6fIcf62seaslBoNkT/LymQLsw5acmTue/NPbLZxo.HBm9eycXYNuaQbzWVTYPYptIk096/XOJEh..91.</encrypted-password>
+    </root-authentication>
+    <login>
+      <user>
+        <name>admin</name>
+        <uid>2000</uid>
+        <class>super-user</class>
+        <authentication>
+          <encrypted-password>$6$8Ga6W$O0sVDeyMNu6vQ1G0bL7izmfjbNQEIk8vQp0pjfAtqHQ07oHpR6yBdwelal5jIWktsjf3.3wCnCI2Y4wPZiojV0</encrypted-password>
+        </authentication>
+      </user>
+    </login>
+    <services>
+      <ssh/>
+      <netconf>
+        <ssh/>
+      </netconf>
+    </services>
+  </system>
+</configuration>
