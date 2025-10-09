@@ -1,0 +1,24 @@
+<configuration changed-seconds="1760012865" changed-localtime="2025-10-09 12:27:45 UTC">
+  <version>20230616.051920_builder.r1345402</version>
+  <system>
+    <root-authentication>
+      <encrypted-password>$6$tLAQY$VzOaFalxZsH.cDuu8tAxztrjNn7RqUet1pSaL7Ji9xUFR09hohxEF2fiqdlJJOYLirMQBw8Q1oYvUuG29kNKR/</encrypted-password>
+    </root-authentication>
+    <login>
+      <user>
+        <name>admin</name>
+        <uid>2000</uid>
+        <class>super-user</class>
+        <authentication>
+          <encrypted-password>$6$u/ola$sWYqligQVPvN3TwWEMBaJx8fdaQYL0RlZwCFGFaBJ9qd0mmIipzExMiJg6tZz2F0QbIWiS7LEiIyVDY5Xy5gI.</encrypted-password>
+        </authentication>
+      </user>
+    </login>
+    <services>
+      <ssh/>
+      <netconf>
+        <ssh/>
+      </netconf>
+    </services>
+  </system>
+</configuration>

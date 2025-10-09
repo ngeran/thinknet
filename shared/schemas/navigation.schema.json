@@ -1,12 +1,11 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "NavigationSchema",
-  "description": "Schema for validating navigation.yaml, allowing top-level URL or children.",
+  "description": "Schema for validating navigation.yaml, allowing both a top-level URL and children.",
   "type": "array",
   "items": {
     "type": "object",
     "required": ["id", "title"],
-    
     "properties": {
       "id": {
         "type": "string",
@@ -22,13 +21,12 @@
       },
       "icon": {
         "type": "string",
-        "description": "Optional emoji or icon string"
+        "description": "Optional emoji or icon string (e.g., Lucide icon name)"
       },
-      
-      // 🚀 FIX 2: Allow 'url' property on the top-level object
-      "url": { 
-        "type": "string", 
-        "description": "URL for a direct top-level navigation item" 
+
+      "url": {
+        "type": "string",
+        "description": "URL for a direct top-level navigation item (e.g., /operations/backups)"
       },
 
       "children": {
@@ -46,6 +44,6 @@
         }
       }
     },
-    "additionalProperties": false 
+    "additionalProperties": false
   }
 }

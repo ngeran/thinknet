@@ -1,18 +1,9 @@
 # File Path: shared/data/navigation.yaml
 # Version: 1.1.0
-# Description: Defines the navigation structure for the application. Mirrors navData.json but written in YAML for backend usage.
-# Key Features:
-# - Defines a hierarchical navigation structure with menu items and sub-items.
-# - Includes metadata like icons and subtitles for frontend rendering.
-# - Validated against navigation.schema.json to ensure correct structure.
-# How-To Guide:
-# 1. Place this file under shared/data.
-# 2. Ensure navigation.schema.json is in shared/schemas.
-# 3. Backend will parse this YAML and expose it via /api/navigation/yaml.
-# 4. Frontend MegaMenu fetches the JSON representation.
-# Change Log:
-# - 1.1.0 (2025-09-13): Changed `href` to `url` to align with updated schema.
-# - 1.0.0 (2025-09-13): Initial navigation structure defined.
+# Description: Defines the navigation structure for the application.
+# ---
+# NOTE: All indentation uses 2 standard ASCII spaces.
+# ---
 
 - id: management
   title: Management
