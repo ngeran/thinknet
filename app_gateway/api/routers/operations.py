@@ -4,7 +4,7 @@ import asyncio
 import subprocess
 import json
 from pathlib import Path
-import os # CRITICAL: Imported for environment manipulation
+import os
 import redis
 import uuid
 from datetime import datetime
@@ -39,8 +39,8 @@ class JobTrigger(BaseModel):
     username: str
     password: str
     backup_path: str = "/var/backups"
-    backup_file: str = None          # Required for 'restore'
-    restore_type: str = "override"   # For restore operations
+    backup_file: str = None
+    restore_type: str = "override"
 
 # --- Background Subprocess Execution Logic (The Worker) ---
 
@@ -50,22 +50,27 @@ async def run_script_and_stream_to_redis(script_path, cmd_args, job_id: str):
     and publishes each line (expected to be JSON) to the dedicated Redis channel.
     This runs as a non-blocking background task.
     """
-    if not r: return # Exit if Redis is not connected
+    print(f"INFO: Job {job_id} background worker STARTING.")
+
+    if not r: 
+        print(f"ERROR: Job {job_id} cannot run, Redis is not connected.")
+        return # Exit if Redis is not connected
+    
     redis_channel = f"{REDIS_CHANNEL_PREFIX}{job_id}"
 
-    # 🔑 CRITICAL FIX: Use the explicit interpreter path to avoid command lookup errors
     full_command = [PYTHON_INTERPRETER_PATH, str(script_path)] + cmd_args
 
-    # ---------------------------------------------------
     # 🔑 CRITICAL FIX: Set PYTHONPATH for Subprocess
-    # This prevents the subprocess from crashing on local Python imports (e.g., from 'utils').
     script_dir = str(script_path.parent)
 
     # Create a copy of the current environment and inject the script's directory
     subprocess_env = os.environ.copy()
     subprocess_env['PYTHONPATH'] = script_dir + ':' + subprocess_env.get('PYTHONPATH', '')
-    # ---------------------------------------------------
     
+    print(f"DEBUG: Job {job_id} command: {' '.join(full_command)}")
+    print(f"DEBUG: Job {job_id} PYTHONPATH set to: {subprocess_env['PYTHONPATH']}")
+
+
     # 1. Start the subprocess, passing the modified environment
     try:
         process = await asyncio.create_subprocess_exec(
@@ -74,36 +79,61 @@ async def run_script_and_stream_to_redis(script_path, cmd_args, job_id: str):
             stderr=subprocess.STDOUT, # Capture all output
             env=subprocess_env # <--- PASS THE NEW ENVIRONMENT HERE
         )
+        print(f"INFO: Job {job_id} subprocess spawned successfully with PID {process.pid}.")
+        
     except Exception as e:
         # Publish a CRITICAL error message if the script fails to even start
         error_msg = {"level": "CRITICAL", "message": f"Script execution initiation failed: {e}", "job_id": job_id}
         r.publish(redis_channel, json.dumps(error_msg))
+        print(f"FATAL ERROR: Job {job_id} failed to spawn: {e}")
         return
 
     # 2. Stream and Publish Output
     while True:
         # Readline is crucial for line-by-line streaming (real-time output)
         line = await process.stdout.readline()
-        if not line: break # Exit loop when process output ends
+        
+        # 🔑 ADD LOGGING: Log when the stream ends (the subprocess is finished)
+        if not line: 
+            print(f"INFO: Job {job_id} subprocess stream finished.")
+            break # Exit loop when process output ends
 
         line = line.decode().strip()
+
+        # 🔑 ADD LOGGING: Log the raw line received from the subprocess
+        print(f"DEBUG: Job {job_id} received line: {line}")
 
         # Check if the line is the standardized JSON progress event from the worker script
         if line.startswith('{') and line.endswith('}'):
             r.publish(redis_channel, line)
+            # 🔑 ADD LOGGING: Log that a JSON event was published
+            print(f"INFO: Job {job_id} published JSON event to Redis: {line[:50]}...")
         else:
             # Wrap any raw print/log statements into a standardized JSON message
-            r.publish(redis_channel, json.dumps({
+            message_to_publish = json.dumps({
                 "level": "DEBUG",
                 "event_type": "ORCHESTRATOR_LOG",
                 "message": line,
                 "timestamp": datetime.utcnow().isoformat(),
                 "job_id": job_id
-            }))
+            })
+            r.publish(redis_channel, message_to_publish)
+            # 🔑 ADD LOGGING: Log that a debug event was published
+            print(f"INFO: Job {job_id} published debug log to Redis.")
+
 
     # 3. Wait for the process to finish
     await process.wait()
 
+    # 🔑 ADD LOGGING: Log the final process exit status
+    print(f"INFO: Job {job_id} finished execution. Exit code: {process.returncode}")
+
+    # 4. Handle non-zero exit code (job failure)
+    if process.returncode != 0:
+        stderr = (await process.stderr.read()).decode()
+        error_msg = {"level": "ERROR", "message": f"Subprocess failed with exit code {process.returncode}. Stderr: {stderr}", "job_id": job_id}
+        r.publish(redis_channel, json.dumps(error_msg))
+        print(f"ERROR: Job {job_id} failed. Stderr: {stderr}")
 
 # --- FastAPI Router Definition and Endpoint ---
 
@@ -157,7 +187,6 @@ async def execute_juniper_job(trigger: JobTrigger):
         ])
 
     # 4. Start the streaming function as a non-blocking background task.
-    # This is key to returning the 202 response immediately.
     asyncio.create_task(
         run_script_and_stream_to_redis(script_path, cmd_args, job_id)
     )
