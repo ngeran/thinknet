@@ -6,18 +6,16 @@
  * =================================================================
  *
  * Description:
- * This component provides a guided, three-step workflow (Configure, Execute, Results) 
- * for running a device backup operation. It is specifically engineered to handle 
- * long-running operations by relying entirely on a WebSocket connection for 
+ * This component provides a guided, three-step workflow (Configure, Execute, Results)
+ * for running a device backup operation. It is specifically engineered to handle
+ * long-running operations by relying entirely on a WebSocket connection for
  * real-time status updates (logs, progress, completion status).
- * * How to Use:
- * 1. Configure: Fill in device credentials and targeting (hostname or inventory).
- * 2. Execute: Click "Start Backup Job". This triggers an HTTP API call to start the 
- * job and immediately sends a WebSocket SUBSCRIBE command to the Rust Hub to 
- * listen for the job's dedicated channel (e.g., 'job:backup-123').
- * 3. Results: The component updates its state based on the stream data. When it 
- * receives the OPERATION_COMPLETE event, it unsubscribes, stops the progress, 
- * and displays the final results received from the backend.
+ *
+ * Key Fixes & Enhancements:
+ * 1. WS Diagnostic Filter (NEW FIX): Ignores non-JSON diagnostic messages (e.g., "Client ... says:...")
+ * echoed by the Rust Hub, resolving the "Unexpected token 'C'" parse error.
+ * 2. Race Condition Guard: Uses a 100ms delay and a functional state update on OPERATION_COMPLETE
+ * to ensure final logs are visible in the 'Execute' tab before switching to 'Results'.
  *
  */
 
@@ -32,7 +30,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 // Local Components & Hooks
 import BackupForm from '../../forms/BackupForm';
 import DeviceTargetSelector from '../../shared/DeviceTargetSelector';
-import { useJobWebSocket } from '@/hooks/useJobWebSocket'; // 🔑 CORE: New hook for job stream
+import { useJobWebSocket } from '@/hooks/useJobWebSocket'; // 🔑 CORE: Hook for job stream
 
 // Define the API URL for the initial trigger
 const API_URL = import.meta.env.VITE_API_GATEWAY_URL || 'http://localhost:8000';
@@ -45,24 +43,24 @@ export default function Backup() {
 
     // --- State Initialization ---
     const [backupParams, setBackupParams] = useState({
-        username: "admin", 
-        password: "manolis1", 
-        hostname: "192.168.100.10", 
+        username: "admin",
+        password: "manolis1",
+        hostname: "192.168.100.10",
         inventory_file: "",
     });
 
     const [activeTab, setActiveTab] = useState("config");
     // status: 'idle', 'running', 'success', 'failed'
-    const [jobStatus, setJobStatus] = useState("idle"); 
+    const [jobStatus, setJobStatus] = useState("idle");
     const [progress, setProgress] = useState(0);
     const [jobOutput, setJobOutput] = useState([]); // Array to store streamed log messages
     const [jobId, setJobId] = useState(null);
     const [wsChannel, setWsChannel] = useState(null);
     const [finalResults, setFinalResults] = useState(null);
-    
+
     // 🔑 Hook to access the WebSocket stream and send commands
-    const { sendMessage, lastMessage, isConnected } = useJobWebSocket(); 
-    
+    const { sendMessage, lastMessage, isConnected } = useJobWebSocket();
+
     const scrollAreaRef = useRef(null);
 
     // --- Utility Handlers ---
@@ -76,7 +74,7 @@ export default function Backup() {
         backupParams.password.trim() !== "" &&
         (backupParams.hostname.trim() !== "" || backupParams.inventory_file.trim() !== "")
     );
-    
+
     // Resets all state for a new job
     const resetWorkflow = () => {
         setJobStatus("idle");
@@ -96,9 +94,9 @@ export default function Backup() {
         e.preventDefault();
 
         if (!isFormValid || jobStatus === 'running') return;
-        
+
         if (!isConnected) {
-            // ⚠️ Log error locally if WebSocket is down, as the API call won't help
+            // Log error locally if WebSocket is down
             const connectErrorMsg = "WebSocket connection is not ready. Cannot start job.";
             setJobOutput([{ time: new Date().toLocaleTimeString(), message: connectErrorMsg, level: 'error' }]);
             setJobStatus("failed");
@@ -107,10 +105,10 @@ export default function Backup() {
         }
 
         // 1. Reset and Transition to Execution Tab
-        setActiveTab("execute");
+        setActiveTab("execute"); 
         setJobStatus("running");
         setProgress(0);
-        setJobOutput([]); // 🔑 CLEANUP: Remove all local initial logs
+        setJobOutput([]);
         setFinalResults(null);
 
         // 2. Prepare payload for FastAPI
@@ -120,7 +118,7 @@ export default function Backup() {
             inventory_file: backupParams.inventory_file.trim(),
             username: backupParams.username,
             password: backupParams.password,
-            backup_path: "/var/backups", 
+            backup_path: "/var/backups",
         };
 
         try {
@@ -137,21 +135,20 @@ export default function Backup() {
             }
 
             const data = await response.json();
-            
+
             // 4. Set the new job ID, channel, and SUBSCRIBE
             const newJobId = data.job_id;
             const newWsChannel = data.ws_channel;
-            
+
             setJobId(newJobId);
             setWsChannel(newWsChannel);
-            
+
             // 🔑 CORE: Send the SUBSCRIBE command to the Rust Hub
-            sendMessage({ type: 'SUBSCRIBE', channel: newWsChannel }); 
-            
-            // ❌ CLEANUP: Removed local success log. Relying on first stream message from backend.
+            sendMessage({ type: 'SUBSCRIBE', channel: newWsChannel });
+
 
         } catch (error) {
-            // 🔑 Keep logging for API failure (happens before WS stream starts)
+            // Handle API failure (happens before WS stream starts)
             const errorMsg = `Job start failed (API Error): ${error.message}`;
             setJobOutput(prev => [...prev, { time: new Date().toLocaleTimeString(), message: errorMsg, level: 'error' }]);
             setJobStatus("failed");
@@ -166,48 +163,70 @@ export default function Backup() {
     useEffect(() => {
         // Only run if we have a new message and a current job ID to filter against
         if (lastMessage && jobId) {
+            
+            // 🚨 CRITICAL FIX: Filter out non-JSON server diagnostic messages.
+            // This prevents the SyntaxError: Unexpected token 'C' from "Client..." logs.
+            if (typeof lastMessage === 'string' && lastMessage.startsWith('Client')) {
+                console.warn("WS Listener: Ignoring server diagnostic message.", lastMessage);
+                return; 
+            }
+
             try {
                 // Parse the message sent by the Rust Hub
                 const message = JSON.parse(lastMessage);
-                
+
                 // 🔑 FILTER: Ignore messages not belonging to this job's channel
                 if (message.channel !== wsChannel) return;
-                
+
                 // Parse the nested data string (the actual payload from Python/Redis)
-                const update = JSON.parse(message.data); 
+                const update = JSON.parse(message.data);
 
                 // 1. Update Log Output
-                const logEntry = { 
-                    time: new Date().toLocaleTimeString(), 
+                const logEntry = {
+                    time: new Date().toLocaleTimeString(),
                     message: update.message || 'Processing event...',
                     level: update.level ? update.level.toLowerCase() : 'info'
                 };
                 setJobOutput(prev => [...prev, logEntry]);
-                
+
                 // Auto-scroll the log area
                 if (scrollAreaRef.current) {
+                    // Small timeout ensures the DOM has updated with the new line before scrolling
                     setTimeout(() => {
                         scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight;
                     }, 50);
                 }
 
-                // 2. Update Progress Bar (Relying on backend's progress calculation)
+                // 2. Update Progress Bar
                 if (update.event_type === "PROGRESS_UPDATE" && typeof update.data.progress === 'number') {
-                    // 🔑 RELYING on the backend to send a value between 0 and 100
+                    // RELYING on the backend to send a value between 0 and 100
                     const newProgress = Math.min(100, Math.max(0, update.data.progress));
                     setProgress(newProgress);
                 }
-                
+
                 // 3. Handle Completion
                 if (update.event_type === "OPERATION_COMPLETE") {
                     const finalStatus = update.data.status === "SUCCESS" ? "success" : "failed";
                     setJobStatus(finalStatus);
                     setFinalResults(update.data.final_results);
                     setProgress(100);
-                    
+
                     // 🔑 CORE: Send the UNSUBSCRIBE command for cleanup
-                    sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel }); 
-                    setActiveTab("results");
+                    sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
+
+                    // 🚀 RACE CONDITION GUARD: Introduce a short delay (100ms) and use functional update.
+                    // This ensures the final logs/state render on the 'execute' tab before switching.
+                    setTimeout(() => {
+                         // Use functional update to ensure we only switch if we haven't already moved
+                         setActiveTab(currentTab => {
+                             if (currentTab === "execute") {
+                                 console.log("Job complete, switching from Execute to Results.");
+                                 return "results";
+                             }
+                             // If we're already on 'results' (e.g., initial API fail), stay there
+                             return currentTab;
+                         });
+                    }, 100); 
                 }
 
             } catch (e) {
@@ -281,10 +300,10 @@ export default function Backup() {
                                     <p className="text-center text-muted-foreground">Start the job to see real-time updates.</p>
                                 ) : (
                                     jobOutput.map((log, index) => (
-                                        <p 
-                                            key={index} 
+                                        <p
+                                            key={index}
                                             className={`text-xs ${
-                                                log.level === 'error' ? 'text-destructive' : 
+                                                log.level === 'error' ? 'text-destructive' :
                                                 log.level === 'success' ? 'text-green-600' :
                                                 log.level === 'warning' ? 'text-yellow-600' :
                                                 'text-foreground/80'
@@ -317,15 +336,15 @@ export default function Backup() {
                         <div className="space-y-2">
                             <p className="font-medium">Summary:</p>
                             <ul className="list-disc list-inside text-muted-foreground ml-4">
-                                
-                                {/* 🔑 RELY ON FINAL RESULTS FOR TARGETS */}
+
+                                {/* RELY ON FINAL RESULTS FOR TARGETS */}
                                 <li>Target(s): **{finalResults?.targets || backupParams.hostname || backupParams.inventory_file || 'N/A'}**</li>
-                                
+
                                 <li>Final Status: <span className={jobStatus === 'success' ? 'text-green-500 font-semibold' : 'text-destructive font-semibold'}>{jobStatus.toUpperCase()}</span></li>
-                                
-                                {/* 🔑 RELY ON FINAL RESULTS FOR MESSAGE */}
+
+                                {/* RELY ON FINAL RESULTS FOR MESSAGE */}
                                 <li>Final Message: **{finalResults?.message || 'Details not available.'}**</li>
-                                
+
                                 {finalResults?.statistics && (
                                     <>
                                         <li>Devices Succeeded: **{finalResults.statistics.succeeded || 0}**</li>
@@ -335,13 +354,13 @@ export default function Backup() {
                                 )}
                             </ul>
                         </div>
-                        
+
                         {jobStatus === 'failed' && finalResults?.traceback && (
                             <div className="bg-destructive/10 p-3 rounded-md border border-destructive/50 text-destructive text-sm font-mono whitespace-pre-wrap">
                                 **Traceback:** {finalResults.traceback}
                             </div>
                         )}
-                        
+
 
                         <div className="flex justify-end pt-4">
                             <Button onClick={resetWorkflow} variant="outline">

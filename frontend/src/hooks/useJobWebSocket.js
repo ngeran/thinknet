@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 // ⚠️ Note the change: Using 'webSocketService' singleton
-import { webSocketService } from '../services/websocket'; 
+import { webSocketService } from '../services/websocket';
 
 /**
  * Custom hook to manage the WebSocket job data stream and commands.
@@ -10,7 +10,7 @@ import { webSocketService } from '../services/websocket';
  * and the last raw message received.
  */
 export const useJobWebSocket = () => {
-    
+
     const [isConnected, setIsConnected] = useState(webSocketService.status === 'connected');
     const [lastMessage, setLastMessage] = useState(null);
 
@@ -20,6 +20,7 @@ export const useJobWebSocket = () => {
             setIsConnected(newStatus === 'connected');
         });
 
+        // Ensure the service attempts to connect if it's currently disconnected
         if (webSocketService.status !== 'connected' && webSocketService.status !== 'connecting') {
             webSocketService.connect();
         }
@@ -40,11 +41,12 @@ export const useJobWebSocket = () => {
         return () => {
             unsubscribeData();
         };
-    }, []); 
+    }, []);
 
 
     // 3. Command function that uses the public method in the service
     const sendMessage = useCallback((message) => {
+        // 🔑 Calls the now-fixed sendMessage method on the service singleton
         webSocketService.sendMessage(message);
     }, []);
 
