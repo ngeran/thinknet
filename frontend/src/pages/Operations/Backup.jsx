@@ -12,8 +12,9 @@
  * real-time status updates (logs, progress, completion status).
  *
  * Key Fixes & Enhancements:
- * 1. WS Diagnostic Filter (NEW FIX): Ignores non-JSON diagnostic messages (e.g., "Client ... says:...")
- * echoed by the Rust Hub, resolving the "Unexpected token 'C'" parse error.
+ * 1. WS Diagnostic Filter (FIXED/ENHANCED): Uses a general check (starts with '{' or '[')
+ * to ignore *all* non-JSON diagnostic messages (e.g., "Client ... says:...") echoed
+ * by the Rust Hub, resolving the "Unexpected token 'C'" parse error more reliably.
  * 2. Race Condition Guard: Uses a 100ms delay and a functional state update on OPERATION_COMPLETE
  * to ensure final logs are visible in the 'Execute' tab before switching to 'Results'.
  *
@@ -105,7 +106,7 @@ export default function Backup() {
         }
 
         // 1. Reset and Transition to Execution Tab
-        setActiveTab("execute"); 
+        setActiveTab("execute");
         setJobStatus("running");
         setProgress(0);
         setJobOutput([]);
@@ -164,15 +165,19 @@ export default function Backup() {
         // Only run if we have a new message and a current job ID to filter against
         if (lastMessage && jobId) {
             
-            // 🚨 CRITICAL FIX: Filter out non-JSON server diagnostic messages.
-            // This prevents the SyntaxError: Unexpected token 'C' from "Client..." logs.
-            if (typeof lastMessage === 'string' && lastMessage.startsWith('Client')) {
-                console.warn("WS Listener: Ignoring server diagnostic message.", lastMessage);
-                return; 
+            // 🚨 CRITICAL FIX: Robustly filter out non-JSON server diagnostic messages.
+            // If it's a Rust Hub diagnostic, it will be a string but won't start with '{' or '['.
+            if (typeof lastMessage !== 'string' || (!lastMessage.startsWith('{') && !lastMessage.startsWith('['))) {
+                if (lastMessage.includes('Client') && lastMessage.includes('says')) {
+                    console.warn("WS Listener: Ignoring server diagnostic message.", lastMessage);
+                } else {
+                    console.error("WS Listener: Received unparsable, non-JSON message:", lastMessage);
+                }
+                return;
             }
 
             try {
-                // Parse the message sent by the Rust Hub
+                // Parse the outer message sent by the Rust Hub
                 const message = JSON.parse(lastMessage);
 
                 // 🔑 FILTER: Ignore messages not belonging to this job's channel
@@ -217,16 +222,16 @@ export default function Backup() {
                     // 🚀 RACE CONDITION GUARD: Introduce a short delay (100ms) and use functional update.
                     // This ensures the final logs/state render on the 'execute' tab before switching.
                     setTimeout(() => {
-                         // Use functional update to ensure we only switch if we haven't already moved
-                         setActiveTab(currentTab => {
-                             if (currentTab === "execute") {
-                                 console.log("Job complete, switching from Execute to Results.");
-                                 return "results";
-                             }
-                             // If we're already on 'results' (e.g., initial API fail), stay there
-                             return currentTab;
-                         });
-                    }, 100); 
+                        // Use functional update to ensure we only switch if we haven't already moved
+                        setActiveTab(currentTab => {
+                            if (currentTab === "execute") {
+                                console.log("Job complete, switching from Execute to Results.");
+                                return "results";
+                            }
+                            // If we're already on 'results' (e.g., initial API fail), stay there
+                            return currentTab;
+                        });
+                    }, 100);
                 }
 
             } catch (e) {

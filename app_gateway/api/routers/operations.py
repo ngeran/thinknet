@@ -25,6 +25,8 @@ REDIS_CHANNEL_PREFIX = "ws_channel:job:"
 
 # Confirmed absolute path to the Python interpreter inside the container
 PYTHON_INTERPRETER_PATH = "/usr/local/bin/python"
+# NEW CONSTANT: Base directory for all Python scripts
+BASE_SCRIPT_ROOT = "/app/app_gateway/py_scripts"
 
 r = None
 try:
@@ -135,16 +137,32 @@ async def run_script_and_stream_to_redis(script_path, cmd_args, job_id: str):
         return
 
     redis_channel = f"{REDIS_CHANNEL_PREFIX}{job_id}"
-    full_command = [PYTHON_INTERPRETER_PATH, str(script_path)] + cmd_args
-    script_dir = str(script_path.parent)
+    full_command = [PYTHON_INTERPRETER_PATH, "-u", str(script_path)] + cmd_args
 
+    # -----------------------------------------------------------
+    # FIX #1 & #2: Ensure PYTHONPATH is correct and disable interactive SSH prompts
+    # -----------------------------------------------------------
     subprocess_env = os.environ.copy()
+
+    # Set PYTHONPATH to include the root of custom modules (e.g., /app/app_gateway/py_scripts)
+    # and the specific script's parent directory for relative imports.
+    script_parent_dir = str(script_path.parent)
     subprocess_env["PYTHONPATH"] = (
-        script_dir + ":" + subprocess_env.get("PYTHONPATH", "")
+        f"{BASE_SCRIPT_ROOT}:{script_parent_dir}:"
+        + subprocess_env.get("PYTHONPATH", "")
     )
+
+    # CRITICAL FIX: Add environment variable to disable Paramiko/PyEZ host key verification.
+    # This prevents the job from hanging on the interactive SSH host key prompt.
+    subprocess_env["PARAMIKO_HOSTKEY_VERIFY"] = "0"
+
+    # -----------------------------------------------------------
 
     logger.debug(f"Job {job_id} command: {' '.join(full_command)}")
     logger.debug(f"Job {job_id} PYTHONPATH set to: {subprocess_env['PYTHONPATH']}")
+    logger.debug(
+        f"Job {job_id} PARAMIKO_HOSTKEY_VERIFY set to: {subprocess_env.get('PARAMIKO_HOSTKEY_VERIFY')}"
+    )
 
     # 1. Start the subprocess
     try:
