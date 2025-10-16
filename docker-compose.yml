@@ -28,14 +28,13 @@ services:
       - redis_broker
     environment:
       RUST_LOG: info
-      # Internal Docker DNS name
       REDIS_HOST: redis_broker
       REDIS_PORT: 6379
     networks:
       - internal_net
 
   # ----------------------------------------------------
-  # 2. FASTAPI AUTOMATION GATEWAY (Port 8000) - 🔑 CRITICAL: Dual Network
+  # 2. FASTAPI AUTOMATION GATEWAY (Port 8000) - API Server ONLY
   # ----------------------------------------------------
   fastapi_automation:
     build:
@@ -48,22 +47,55 @@ services:
       - rust_backend
       - redis_broker
     restart: always
+    # CRITICAL: Runs ONLY the Uvicorn server (stable and responsive)
+    command: uvicorn app_gateway.main:app --host 0.0.0.0 --port 8000
     environment:
-      # Talks to rust_backend over the internal_net
       RUST_WS_URL: ws://rust_backend:3100/ws
       REDIS_HOST: redis_broker
       REDIS_PORT: 6379
     volumes:
+      # Ensure app_gateway/api/routers/operations.py is mounted here
       - ./app_gateway:/app/app_gateway
       - ./shared:/app/shared
       - ./frontend/py_scripts:/app/app_gateway/py_scripts
-    # 🔑 FIX: Attached to both internal_net AND the existing crpd-net
     networks:
       - internal_net
-      - crpd-net 
+      - crpd-net
 
   # ----------------------------------------------------
-  # 3. FRONTEND (React/Vite)
+  # 3. DEDICATED FASTAPI WORKER - Job Execution ONLY
+  # ----------------------------------------------------
+  fastapi_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.fastapi
+    container_name: fastapi_worker
+    depends_on:
+      - redis_broker
+    # Restart policy is essential for a worker service
+    restart: always
+    environment:
+      REDIS_HOST: redis_broker
+      REDIS_PORT: 6379
+      # Environment variables needed by the automation script
+      PARAMIKO_HOSTKEY_VERIFY: "0"
+      PYTHONPATH: /app/app_gateway/py_scripts
+
+    # CRITICAL: Runs the dedicated worker script
+    command: /usr/local/bin/python /app/app_gateway/fastapi_worker.py
+
+    volumes:
+      # Needs access to the worker script and automation scripts
+      - ./app_gateway:/app/app_gateway
+      - ./shared:/app/shared
+      - ./frontend/py_scripts:/app/app_gateway/py_scripts
+    networks:
+      # Only needs the internal network to talk to Redis and devices (via crpd-net)
+      - internal_net
+      - crpd-net
+
+  # ----------------------------------------------------
+  # 4. FRONTEND (React/Vite)
   # ----------------------------------------------------
   frontend:
     build:
@@ -84,10 +116,11 @@ services:
     networks:
       - internal_net
 
-# 🔑 DEFINE: Define both networks
+# ----------------------------------------------------
+# NETWORK DEFINITIONS
+# ----------------------------------------------------
 networks:
   internal_net:
     driver: bridge
   crpd-net:
-    # This network must already exist on your Docker host
     external: true

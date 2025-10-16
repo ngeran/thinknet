@@ -2,19 +2,26 @@
 
 use axum::{
     extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State},
-    response::IntoResponse,
+    response::IntoResponse
 };
-use futures::{sink::SinkExt, stream::StreamExt};
-use tokio::sync::mpsc;
-use tracing::{info, warn};
 use uuid::Uuid;
-use std::time::Duration;
+use futures::{StreamExt, SinkExt};
+use tracing::{info, warn};
+use serde::{Deserialize, Serialize};
 
-use crate::api::state::AppState;
+// 🔑 FIX: Corrected import path from crate::api::state
+use crate::api::state::AppState; 
+use crate::services::redis_service::RedisMessage; 
 
-const CLIENT_TIMEOUT: Duration = Duration::from_secs(30);
+// Client command struct for SUBSCRIBE/UNSUBSCRIBE messages
+#[derive(Debug, Deserialize, Serialize)]
+struct ClientCommand {
+    #[serde(rename = "type")] 
+    command_type: String,
+    channel: String,
+}
 
-/// Main entry point for the WebSocket upgrade.
+
 pub async fn websocket_handler(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
@@ -27,64 +34,92 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     let connection_id = Uuid::new_v4();
     info!("New WebSocket connection established: {}", connection_id);
 
-    // Split the socket into a sender and receiver
     let (mut ws_sender, mut ws_receiver) = socket.split();
 
-    // 1. Create a channel to send messages from the broadcast worker to this client's ws_sender
-    let (_tx, mut rx) = mpsc::channel(32); // mpsc channel for targeted messages (if needed)
+    // Placeholder channel (unused in this version)
+    let (_tx, mut rx) = tokio::sync::mpsc::channel::<String>(32); 
 
-    // 2. Add the sender to the ConnectionManager for targeted messaging (if implemented)
-    // NOTE: This is skipped for simplicity, as only the broadcast is required by the current errors.
-
-    // 3. Subscribe to the global broadcast channel
-    // FIX: This field is now correctly available in ConnectionManager
     let mut broadcast_rx = state.connection_manager.broadcast_sender.subscribe();
 
-    // Spawn a worker to handle sending broadcast messages to the client
+    // --- Sender Task (Handles messages from Redis to Client) ---
     let connection_id_clone = connection_id.to_string();
+    let state_clone = state.clone();
     tokio::spawn(async move {
         loop {
             tokio::select! {
-                // Channel for targeted messages (from tx above)
+                // Handle targeted messages (currently unused/placeholder)
                 Some(msg) = rx.recv() => {
                     if ws_sender.send(Message::Text(msg)).await.is_err() {
                         warn!("Could not send targeted message to client {}.", connection_id_clone);
-                        break; 
+                        break;
                     }
                 }
-                // Channel for global broadcast messages
-                Ok(msg) = broadcast_rx.recv() => {
-                    if ws_sender.send(Message::Text(msg)).await.is_err() {
-                        warn!("Could not send broadcast message to client {}.", connection_id_clone);
-                        break; 
+                
+                // CORE LOGIC: Handle incoming RedisMessage from the global broadcast
+                Ok(redis_msg) = broadcast_rx.recv() => {
+                    let is_subscribed = {
+                        let subs = state_clone.connection_manager.subscriptions.lock().await;
+                        // Check if the client's subscribed channel matches the message's source channel
+                        subs.get(&connection_id_clone)
+                            .map(|sub_channel| sub_channel == &redis_msg.channel)
+                            .unwrap_or(false)
+                    };
+
+                    if is_subscribed {
+                        // Serialize the message
+                        let serialized_msg = match serde_json::to_string(&redis_msg) {
+                             Ok(s) => s,
+                             Err(e) => {
+                                 warn!("Failed to serialize RedisMessage for client {}: {}", connection_id_clone, e);
+                                 continue;
+                             }
+                        };
+                        
+                        // Send the message to the client
+                        if ws_sender.send(Message::Text(serialized_msg)).await.is_err() {
+                            warn!("Could not send job message to client {}.", connection_id_clone);
+                            break; 
+                        }
                     }
                 }
-                // If both channels are closed, or an error occurs, the loop exits.
+                
                 else => break, 
             }
         }
-        info!("Broadcast worker stopped for client {}", connection_id_clone);
+        info!("Job message worker stopped for client {}", connection_id_clone);
     });
     
-    // Receiver loop: Handles messages coming *from* the client
+    // --- Receiver Loop (Handles messages from Client to Hub) ---
+    let connection_id_rcv = connection_id.to_string();
     while let Some(result) = ws_receiver.next().await {
         match result {
             Ok(msg) => {
                 match msg {
                     Message::Text(text) => {
-                        info!("Received message from {}: {}", connection_id, text);
+                        info!("Received command from {}: {}", connection_id, text);
                         
-                        // Example: If a client sends a message, broadcast it to everyone
-                        let broadcast_msg = format!("Client {} says: {}", connection_id, text);
-                        
-                        // FIX: Calling the broadcast method on the manager
-                        state.connection_manager.broadcast(&broadcast_msg).await;
+                        // Parse the client command (SUBSCRIBE/UNSUBSCRIBE)
+                        match serde_json::from_str::<ClientCommand>(&text) {
+                            Ok(cmd) => {
+                                match cmd.command_type.as_str() {
+                                    "SUBSCRIBE" => {
+                                        state.connection_manager.subscribe(&connection_id_rcv, &cmd.channel).await;
+                                    },
+                                    "UNSUBSCRIBE" => {
+                                        state.connection_manager.unsubscribe(&connection_id_rcv).await;
+                                    },
+                                    _ => warn!("Unknown client command type: {}", cmd.command_type),
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Failed to parse client command as JSON: {}. Message: {}", e, text);
+                            }
+                        }
                     }
                     Message::Close(c) => {
                         info!("Client {} closed connection: {:?}", connection_id, c);
                         break;
                     }
-                    // Handle other message types
                     _ => info!("Client {} sent non-text message.", connection_id),
                 }
             }
@@ -95,9 +130,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         }
     }
 
-    // Cleanup: Remove the connection from the manager when the loop exits
-    let id_string = connection_id.to_string();
-    // FIX: Convert Uuid to &str for the remove_connection call (Fixes E0308)
-    state.connection_manager.remove_connection(&id_string).await;
+    // Cleanup
+    state.connection_manager.remove_connection(&connection_id_rcv).await;
     info!("WebSocket handler finished for client {}", connection_id);
 }
