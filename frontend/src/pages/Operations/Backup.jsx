@@ -4,19 +4,9 @@
  * =================================================================
  * ⚙️ Device Backup Operation Component
  * =================================================================
- *
- * Description:
- * This component provides a guided, three-step workflow (Configure, Execute, Results)
- * for running a device backup operation. It is specifically engineered to handle
- * long-running operations by relying entirely on a WebSocket connection for
- * real-time status updates (logs, progress, completion status).
- *
  * Key Fixes & Enhancements:
- * 1. WS Diagnostic Filter (FIXED/ENHANCED): Uses a general check (starts with '{' or '[')
- * to ignore *all* non-JSON diagnostic messages (e.g., "Client ... says:...") echoed
- * by the Rust Hub, resolving the "Unexpected token 'C'" parse error more reliably.
- * 2. Race Condition Guard: Uses a 100ms delay and a functional state update on OPERATION_COMPLETE
- * to ensure final logs are visible in the 'Execute' tab before switching to 'Results'.
+ * 1. Cleanup Effect: Adds a dedicated useEffect to UNSUBSCRIBE when the job completes
+ * or the component unmounts, preventing channel leakage in the Rust Hub.
  *
  */
 
@@ -31,7 +21,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 // Local Components & Hooks
 import BackupForm from '../../forms/BackupForm';
 import DeviceTargetSelector from '../../shared/DeviceTargetSelector';
-import { useJobWebSocket } from '@/hooks/useJobWebSocket'; // 🔑 CORE: Hook for job stream
+import { useJobWebSocket } from '@/hooks/useJobWebSocket'; 
 
 // Define the API URL for the initial trigger
 const API_URL = import.meta.env.VITE_API_GATEWAY_URL || 'http://localhost:8000';
@@ -78,11 +68,17 @@ export default function Backup() {
 
     // Resets all state for a new job
     const resetWorkflow = () => {
+        // 🔑 FIX: When resetting, ensure any active subscription is cleaned up
+        if (wsChannel) {
+            sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
+            console.log(`Reset: Sent UNSUBSCRIBE for ${wsChannel}`);
+        }
+        
         setJobStatus("idle");
         setProgress(0);
         setJobOutput([]);
         setJobId(null);
-        setWsChannel(null);
+        setWsChannel(null); // Clear the channel state
         setFinalResults(null);
         setActiveTab("config");
     };
@@ -95,22 +91,29 @@ export default function Backup() {
         e.preventDefault();
 
         if (!isFormValid || jobStatus === 'running') return;
-
+        
+        // 🔑 ENHANCEMENT: Check connection before running. 
         if (!isConnected) {
-            // Log error locally if WebSocket is down
-            const connectErrorMsg = "WebSocket connection is not ready. Cannot start job.";
-            setJobOutput([{ time: new Date().toLocaleTimeString(), message: connectErrorMsg, level: 'error' }]);
-            setJobStatus("failed");
-            setActiveTab("results");
-            return;
+             const connectErrorMsg = "WebSocket connection is not ready. Cannot start job.";
+             setJobOutput([{ time: new Date().toLocaleTimeString(), message: connectErrorMsg, level: 'error' }]);
+             setJobStatus("failed");
+             setActiveTab("results");
+             return;
         }
 
-        // 1. Reset and Transition to Execution Tab
+        // 1. Cleanup old state and Transition to Execution Tab
+        // This ensures a clean slate before the new job ID is received
+        if (wsChannel) {
+            sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
+        }
         setActiveTab("execute");
         setJobStatus("running");
         setProgress(0);
         setJobOutput([]);
         setFinalResults(null);
+        setJobId(null);
+        setWsChannel(null);
+
 
         // 2. Prepare payload for FastAPI
         const payload = {
@@ -142,7 +145,7 @@ export default function Backup() {
             const newWsChannel = data.ws_channel;
 
             setJobId(newJobId);
-            setWsChannel(newWsChannel);
+            setWsChannel(newWsChannel); // <--- This is the channel we will subscribe/unsubscribe to
 
             // 🔑 CORE: Send the SUBSCRIBE command to the Rust Hub
             sendMessage({ type: 'SUBSCRIBE', channel: newWsChannel });
@@ -158,15 +161,32 @@ export default function Backup() {
     };
 
 // =================================================================
-// 3. REAL-TIME WS MESSAGE LISTENER
+// 3. SUBSCRIPTION CLEANUP EFFECT
+// =================================================================
+
+    useEffect(() => {
+        // 🔑 CRITICAL FIX: Add cleanup logic to UNSUBSCRIBE if the component unmounts
+        // or if a new job is initiated, but only if a channel is active and the job is running.
+        return () => {
+            // Use local wsChannel variable in the dependency array (or the jobStatus)
+            if (wsChannel && jobStatus === 'running') {
+                console.log(`Component Unmount/Cleanup: Sending UNSUBSCRIBE for ${wsChannel}`);
+                sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
+            }
+        };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [wsChannel, jobStatus]); 
+
+
+// =================================================================
+// 4. REAL-TIME WS MESSAGE LISTENER
 // =================================================================
 
     useEffect(() => {
         // Only run if we have a new message and a current job ID to filter against
-        if (lastMessage && jobId) {
+        if (lastMessage && jobId && wsChannel) {
             
-            // 🚨 CRITICAL FIX: Robustly filter out non-JSON server diagnostic messages.
-            // If it's a Rust Hub diagnostic, it will be a string but won't start with '{' or '['.
+            // 🔑 FIX: Robustly filter out non-JSON server diagnostic messages.
             if (typeof lastMessage !== 'string' || (!lastMessage.startsWith('{') && !lastMessage.startsWith('['))) {
                 if (lastMessage.includes('Client') && lastMessage.includes('says')) {
                     console.warn("WS Listener: Ignoring server diagnostic message.", lastMessage);
@@ -177,7 +197,6 @@ export default function Backup() {
             }
 
             try {
-                // Parse the outer message sent by the Rust Hub
                 const message = JSON.parse(lastMessage);
 
                 // 🔑 FILTER: Ignore messages not belonging to this job's channel
@@ -196,7 +215,6 @@ export default function Backup() {
 
                 // Auto-scroll the log area
                 if (scrollAreaRef.current) {
-                    // Small timeout ensures the DOM has updated with the new line before scrolling
                     setTimeout(() => {
                         scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight;
                     }, 50);
@@ -204,7 +222,6 @@ export default function Backup() {
 
                 // 2. Update Progress Bar
                 if (update.event_type === "PROGRESS_UPDATE" && typeof update.data.progress === 'number') {
-                    // RELYING on the backend to send a value between 0 and 100
                     const newProgress = Math.min(100, Math.max(0, update.data.progress));
                     setProgress(newProgress);
                 }
@@ -216,19 +233,16 @@ export default function Backup() {
                     setFinalResults(update.data.final_results);
                     setProgress(100);
 
-                    // 🔑 CORE: Send the UNSUBSCRIBE command for cleanup
+                    // 🔑 CORE: Send the UNSUBSCRIBE command when job is completed
                     sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
 
-                    // 🚀 RACE CONDITION GUARD: Introduce a short delay (100ms) and use functional update.
-                    // This ensures the final logs/state render on the 'execute' tab before switching.
+                    // 🚀 RACE CONDITION GUARD: Switch tabs after a short delay
                     setTimeout(() => {
-                        // Use functional update to ensure we only switch if we haven't already moved
                         setActiveTab(currentTab => {
                             if (currentTab === "execute") {
                                 console.log("Job complete, switching from Execute to Results.");
                                 return "results";
                             }
-                            // If we're already on 'results' (e.g., initial API fail), stay there
                             return currentTab;
                         });
                     }, 100);
@@ -236,18 +250,18 @@ export default function Backup() {
 
             } catch (e) {
                 console.error("Failed to process WebSocket message:", e, lastMessage);
-                // Log the failure to parse the message
                 setJobOutput(prev => [...prev, { time: new Date().toLocaleTimeString(), message: `WS Error: Failed to parse message`, level: 'error' }]);
             }
         }
-    }, [lastMessage, jobId, wsChannel, sendMessage]); // Dependency array includes all necessary states/functions
+    }, [lastMessage, jobId, wsChannel, sendMessage]); 
 
 // =================================================================
-// 4. RENDER METHOD
+// 5. RENDER METHOD
 // =================================================================
 
     return (
         <div className="p-8 pt-6">
+            {/* ... JSX remains the same ... */}
             <h1 className="text-3xl font-bold tracking-tight mb-2">Device Backup Operation</h1>
             <p className="text-muted-foreground mb-6">
                 A guided workflow to configure, execute, and view results for device backups.
@@ -341,15 +355,9 @@ export default function Backup() {
                         <div className="space-y-2">
                             <p className="font-medium">Summary:</p>
                             <ul className="list-disc list-inside text-muted-foreground ml-4">
-
-                                {/* RELY ON FINAL RESULTS FOR TARGETS */}
                                 <li>Target(s): **{finalResults?.targets || backupParams.hostname || backupParams.inventory_file || 'N/A'}**</li>
-
                                 <li>Final Status: <span className={jobStatus === 'success' ? 'text-green-500 font-semibold' : 'text-destructive font-semibold'}>{jobStatus.toUpperCase()}</span></li>
-
-                                {/* RELY ON FINAL RESULTS FOR MESSAGE */}
                                 <li>Final Message: **{finalResults?.message || 'Details not available.'}**</li>
-
                                 {finalResults?.statistics && (
                                     <>
                                         <li>Devices Succeeded: **{finalResults.statistics.succeeded || 0}**</li>

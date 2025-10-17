@@ -89,6 +89,7 @@ services:
       - ./app_gateway:/app/app_gateway
       - ./shared:/app/shared
       - ./frontend/py_scripts:/app/app_gateway/py_scripts
+      - ./shared/data:/backups
     networks:
       # Only needs the internal network to talk to Redis and devices (via crpd-net)
       - internal_net

@@ -209,4 +209,3 @@ class BackupManager:
         finally:
             if self.dev and self.dev.connected:
                 self.dev.close()
-
