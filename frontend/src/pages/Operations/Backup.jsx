@@ -1,11 +1,10 @@
 /**
  * =============================================================================
- * ⚙️ Device Backup Operation Component - v5.3.0 (Duplicate Fix)
+ * BACKUP OPERATION COMPONENT
  * =============================================================================
- *
- * FIX: Complete rewrite of log deduplication logic using a Set-based approach
- * to track unique message signatures and prevent any duplicate log entries.
- *
+ * Main component for managing device backup operations with real-time progress
+ * tracking and enhanced results visualization.
+ * 
  * @version 5.3.0
  * @last_updated 2025-10-18
  * =============================================================================
@@ -60,11 +59,18 @@ export default function Backup() {
     // Step Tracking State
     const [completedSteps, setCompletedSteps] = useState(0);
     const [totalSteps, setTotalSteps] = useState(0);
+    
+    // Real-time Statistics Tracking
+    const [statistics, setStatistics] = useState({
+        total: 0,
+        succeeded: 0,
+        failed: 0
+    });
 
     // Refs for tracking processed data without re-renders
     const processedStepsRef = useRef(new Set());
     const latestStepMessageRef = useRef("");
-    const loggedMessagesRef = useRef(new Set()); // NEW: Track logged messages to prevent duplicates
+    const loggedMessagesRef = useRef(new Set()); // Track logged messages to prevent duplicates
 
     // Custom WebSocket hook and UI refs
     const { sendMessage, lastMessage, isConnected } = useJobWebSocket();
@@ -116,6 +122,7 @@ export default function Backup() {
         setActiveTab("config");
         setCompletedSteps(0);
         setTotalSteps(0);
+        setStatistics({ total: 0, succeeded: 0, failed: 0 });
         
         processedStepsRef.current.clear();
         latestStepMessageRef.current = "";
@@ -159,6 +166,7 @@ export default function Backup() {
         setWsChannel(null);
         setCompletedSteps(0);
         setTotalSteps(0);
+        setStatistics({ total: 0, succeeded: 0, failed: 0 });
         processedStepsRef.current.clear();
         latestStepMessageRef.current = "";
         loggedMessagesRef.current.clear(); // Clear logged messages
@@ -188,7 +196,6 @@ export default function Backup() {
             setJobId(data.job_id);
             setWsChannel(data.ws_channel);
             console.log(`[JOB START] Job initiated - ID: ${data.job_id}, Channel: ${data.ws_channel}`);
-
             sendMessage({ type: 'SUBSCRIBE', channel: data.ws_channel });
             
         } catch (error) {
@@ -249,6 +256,7 @@ export default function Backup() {
                     if (dataPayload.event_type === "ORCHESTRATOR_LOG" && dataPayload.message) {
                         const message = dataPayload.message;
                         const jsonMatch = message.match(/\[(STDOUT|STDERR)(?:_RAW)?\]\s*(\{.*\})/s);
+                        
                         if (jsonMatch && jsonMatch[2]) {
                             try {
                                 deepestNestedData = JSON.parse(jsonMatch[2]);
@@ -324,6 +332,66 @@ export default function Backup() {
         }
 
         // =====================================================================
+        // 📊 REAL-TIME STATISTICS PARSING
+        // =====================================================================
+        
+        // Parse statistics from various message formats
+        if (logMessage) {
+            // Pattern 1: "Backup finished. Succeeded: X, Failed: Y"
+            const finishedMatch = logMessage.match(/Backup finished\.\s*Succeeded:\s*(\d+),\s*Failed:\s*(\d+)/i);
+            if (finishedMatch) {
+                const succeeded = parseInt(finishedMatch[1], 10);
+                const failed = parseInt(finishedMatch[2], 10);
+                setStatistics({
+                    total: succeeded + failed,
+                    succeeded: succeeded,
+                    failed: failed
+                });
+                console.log("[STATISTICS] Updated from 'Backup finished' message:", { succeeded, failed });
+            }
+            
+            // Pattern 2: "Backup completed: X succeeded, Y failed"
+            const completedMatch = logMessage.match(/Backup completed:\s*(\d+)\s*succeeded,\s*(\d+)\s*failed/i);
+            if (completedMatch) {
+                const succeeded = parseInt(completedMatch[1], 10);
+                const failed = parseInt(completedMatch[2], 10);
+                setStatistics({
+                    total: succeeded + failed,
+                    succeeded: succeeded,
+                    failed: failed
+                });
+                console.log("[STATISTICS] Updated from 'Backup completed' message:", { succeeded, failed });
+            }
+            
+            // Pattern 3: Individual device success/failure messages
+            if (logMessage.includes('Backup for') && logMessage.includes('successful')) {
+                setStatistics(prev => ({
+                    total: prev.total + 1,
+                    succeeded: prev.succeeded + 1,
+                    failed: prev.failed
+                }));
+                console.log("[STATISTICS] Device succeeded, incrementing counter");
+            } else if (logMessage.includes('Backup for') && logMessage.includes('failed')) {
+                setStatistics(prev => ({
+                    total: prev.total + 1,
+                    succeeded: prev.succeeded,
+                    failed: prev.failed + 1
+                }));
+                console.log("[STATISTICS] Device failed, incrementing counter");
+            }
+        }
+        
+        // Also check if statistics are provided in structured data
+        if (finalPayload.data?.statistics) {
+            setStatistics({
+                total: (finalPayload.data.statistics.succeeded || 0) + (finalPayload.data.statistics.failed || 0),
+                succeeded: finalPayload.data.statistics.succeeded || 0,
+                failed: finalPayload.data.statistics.failed || 0
+            });
+            console.log("[STATISTICS] Updated from structured data:", finalPayload.data.statistics);
+        }
+
+        // =====================================================================
         // 📊 PROGRESS & STEP TRACKING
         // =====================================================================
         
@@ -348,8 +416,8 @@ export default function Backup() {
                 
                 setCompletedSteps(prevCompleted => {
                     const newCompleted = prevCompleted + 1;
-
                     let newProgress = progress;
+
                     if (totalSteps > 0) {
                         newProgress = Math.min(99, Math.round((newCompleted / totalSteps) * 100));
                     } else {
@@ -374,26 +442,57 @@ export default function Backup() {
             finalPayload.event_type === "OPERATION_COMPLETE" || 
             finalPayload.success !== undefined ||
             (logMessage && logMessage.includes('Orchestrator completed with success')) ||
-            (logMessage && logMessage.includes('Backup completed:'));
+            (logMessage && logMessage.includes('Backup completed:')) ||
+            (logMessage && /Backup (finished|completed):/.test(logMessage));
 
         if (isCompletionEvent) {
-            // Check multiple possible locations for success status
-            const finalSuccess = 
-                finalPayload.success === true || 
-                finalPayload.data?.final_results?.success === true ||
-                finalPayload.data?.status === "SUCCESS" ||
-                (logMessage && logMessage.includes('success: True')) ||
-                (logMessage && logMessage.includes('Succeeded: ') && !logMessage.includes('Failed: 0') === false);
+            // Enhanced success detection logic
+            let finalSuccess = false;
+            
+            // Method 1: Direct success flag
+            if (finalPayload.success === true || finalPayload.data?.final_results?.success === true) {
+                finalSuccess = true;
+            }
+            // Method 2: Status field
+            else if (finalPayload.data?.status === "SUCCESS") {
+                finalSuccess = true;
+            }
+            // Method 3: Parse "Succeeded: X, Failed: Y" pattern
+            else if (logMessage) {
+                const succeededMatch = logMessage.match(/Succeeded:\s*(\d+)/i);
+                const failedMatch = logMessage.match(/Failed:\s*(\d+)/i);
+                
+                if (succeededMatch && failedMatch) {
+                    const succeededCount = parseInt(succeededMatch[1], 10);
+                    const failedCount = parseInt(failedMatch[1], 10);
+                    
+                    // Success if we have at least one success and zero failures
+                    finalSuccess = succeededCount > 0 && failedCount === 0;
+                    
+                    // Update statistics (may already be set from earlier parsing)
+                    setStatistics(prev => ({
+                        total: succeededCount + failedCount,
+                        succeeded: succeededCount,
+                        failed: failedCount
+                    }));
+                }
+                // Method 4: Look for explicit success messages
+                else if (logMessage.includes('success: True') || 
+                         logMessage.includes('completed successfully')) {
+                    finalSuccess = true;
+                }
+            }
             
             console.log("[JOB COMPLETE] Final event detected:", { 
                 success: finalSuccess, 
                 event_type: finalPayload.event_type,
+                message: logMessage,
                 data_status: finalPayload.data?.status,
                 nested_success: finalPayload.data?.final_results?.success
             });
             
             setJobStatus(finalSuccess ? "success" : "failed");
-            setFinalResults(finalPayload); 
+            setFinalResults(prev => prev || finalPayload); 
             setProgress(100);
             
             if (totalSteps > 0) {
@@ -448,7 +547,6 @@ export default function Backup() {
                             parameters={backupParams} 
                             onParamChange={handleParamChange} 
                         />
-
                         <div className="flex justify-end pt-4">
                             <Button
                                 onClick={startJobExecution}
@@ -512,52 +610,173 @@ export default function Backup() {
                 </TabsContent>
 
                 <TabsContent value="results">
-                    <div className="space-y-6 p-6 border rounded-lg max-w-4xl">
-                        <h2 className="text-2xl font-bold flex items-center gap-3">
-                            {jobStatus === 'success' ? (
-                                <><CheckCircle className="h-6 w-6 text-green-500" /> Backup Completed Successfully!</>
-                            ) : jobStatus === 'failed' ? (
-                                <><XCircle className="h-6 w-6 text-destructive" /> Backup Failed</>
-                            ) : (
-                                "Awaiting Execution"
-                            )}
-                        </h2>
-                        <Separator />
-
-                        <div className="space-y-2">
-                            <p className="font-medium">Backup Summary:</p>
-                            <ul className="list-disc list-inside text-muted-foreground ml-4 space-y-1">
-                                <li>Target Device: <strong>{backupParams.hostname || 'N/A'}</strong></li>
-                                <li>Status: <strong className={
-                                    jobStatus === 'success' ? 'text-green-500' : 'text-destructive'
-                                }>
-                                    {jobStatus.toUpperCase()}
-                                </strong></li>
-                                <li>Final Message: <strong>{finalResults?.message || 'Check logs for details.'}</strong></li>
-                                <li>Progress: <strong>{progress}%</strong></li>
-                                <li>Steps Completed: <strong>{completedSteps}/{totalSteps || 'Unknown'}</strong></li>
-                                
-                                {finalResults?.statistics && (
-                                    <>
-                                        <li>Devices Succeeded: <strong className="text-green-500">{finalResults.statistics.succeeded || 0}</strong></li>
-                                        <li>Devices Failed: <strong className="text-destructive">{finalResults.statistics.failed || 0}</strong></li>
-                                    </>
-                                )}
-                            </ul>
+                    <div className="space-y-6 max-w-6xl">
+                        {/* Header Status Card */}
+                        <div className={`p-6 rounded-lg border-2 ${
+                            jobStatus === 'success' ? 'bg-green-50 border-green-200' : 
+                            jobStatus === 'failed' ? 'bg-red-50 border-red-200' : 
+                            'bg-muted border-border'
+                        }`}>
+                            <div className="flex items-start justify-between">
+                                <div className="flex items-center gap-3">
+                                    {jobStatus === 'success' ? (
+                                        <CheckCircle className="h-8 w-8 text-green-600" />
+                                    ) : jobStatus === 'failed' ? (
+                                        <XCircle className="h-8 w-8 text-red-600" />
+                                    ) : (
+                                        <Loader2 className="h-8 w-8 text-muted-foreground" />
+                                    )}
+                                    <div>
+                                        <h2 className="text-2xl font-bold">
+                                            {jobStatus === 'success' ? 'Backup Completed Successfully' : 
+                                             jobStatus === 'failed' ? 'Backup Failed' : 
+                                             'Awaiting Execution'}
+                                        </h2>
+                                        <p className="text-sm text-muted-foreground mt-1">
+                                            {finalResults?.message || 'No results available yet'}
+                                        </p>
+                                    </div>
+                                </div>
+                                <Button onClick={resetWorkflow} variant="outline" size="sm">
+                                    Start New Backup
+                                </Button>
+                            </div>
                         </div>
-                        
-                        {finalResults && process.env.NODE_ENV === 'development' && (
-                            <div className="bg-muted p-3 rounded-md text-sm font-mono whitespace-pre-wrap max-h-40 overflow-auto">
-                                <div className="text-xs font-semibold mb-1">Debug Information:</div>
-                                {JSON.stringify(finalResults, null, 2)}
+
+                        {/* Statistics Grid */}
+                        {(statistics.total > 0 || jobStatus !== 'idle') && (
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                <div className="p-4 border rounded-lg bg-card">
+                                    <div className="text-sm font-medium text-muted-foreground">Total Devices</div>
+                                    <div className="text-3xl font-bold mt-2">
+                                        {statistics.total}
+                                    </div>
+                                </div>
+                                <div className="p-4 border rounded-lg bg-card">
+                                    <div className="text-sm font-medium text-muted-foreground">Succeeded</div>
+                                    <div className="text-3xl font-bold mt-2 text-green-600">
+                                        {statistics.succeeded}
+                                    </div>
+                                </div>
+                                <div className="p-4 border rounded-lg bg-card">
+                                    <div className="text-sm font-medium text-muted-foreground">Failed</div>
+                                    <div className="text-3xl font-bold mt-2 text-red-600">
+                                        {statistics.failed}
+                                    </div>
+                                </div>
+                                <div className="p-4 border rounded-lg bg-card">
+                                    <div className="text-sm font-medium text-muted-foreground">Success Rate</div>
+                                    <div className="text-3xl font-bold mt-2">
+                                        {statistics.total > 0 ? `${Math.round((statistics.succeeded / statistics.total) * 100)}%` : '—'}
+                                    </div>
+                                </div>
                             </div>
                         )}
 
-                        <div className="flex justify-end pt-4">
-                            <Button onClick={resetWorkflow} variant="outline">
-                                Start New Backup
-                            </Button>
+                        {/* Device Results Table */}
+                        {finalResults?.data?.device_results && finalResults.data.device_results.length > 0 && (
+                            <div className="border rounded-lg bg-card">
+                                <div className="p-4 border-b">
+                                    <h3 className="text-lg font-semibold">Device Backup Results</h3>
+                                    <p className="text-sm text-muted-foreground mt-1">
+                                        Detailed status for each device
+                                    </p>
+                                </div>
+                                <ScrollArea className="h-96">
+                                    <div className="p-4">
+                                        <table className="w-full">
+                                            <thead className="border-b">
+                                                <tr className="text-left">
+                                                    <th className="pb-3 font-semibold text-sm">Status</th>
+                                                    <th className="pb-3 font-semibold text-sm">Device</th>
+                                                    <th className="pb-3 font-semibold text-sm">Message</th>
+                                                    <th className="pb-3 font-semibold text-sm">Duration</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {finalResults.data.device_results.map((device, index) => (
+                                                    <tr key={index} className="border-b last:border-0 hover:bg-muted/50">
+                                                        <td className="py-3">
+                                                            {device.success ? (
+                                                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                                                                    <CheckCircle className="h-3 w-3" />
+                                                                    Success
+                                                                </span>
+                                                            ) : (
+                                                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700">
+                                                                    <XCircle className="h-3 w-3" />
+                                                                    Failed
+                                                                </span>
+                                                            )}
+                                                        </td>
+                                                        <td className="py-3 font-medium">{device.hostname || device.device || 'Unknown'}</td>
+                                                        <td className="py-3 text-sm text-muted-foreground max-w-md truncate">
+                                                            {device.message || device.error || 'No message'}
+                                                        </td>
+                                                        <td className="py-3 text-sm text-muted-foreground">
+                                                            {device.duration ? `${device.duration.toFixed(2)}s` : '—'}
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </ScrollArea>
+                            </div>
+                        )}
+
+                        {/* Execution Metadata */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="p-4 border rounded-lg bg-card">
+                                <h3 className="text-sm font-semibold mb-3">Execution Details</h3>
+                                <dl className="space-y-2 text-sm">
+                                    <div className="flex justify-between">
+                                        <dt className="text-muted-foreground">Job ID:</dt>
+                                        <dd className="font-mono text-xs">{jobId || 'N/A'}</dd>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <dt className="text-muted-foreground">Progress:</dt>
+                                        <dd className="font-semibold">{progress}%</dd>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <dt className="text-muted-foreground">Steps:</dt>
+                                        <dd className="font-semibold">{completedSteps}/{totalSteps || 'Unknown'}</dd>
+                                    </div>
+                                </dl>
+                            </div>
+
+                            <div className="p-4 border rounded-lg bg-card">
+                                <h3 className="text-sm font-semibold mb-3">Configuration</h3>
+                                <dl className="space-y-2 text-sm">
+                                    <div className="flex justify-between">
+                                        <dt className="text-muted-foreground">Target:</dt>
+                                        <dd className="font-medium truncate ml-2">{backupParams.hostname || backupParams.inventory_file || 'N/A'}</dd>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <dt className="text-muted-foreground">Username:</dt>
+                                        <dd className="font-medium">{backupParams.username}</dd>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <dt className="text-muted-foreground">Backup Path:</dt>
+                                        <dd className="font-mono text-xs">/app/shared/data/backups</dd>
+                                    </div>
+                                </dl>
+                            </div>
                         </div>
+
+                        {/* Debug Information (Development Only) */}
+                        {finalResults && process.env.NODE_ENV === 'development' && (
+                            <details className="border rounded-lg bg-card">
+                                <summary className="p-4 cursor-pointer font-semibold text-sm hover:bg-muted/50">
+                                    Debug Information (Development Only)
+                                </summary>
+                                <div className="p-4 border-t bg-muted/30">
+                                    <pre className="text-xs font-mono whitespace-pre-wrap overflow-auto max-h-96">
+                                        {JSON.stringify(finalResults, null, 2)}
+                                    </pre>
+                                </div>
+                            </details>
+                        )}
                     </div>
                 </TabsContent>
             </Tabs>
