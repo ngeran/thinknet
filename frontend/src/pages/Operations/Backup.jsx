@@ -1,116 +1,155 @@
 /**
- * =================================================================
- * ⚙️ Device Backup Operation Component
- * =================================================================
- * Manages the full backup workflow: Configuration, Execution (via FastAPI/Redis), 
- * and Real-Time Logging (via Rust WebSocket Hub).
- * * Key Fixes & Enhancements:
- * 1. CRITICAL WS FILTER: The message filter now correctly uses the 'ws_channel:' prefix
- * expected from the Rust Hub/Redis system.
- * 2. DOUBLE PARSING: Implemented robust try/catch logic to handle both structured JSON 
- * log events and raw text (non-JSON) logs coming from the Python worker.
- * 3. CLEANUP: Ensured UNSUBSCRIBE command is sent both on job completion and component unmount/reset
- * to prevent channel leakage in the Rust Hub.
+ * =============================================================================
+ * ⚙️ Device Backup Operation Component - v5.3.0 (Duplicate Fix)
+ * =============================================================================
  *
+ * FIX: Complete rewrite of log deduplication logic using a Set-based approach
+ * to track unique message signatures and prevent any duplicate log entries.
+ *
+ * @version 5.3.0
+ * @last_updated 2025-10-18
+ * =============================================================================
  */
-
 import React, { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { ArrowRight, Loader2, CheckCircle, XCircle } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Progress } from '@/components/ui/progress';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
-// Local Components & Hooks
-import BackupForm from '../../forms/BackupForm';
-import DeviceTargetSelector from '../../shared/DeviceTargetSelector';
-import { useJobWebSocket } from '@/hooks/useJobWebSocket'; // Hook to access WS stream and commands
+// PROGRESS COMPONENTS IMPORTS
+import EnhancedProgressBar from '@/components/realTimeProgress/EnhancedProgressBar'; 
+import EnhancedProgressStep from '@/components/realTimeProgress/EnhancedProgressStep';
 
-// Define the API URL for the initial trigger
+// FORM AND SELECTOR COMPONENTS
+import BackupForm from '@/forms/BackupForm';
+import DeviceTargetSelector from '@/shared/DeviceTargetSelector';
+import { useJobWebSocket } from '@/hooks/useJobWebSocket';
+
+// API CONFIGURATION
 const API_URL = import.meta.env.VITE_API_GATEWAY_URL || 'http://localhost:8000';
 
-// =================================================================
-// 1. COMPONENT DEFINITION AND STATE MANAGEMENT
-// =================================================================
-
+/**
+ * Main Backup Component
+ * Handles device backup operations with real-time progress tracking
+ */
 export default function Backup() {
-
-    // --- State Initialization ---
+    // =========================================================================
+    // 🧠 STATE MANAGEMENT SECTION
+    // =========================================================================
+    
+    // Backup configuration parameters
     const [backupParams, setBackupParams] = useState({
         username: "admin",
-        password: "manolis1",
+        password: "manolis1", 
         hostname: "172.27.200.200",
         inventory_file: "",
     });
 
+    // UI State
     const [activeTab, setActiveTab] = useState("config");
-    // status: 'idle', 'running', 'success', 'failed'
     const [jobStatus, setJobStatus] = useState("idle");
+    
+    // Progress Tracking State
     const [progress, setProgress] = useState(0);
-    const [jobOutput, setJobOutput] = useState([]); // Array to store streamed log messages
+    const [jobOutput, setJobOutput] = useState([]);
     const [jobId, setJobId] = useState(null);
-    const [wsChannel, setWsChannel] = useState(null); // The base channel name from FastAPI (e.g., job:UUID)
+    const [wsChannel, setWsChannel] = useState(null);
     const [finalResults, setFinalResults] = useState(null);
+    
+    // Step Tracking State
+    const [completedSteps, setCompletedSteps] = useState(0);
+    const [totalSteps, setTotalSteps] = useState(0);
 
-    // Hook to access the WebSocket stream and send commands
+    // Refs for tracking processed data without re-renders
+    const processedStepsRef = useRef(new Set());
+    const latestStepMessageRef = useRef("");
+    const loggedMessagesRef = useRef(new Set()); // NEW: Track logged messages to prevent duplicates
+
+    // Custom WebSocket hook and UI refs
     const { sendMessage, lastMessage, isConnected } = useJobWebSocket();
-
     const scrollAreaRef = useRef(null);
 
-    // --- Utility Handlers ---
+    // =========================================================================
+    // 🐞 DEBUG MONITORS
+    // =========================================================================
+    
+    useEffect(() => {
+        console.log(`[DEBUG: activeTab] Tab changed to: "${activeTab}"`);
+    }, [activeTab]);
+
+    useEffect(() => {
+        if (jobStatus !== 'running' && jobStatus !== 'idle') {
+            console.log(`[DEBUG: jobStatus] Final status determined: "${jobStatus.toUpperCase()}"`);
+        }
+    }, [jobStatus]);
+
+    // =========================================================================
+    // 🧩 FORM HANDLERS SECTION
+    // =========================================================================
 
     const handleParamChange = (name, value) => {
         setBackupParams(prev => ({ ...prev, [name]: value }));
     };
 
-    const isFormValid = (
+    const isFormValid =
         backupParams.username.trim() !== "" &&
         backupParams.password.trim() !== "" &&
-        (backupParams.hostname.trim() !== "" || backupParams.inventory_file.trim() !== "")
-    );
+        (backupParams.hostname.trim() !== "" || backupParams.inventory_file.trim() !== "");
 
-    // Resets all state for a new job and cleans up the active WS subscription
+    // =========================================================================
+    // 🔄 WORKFLOW RESET FUNCTION
+    // =========================================================================
+
     const resetWorkflow = () => {
-        // Cleanup: Send UNSUBSCRIBE for the specific channel if one is active
         if (wsChannel) {
-            // Note: The channel sent in the command does *not* need the 'ws_channel:' prefix
             sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
-            console.log(`Reset: Sent UNSUBSCRIBE for ${wsChannel}`);
+            console.log('[WORKFLOW] Unsubscribed from WebSocket channel');
         }
-        
+
         setJobStatus("idle");
         setProgress(0);
         setJobOutput([]);
         setJobId(null);
-        setWsChannel(null); // Clear the channel state
+        setWsChannel(null);
         setFinalResults(null);
         setActiveTab("config");
+        setCompletedSteps(0);
+        setTotalSteps(0);
+        
+        processedStepsRef.current.clear();
+        latestStepMessageRef.current = "";
+        loggedMessagesRef.current.clear(); // Clear logged messages
+        
+        console.log("[WORKFLOW] Workflow reset to initial state");
     };
 
-// =================================================================
-// 2. JOB EXECUTION: HTTP TRIGGER AND WS SUBSCRIPTION
-// =================================================================
+    // =========================================================================
+    // 🚀 JOB EXECUTION
+    // =========================================================================
 
     const startJobExecution = async (e) => {
         e.preventDefault();
-
+        
         if (!isFormValid || jobStatus === 'running') return;
         
-        // Check connection before running.
         if (!isConnected) {
-            const connectErrorMsg = "WebSocket connection is not ready. Cannot start job. Check Rust Hub status.";
-            setJobOutput([{ time: new Date().toLocaleTimeString(), message: connectErrorMsg, level: 'error' }]);
+            console.error("[JOB START] WebSocket not connected - cannot start job");
+            setJobOutput(prev => [...prev, { 
+                timestamp: new Date().toISOString(), 
+                message: "WebSocket not connected. Cannot start job.", 
+                level: 'error' 
+            }]);
             setJobStatus("failed");
             setActiveTab("results");
             return;
         }
 
-        // 1. Cleanup old state and Transition to Execution Tab
         if (wsChannel) {
-            // Unsubscribe old job if necessary, though 'resetWorkflow' should handle most cases
             sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
         }
+        
+        console.log("[JOB START] Starting Backup Job...");
         setActiveTab("execute");
         setJobStatus("running");
         setProgress(0);
@@ -118,9 +157,12 @@ export default function Backup() {
         setFinalResults(null);
         setJobId(null);
         setWsChannel(null);
+        setCompletedSteps(0);
+        setTotalSteps(0);
+        processedStepsRef.current.clear();
+        latestStepMessageRef.current = "";
+        loggedMessagesRef.current.clear(); // Clear logged messages
 
-
-        // 2. Prepare payload for FastAPI
         const payload = {
             command: "backup",
             hostname: backupParams.hostname.trim(),
@@ -131,7 +173,6 @@ export default function Backup() {
         };
 
         try {
-            // 3. Trigger job via FastAPI
             const response = await fetch(`${API_URL}/api/operations/execute`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -139,178 +180,278 @@ export default function Backup() {
             });
 
             if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.detail || `API returned status ${response.status}`);
+                throw new Error(`API error ${response.status}: ${response.statusText}`);
             }
 
             const data = await response.json();
+            
+            setJobId(data.job_id);
+            setWsChannel(data.ws_channel);
+            console.log(`[JOB START] Job initiated - ID: ${data.job_id}, Channel: ${data.ws_channel}`);
 
-            // 4. Set the new job ID, channel, and SUBSCRIBE
-            const newJobId = data.job_id;
-            const newWsChannel = data.ws_channel; // e.g., 'job:UUID' (prefix 'ws_channel:' is added on Rust side)
-
-            setJobId(newJobId);
-            setWsChannel(newWsChannel); // <--- Store the base channel name
-
-            // CORE: Send the SUBSCRIBE command to the Rust Hub
-            sendMessage({ type: 'SUBSCRIBE', channel: newWsChannel });
-
-
+            sendMessage({ type: 'SUBSCRIBE', channel: data.ws_channel });
+            
         } catch (error) {
-            // Handle API failure (happens before WS stream starts)
-            const errorMsg = `Job start failed (API Error): ${error.message}`;
-            setJobOutput(prev => [...prev, { time: new Date().toLocaleTimeString(), message: errorMsg, level: 'error' }]);
+            console.error("[JOB START] API Call Failed:", error);
+            setJobOutput(prev => [...prev, { 
+                timestamp: new Date().toISOString(), 
+                message: `Job start failed: ${error.message}`, 
+                level: 'error' 
+            }]);
             setJobStatus("failed");
             setActiveTab("results");
         }
     };
 
-// =================================================================
-// 3. SUBSCRIPTION CLEANUP EFFECT
-// =================================================================
+    // =========================================================================
+    // 🔌 WEBSOCKET MESSAGE HANDLER
+    // =========================================================================
 
     useEffect(() => {
-        // CRITICAL: Cleanup logic to UNSUBSCRIBE if the component unmounts.
-        // It uses the latest 'wsChannel' and 'jobStatus' from the dependency array.
-        return () => {
-            if (wsChannel && jobStatus === 'running') {
-                console.log(`Component Unmount/Cleanup: Sending UNSUBSCRIBE for ${wsChannel}`);
-                sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
-            }
-        };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [wsChannel, jobStatus, sendMessage]); 
-    // sendMessage is stable (from useCallback), but included for completeness.
+        if (!lastMessage || !jobId) return;
 
+        const raw = lastMessage;
+        
+        if (typeof raw !== 'string' || (!raw.startsWith('{') && !raw.startsWith('['))) {
+            console.log('[WEBSOCKET] Skipping non-JSON message:', raw.substring(0, 100));
+            return;
+        }
 
-// =================================================================
-// 4. REAL-TIME WS MESSAGE LISTENER (FIXED LOGIC)
-// =================================================================
+        let parsed;
+        try {
+            parsed = JSON.parse(raw);
+        } catch (error) {
+            console.warn('[WEBSOCKET DEBUG] Failed to parse initial JSON:', raw.substring(0, 200));
+            return;
+        }
 
-    useEffect(() => {
-        // Only run if we have a new message, a current job ID, and a channel to filter against
-        if (lastMessage && jobId && wsChannel) {
-            
-            // 1. Initial check: Filter out non-JSON pings or diagnostic messages from the raw stream
-            if (typeof lastMessage !== 'string' || (!lastMessage.startsWith('{') && !lastMessage.startsWith('['))) {
-                return;
-            }
+        if (parsed.channel && wsChannel && !parsed.channel.includes(wsChannel)) {
+            console.log('[WEBSOCKET] Skipping message from different channel:', parsed.channel);
+            return;
+        }
 
-            try {
-                // Parse the outer RedisMessage object { channel, data }
-                const message = JSON.parse(lastMessage);
+        // =====================================================================
+        // 🔄 PAYLOAD EXTRACTION
+        // =====================================================================
 
-                // CRITICAL FIX 1: The Rust Hub prefix the channel with 'ws_channel:'. Filter must match this.
-                if (message.channel !== `ws_channel:${wsChannel}`) { 
-                    return; // Ignore messages not meant for this component's job
-                }
+        const extractNestedProgressData = (initialParsed) => {
+            let currentPayload = initialParsed;
+            let deepestNestedData = null;
 
-                let update = {};
-
-                // CRITICAL FIX 2: Handle the nested JSON string (the log payload) vs. raw text logs
+            if (initialParsed.data) {
                 try {
-                    // Attempt to parse the inner data as JSON (for logs with event_type)
-                    update = JSON.parse(message.data);
-                } catch (innerError) {
-                    // If inner parsing fails, assume it's a raw text log (e.g., [STDERR_RAW_NON_JSON])
-                    // Create a pseudo-update object for consistent logging structure
-                    update = {
-                        message: message.data,
-                        // Heuristic to set level for raw messages
-                        level: message.data.toLowerCase().includes('error') ? 'error' : 'warning',
-                        event_type: 'RAW_LOG'
-                    };
-                }
+                    const dataPayload = typeof initialParsed.data === 'string' 
+                        ? JSON.parse(initialParsed.data) 
+                        : initialParsed.data;
+                    
+                    currentPayload = dataPayload;
 
-                // 2. Update Log Output
-                const logEntry = {
-                    time: new Date().toLocaleTimeString(),
-                    // Use the message from the parsed/pseudo-parsed 'update' object
-                    message: update.message || 'Processing event (no message field)...',
-                    level: update.level ? update.level.toLowerCase() : 'info'
-                };
-                setJobOutput(prev => [...prev, logEntry]);
-
-                // Auto-scroll the log area
-                if (scrollAreaRef.current) {
-                    // Use a short delay to wait for the DOM update
-                    setTimeout(() => {
-                        scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight;
-                    }, 50);
-                }
-
-                // 3. Update Progress Bar (Only for structured JSON events)
-                if (update.event_type === "PROGRESS_UPDATE" && typeof update.data?.progress === 'number') {
-                    const newProgress = Math.min(100, Math.max(0, update.data.progress));
-                    setProgress(newProgress);
-                }
-
-                // 4. Handle Completion (Only for structured JSON events)
-                if (update.event_type === "OPERATION_COMPLETE") {
-                    const finalStatus = update.data.status === "SUCCESS" ? "success" : "failed";
-                    setJobStatus(finalStatus);
-                    setFinalResults(update.data.final_results);
-                    setProgress(100);
-
-                    // CORE: Send the UNSUBSCRIBE command when job is completed
-                    sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
-
-                    // Switch tabs after a short delay
-                    setTimeout(() => {
-                        setActiveTab(currentTab => {
-                            if (currentTab === "execute") {
-                                console.log("Job complete, switching from Execute to Results.");
-                                return "results";
+                    if (dataPayload.event_type === "ORCHESTRATOR_LOG" && dataPayload.message) {
+                        const message = dataPayload.message;
+                        const jsonMatch = message.match(/\[(STDOUT|STDERR)(?:_RAW)?\]\s*(\{.*\})/s);
+                        if (jsonMatch && jsonMatch[2]) {
+                            try {
+                                deepestNestedData = JSON.parse(jsonMatch[2]);
+                            } catch (parseError) {
+                                console.warn('[WEBSOCKET DEBUG] Failed to parse nested JSON:', jsonMatch[2].substring(0, 200));
                             }
-                            return currentTab;
-                        });
-                    }, 100);
+                        }
+                    }
+                } catch (error) {
+                    console.warn('[WEBSOCKET DEBUG] Failed to parse data field:', error.message);
                 }
+            }
 
-            } catch (e) {
-                // Catches errors from the outer JSON.parse(lastMessage) or unexpected structure
-                console.error("Failed to process WebSocket message:", e, lastMessage);
-                setJobOutput(prev => [...prev, { time: new Date().toLocaleTimeString(), message: `WS Error: Failed to parse message`, level: 'error' }]);
+            return {
+                payload: deepestNestedData || currentPayload,
+                isNested: !!deepestNestedData
+            };
+        };
+
+        const { payload: finalPayload, isNested } = extractNestedProgressData(parsed);
+
+        // =====================================================================
+        // 📝 LOG STREAM UPDATES - DEDUPLICATION LOGIC
+        // =====================================================================
+        
+        /**
+         * Create a unique signature for each log message to detect duplicates
+         */
+        const createLogSignature = (payload) => {
+            const msg = payload.message || '';
+            const eventType = payload.event_type || 'unknown';
+            const timestamp = payload.timestamp || '';
+            
+            // Create signature from message content + event type
+            // We don't include timestamp to catch duplicates sent at slightly different times
+            return `${eventType}::${msg.substring(0, 100)}`;
+        };
+
+        const logSignature = createLogSignature(finalPayload);
+        
+        // Check if we've already logged this message
+        if (loggedMessagesRef.current.has(logSignature)) {
+            console.log('[WEBSOCKET FILTER] Duplicate message detected and skipped:', logSignature);
+            // Still process progress updates even if we skip logging
+        } else {
+            // This is a new unique message, log it
+            loggedMessagesRef.current.add(logSignature);
+            
+            const logEntry = {
+                timestamp: finalPayload.timestamp || new Date().toISOString(),
+                message: finalPayload.message || (typeof finalPayload === 'string' ? finalPayload : "Processing..."),
+                level: finalPayload.level?.toLowerCase() || "info",
+                event_type: finalPayload.event_type,
+                data: finalPayload.data,
+            };
+            
+            setJobOutput(prev => [...prev, logEntry]);
+            
+            // Auto-scroll to latest log entry
+            if (scrollAreaRef.current) {
+                setTimeout(() => {
+                    if (scrollAreaRef.current) {
+                        scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight;
+                    }
+                }, 50);
             }
         }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [lastMessage, jobId, wsChannel, sendMessage]); 
-    // Note: scrollAreaRef is omitted from deps as it's a ref, but is used inside the handler.
+        
+        // Update latest step message for progress bar display
+        const logMessage = finalPayload.message || (typeof finalPayload === 'string' ? finalPayload : "Processing...");
+        if (logMessage && finalPayload.event_type !== "OPERATION_COMPLETE") {
+            latestStepMessageRef.current = logMessage;
+        }
 
-// =================================================================
-// 5. RENDER METHOD
-// =================================================================
+        // =====================================================================
+        // 📊 PROGRESS & STEP TRACKING
+        // =====================================================================
+        
+        if (finalPayload.event_type === "OPERATION_START" && typeof finalPayload.data?.total_steps === "number") {
+            console.log(`[PROGRESS] Operation started with ${finalPayload.data.total_steps} total steps`);
+            setTotalSteps(finalPayload.data.total_steps);
+            setProgress(5);
+        }
+
+        if (finalPayload.event_type === "STEP_START" && finalPayload.data?.step) {
+            if (finalPayload.data.step > totalSteps) {
+                const inferredTotal = finalPayload.data.step + 3;
+                setTotalSteps(inferredTotal);
+            }
+        }
+
+        if (finalPayload.event_type === "STEP_COMPLETE" && typeof finalPayload.data?.step === "number") {
+            const stepNum = finalPayload.data.step;
+            
+            if (!processedStepsRef.current.has(stepNum)) {
+                processedStepsRef.current.add(stepNum);
+                
+                setCompletedSteps(prevCompleted => {
+                    const newCompleted = prevCompleted + 1;
+
+                    let newProgress = progress;
+                    if (totalSteps > 0) {
+                        newProgress = Math.min(99, Math.round((newCompleted / totalSteps) * 100));
+                    } else {
+                        newProgress = Math.min(99, progress + 25);
+                    }
+                    
+                    setProgress(newProgress);
+                    return newCompleted;
+                });
+            }
+        }
+
+        if (finalPayload.event_type === "PROGRESS_UPDATE" && typeof finalPayload.data?.progress === "number") {
+            setProgress(Math.min(99, Math.max(0, finalPayload.data.progress)));
+        }
+
+        // =====================================================================
+        // 🏁 OPERATION COMPLETE
+        // =====================================================================
+
+        const isCompletionEvent = 
+            finalPayload.event_type === "OPERATION_COMPLETE" || 
+            finalPayload.success !== undefined ||
+            (logMessage && logMessage.includes('Orchestrator completed with success')) ||
+            (logMessage && logMessage.includes('Backup completed:'));
+
+        if (isCompletionEvent) {
+            // Check multiple possible locations for success status
+            const finalSuccess = 
+                finalPayload.success === true || 
+                finalPayload.data?.final_results?.success === true ||
+                finalPayload.data?.status === "SUCCESS" ||
+                (logMessage && logMessage.includes('success: True')) ||
+                (logMessage && logMessage.includes('Succeeded: ') && !logMessage.includes('Failed: 0') === false);
+            
+            console.log("[JOB COMPLETE] Final event detected:", { 
+                success: finalSuccess, 
+                event_type: finalPayload.event_type,
+                data_status: finalPayload.data?.status,
+                nested_success: finalPayload.data?.final_results?.success
+            });
+            
+            setJobStatus(finalSuccess ? "success" : "failed");
+            setFinalResults(finalPayload); 
+            setProgress(100);
+            
+            if (totalSteps > 0) {
+                setCompletedSteps(totalSteps);
+            }
+            
+            if (wsChannel) {
+                sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
+            }
+
+            requestAnimationFrame(() => {
+                console.log("[TAB SWITCH] Executing scheduled tab switch to 'results'");
+                setActiveTab("results");
+            });
+        }
+    }, [lastMessage, jobId, wsChannel, sendMessage, setActiveTab, totalSteps, progress, completedSteps]); 
+
+    // =========================================================================
+    // 🧱 UI RENDER SECTION
+    // =========================================================================
+    
+    const isRunning = jobStatus === 'running';
+    const isComplete = jobStatus === 'success';
+    const hasError = jobStatus === 'failed';
 
     return (
         <div className="p-8 pt-6">
             <h1 className="text-3xl font-bold tracking-tight mb-2">Device Backup Operation</h1>
-            <p className="text-muted-foreground mb-6">
-                A guided workflow to configure, execute, and view results for device backups.
-            </p>
+            <p className="text-muted-foreground mb-6">Configure, execute, and review device backups.</p>
             <Separator className="mb-8" />
 
             <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
                 <TabsList className="grid w-full grid-cols-3 mb-6">
-                    <TabsTrigger value="config" disabled={jobStatus === 'running'}>Configure</TabsTrigger>
-                    <TabsTrigger value="execute">Execute</TabsTrigger>
-                    <TabsTrigger value="results" disabled={jobStatus === 'running' && activeTab !== 'results'}>Results</TabsTrigger>
+                    <TabsTrigger value="config" disabled={jobStatus === 'running'}>
+                        Configure
+                    </TabsTrigger>
+                    <TabsTrigger value="execute">
+                        Execute
+                    </TabsTrigger>
+                    <TabsTrigger value="results" disabled={jobStatus === 'running'}>
+                        Results
+                    </TabsTrigger>
                 </TabsList>
 
-                {/* --- CONFIGURE TAB --- */}
                 <TabsContent value="config">
-                    <form onSubmit={startJobExecution} className="space-y-8 max-w-4xl">
-                        <DeviceTargetSelector
-                            parameters={backupParams}
-                            onParamChange={handleParamChange}
+                    <div className="space-y-8 max-w-4xl">
+                        <DeviceTargetSelector 
+                            parameters={backupParams} 
+                            onParamChange={handleParamChange} 
                         />
-                        <BackupForm
-                            parameters={backupParams}
-                            onParamChange={handleParamChange}
+                        <BackupForm 
+                            parameters={backupParams} 
+                            onParamChange={handleParamChange} 
                         />
 
                         <div className="flex justify-end pt-4">
                             <Button
-                                type="submit"
+                                onClick={startJobExecution}
                                 disabled={!isFormValid || jobStatus !== 'idle' || !isConnected}
                                 className="w-full sm:w-auto"
                             >
@@ -321,36 +462,48 @@ export default function Backup() {
                                 )}
                             </Button>
                         </div>
-                    </form>
+                    </div>
                 </TabsContent>
 
-                {/* --- EXECUTE TAB --- */}
                 <TabsContent value="execute">
                     <div className="space-y-6 p-4 border rounded-lg max-w-4xl">
-                        <h2 className="text-xl font-semibold flex items-center gap-2">
-                            Job Execution Status
-                            {jobStatus === 'running' && <Loader2 className="h-5 w-5 animate-spin text-primary" />}
-                        </h2>
-                        <Progress value={progress} className="w-full" />
-                        <p className="text-sm text-muted-foreground">Progress: **{progress}%**</p>
+                        <h2 className="text-xl font-semibold mb-4">Job Execution Status</h2>
+                        
+                        <EnhancedProgressBar
+                            percentage={progress}
+                            currentStep={latestStepMessageRef.current}
+                            totalSteps={totalSteps}
+                            completedSteps={completedSteps}
+                            isRunning={isRunning}
+                            isComplete={isComplete}
+                            hasError={hasError}
+                            animated={isRunning}
+                            showStepCounter={true}
+                            showPercentage={true}
+                            compact={false}
+                            variant={isComplete ? "success" : hasError ? "destructive" : "default"}
+                        />
 
-                        <ScrollArea className="h-64 bg-muted/50 p-4 rounded-md font-mono text-sm border">
-                            <div ref={scrollAreaRef} className="h-full">
-                                {jobOutput.length === 0 && jobStatus !== 'running' ? (
-                                    <p className="text-center text-muted-foreground">Start the job to see real-time updates.</p>
+                        <ScrollArea className="h-96 bg-background/50 p-4 rounded-md border">
+                            <div ref={scrollAreaRef} className="space-y-3">
+                                {jobOutput.length === 0 ? (
+                                    <p className="text-center text-muted-foreground pt-4">
+                                        Waiting for job to start...
+                                    </p>
                                 ) : (
                                     jobOutput.map((log, index) => (
-                                        <p
-                                            key={index}
-                                            className={`text-xs ${
-                                                log.level === 'error' ? 'text-destructive' :
-                                                log.level === 'success' ? 'text-green-600' :
-                                                log.level === 'warning' ? 'text-yellow-600' :
-                                                'text-foreground/80'
-                                            }`}
-                                        >
-                                            <span className="text-primary mr-2">[{log.time}]</span> {log.message}
-                                        </p>
+                                        <EnhancedProgressStep
+                                            key={`${log.timestamp}-${index}`}
+                                            step={{
+                                                message: log.message,
+                                                level: log.level,
+                                                timestamp: log.timestamp,
+                                                type: log.event_type, 
+                                            }}
+                                            isLatest={index === jobOutput.length - 1}
+                                            compact={false}
+                                            showTimestamp={true}
+                                        />
                                     ))
                                 )}
                             </div>
@@ -358,43 +511,47 @@ export default function Backup() {
                     </div>
                 </TabsContent>
 
-                {/* --- RESULTS TAB --- */}
                 <TabsContent value="results">
                     <div className="space-y-6 p-6 border rounded-lg max-w-4xl">
                         <h2 className="text-2xl font-bold flex items-center gap-3">
                             {jobStatus === 'success' ? (
-                                <><CheckCircle className="h-6 w-6 text-green-500" /> Job Complete!</>
+                                <><CheckCircle className="h-6 w-6 text-green-500" /> Backup Completed Successfully!</>
                             ) : jobStatus === 'failed' ? (
-                                <><XCircle className="h-6 w-6 text-destructive" /> Job Failed</>
+                                <><XCircle className="h-6 w-6 text-destructive" /> Backup Failed</>
                             ) : (
                                 "Awaiting Execution"
                             )}
                         </h2>
-
                         <Separator />
 
                         <div className="space-y-2">
-                            <p className="font-medium">Summary:</p>
-                            <ul className="list-disc list-inside text-muted-foreground ml-4">
-                                <li>Target(s): **{finalResults?.targets || backupParams.hostname || backupParams.inventory_file || 'N/A'}**</li>
-                                <li>Final Status: <span className={jobStatus === 'success' ? 'text-green-500 font-semibold' : 'text-destructive font-semibold'}>{jobStatus.toUpperCase()}</span></li>
-                                <li>Final Message: **{finalResults?.message || 'Details not available.'}**</li>
+                            <p className="font-medium">Backup Summary:</p>
+                            <ul className="list-disc list-inside text-muted-foreground ml-4 space-y-1">
+                                <li>Target Device: <strong>{backupParams.hostname || 'N/A'}</strong></li>
+                                <li>Status: <strong className={
+                                    jobStatus === 'success' ? 'text-green-500' : 'text-destructive'
+                                }>
+                                    {jobStatus.toUpperCase()}
+                                </strong></li>
+                                <li>Final Message: <strong>{finalResults?.message || 'Check logs for details.'}</strong></li>
+                                <li>Progress: <strong>{progress}%</strong></li>
+                                <li>Steps Completed: <strong>{completedSteps}/{totalSteps || 'Unknown'}</strong></li>
+                                
                                 {finalResults?.statistics && (
                                     <>
-                                        <li>Devices Succeeded: **{finalResults.statistics.succeeded || 0}**</li>
-                                        <li>Devices Failed: **{finalResults.statistics.failed || 0}**</li>
-                                        <li>Total Duration: **{finalResults.statistics.duration || 'N/A'}**</li>
+                                        <li>Devices Succeeded: <strong className="text-green-500">{finalResults.statistics.succeeded || 0}</strong></li>
+                                        <li>Devices Failed: <strong className="text-destructive">{finalResults.statistics.failed || 0}</strong></li>
                                     </>
                                 )}
                             </ul>
                         </div>
-
-                        {jobStatus === 'failed' && finalResults?.traceback && (
-                            <div className="bg-destructive/10 p-3 rounded-md border border-destructive/50 text-destructive text-sm font-mono whitespace-pre-wrap">
-                                **Traceback:** {finalResults.traceback}
+                        
+                        {finalResults && process.env.NODE_ENV === 'development' && (
+                            <div className="bg-muted p-3 rounded-md text-sm font-mono whitespace-pre-wrap max-h-40 overflow-auto">
+                                <div className="text-xs font-semibold mb-1">Debug Information:</div>
+                                {JSON.stringify(finalResults, null, 2)}
                             </div>
                         )}
-
 
                         <div className="flex justify-end pt-4">
                             <Button onClick={resetWorkflow} variant="outline">
@@ -403,7 +560,6 @@ export default function Backup() {
                         </div>
                     </div>
                 </TabsContent>
-
             </Tabs>
         </div>
     );
