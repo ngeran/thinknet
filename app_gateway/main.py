@@ -10,7 +10,15 @@ from loguru import logger
 
 # ❌ OLD: from .api.routers import automation, proxy, test_redis, inventory, sidebar_metadata
 # ✅ FIX: Changed to absolute import to ensure correct loading within Docker/Uvicorn
-from app_gateway.api.routers import automation, proxy, test_redis, inventory, sidebar_metadata, restore, operations
+from app_gateway.api.routers import (
+    automation,
+    proxy,
+    test_redis,
+    inventory,
+    sidebar_metadata,
+    restore,
+    operations,
+)
 
 from .core.config import settings
 
@@ -21,7 +29,7 @@ app = FastAPI(title=settings.APP_TITLE)
 # Configure CORS (essential for local development)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Should be restricted in production
+    allow_origins=["*"],  # Should be restricted in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -34,17 +42,21 @@ app.include_router(automation.router, prefix="/api")
 app.include_router(proxy.router, prefix="/api")
 app.include_router(test_redis.router, prefix="/api")
 # NEW LINE: Include the inventory router
-app.include_router(inventory.router, prefix="/api") 
+app.include_router(inventory.router, prefix="/api")
 # Update this line to include the sidebar_metadata router
-app.include_router(sidebar_metadata.router, prefix="/api") # Now includes sidebar_metadata
+app.include_router(
+    sidebar_metadata.router, prefix="/api"
+)  # Now includes sidebar_metadata
 app.include_router(restore.router, prefix="/api")
 # 🔑 NEW LINE: Include the operations router
-app.include_router(operations.router, prefix="/api") 
+app.include_router(operations.router, prefix="/api")
+
 
 # --- Root Health Check ---
 # Description: Simple health check for the application root.
 @app.get("/")
 def root_health_check():
     return {"status": "ok", "message": "FastAPI Gateway is operational"}
+
 
 # (The previous standalone health_check and run_juniper_script were moved to api/routers/automation.py)

@@ -48,7 +48,7 @@ class JobTrigger(BaseModel):
     inventory_file: Optional[str] = None
     username: str
     password: str
-    backup_path: str = "/var/backups"
+    backup_path: str = "/app/shared/data/backups"
     backup_file: Optional[str] = None
     restore_type: str = "override"
 

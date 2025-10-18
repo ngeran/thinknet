@@ -1,88 +1,67 @@
-# app_gateway/fastapi_worker.py
-
-from pydantic import BaseModel
-
-# 🔑 ENHANCED FIX: Added List for run_script_and_stream_to_redis type hint
-from typing import Optional, Tuple, Any, Dict, cast, List
 import asyncio
 import subprocess
 import json
-from pathlib import Path
+import logging
 import os
 import redis
 import redis.asyncio as aioredis
 from datetime import datetime
-import logging
+from pathlib import Path
+from typing import Optional, Tuple, Any, Dict, cast, List
 
-# --- Logging Setup ---
+# --- Logging Setup (CRITICAL DEBUG FIXES) ---
 logger = logging.getLogger("FASTAPI_WORKER")
-logger.setLevel(logging.INFO)
+# 🔑 FIX 1: Set log level to DEBUG to capture the full command and stream content.
+logger.setLevel(logging.DEBUG)
 ch = logging.StreamHandler()
-ch.setLevel(logging.INFO)
+# 🔑 FIX 1: Set stream handler level to DEBUG.
+ch.setLevel(logging.DEBUG)
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 ch.setFormatter(formatter)
 logger.addHandler(ch)
 
-# --- Redis Configuration and Setup ---
-
+# --- Configuration ---
 REDIS_HOST = os.getenv("REDIS_HOST", "redis_broker")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 REDIS_CHANNEL_PREFIX = "ws_channel:job:"
 REDIS_JOB_QUEUE = "automation_jobs_queue"
 
-# Paths
 PYTHON_INTERPRETER_PATH = "/usr/local/bin/python"
 BASE_SCRIPT_ROOT = "/app/app_gateway/py_scripts"
 
-# Synchronous Redis client for blocking list operations (BLPOP) and ping
+# --- Redis Connection (Synchronous for BLPOP) ---
 r: Optional[redis.Redis] = None
 try:
-    # Use decode_responses=True so BLPOP returns strings, not bytes
+    # Synchronous Redis client initialization for the blpop loop.
     r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
     r.ping()
     logger.info(f"✅ WORKER: Connected to Redis at {REDIS_HOST}:{REDIS_PORT}")
 except Exception as e:
     logger.error(f"❌ WORKER: Failed to connect to Redis: {e}")
 
-# --- Pydantic Model (Dummy for type hinting) ---
-
-
-class JobTrigger(BaseModel):
-    command: str
-    hostname: Optional[str] = None
-    # ... other fields ...
-
 
 # --- Async Publishing Helper ---
-
-
 async def async_publish_message(channel: str, message: str) -> None:
     """Publish a message to Redis Pub/Sub using the non-blocking async client."""
     try:
-        # Uses the aioredis client for non-blocking network I/O
         async_r = aioredis.from_url(
             f"redis://{REDIS_HOST}:{REDIS_PORT}", decode_responses=True
         )
         await async_r.publish(channel, message)
     except Exception as e:
-        logger.error(f"Failed to publish message to {channel}: {e}")
+        # Log Redis connection/publishing failures as they happen.
+        logger.critical(f"❌ CRITICAL: Failed to publish message to {channel}: {e}")
 
 
-# --- Stream Processing Logic ---
-
-
+# --- Stream Processing Logic (CRITICAL DEBUG FIXES) ---
 async def stream_reader(
-    # 🔑 FIX: Explicitly typed as StreamReader. Subprocess.PIPE guarantees non-None upon success.
     stream: asyncio.StreamReader,
     redis_channel: str,
     stream_name: str,
     job_id: str,
     is_json_stream: bool = False,
 ):
-    """
-    Helper function to read a subprocess stream line-by-line
-    and publish the data to Redis Pub/Sub (non-blocking).
-    """
+    """Reads a subprocess stream and publishes data to Redis."""
     while True:
         try:
             line = await stream.readline()
@@ -103,19 +82,54 @@ async def stream_reader(
         message_to_publish: Optional[str] = None
 
         if is_json_stream:
+            # 🔑 ENHANCEMENT: Check for JSON-like start/end before attempting parse
             if line.startswith("{") and line.endswith("}"):
-                message_to_publish = line
+                # Check if it's a nested log (e.g., Python logging framework outputting JSON as a string)
+                if line.startswith('{"level":'):
+                    # The line is already the JSON payload the frontend expects.
+                    message_to_publish = line
+                else:
+                    # If it's the raw final JSON, wrap it in a completion event
+                    # This handles the final raw JSON line that might not have level/event_type fields
+                    logger.debug(
+                        f"WORKER DEBUG: Wrapping final raw JSON payload: {line[:50]}..."
+                    )
+                    message_to_publish = json.dumps(
+                        {
+                            "level": "SUCCESS",
+                            "event_type": "OPERATION_COMPLETE",
+                            "message": "Final raw results received.",
+                            "data": {
+                                "status": "SUCCESS",
+                                "final_results": json.loads(line),
+                            },
+                            "timestamp": datetime.utcnow().isoformat(),
+                            "job_id": job_id,
+                        }
+                    )
             else:
+                # 🔑 ANNOTATION: Capture non-JSON data unexpectedly sent to the designated JSON stream.
+                logger.warning(
+                    f"WORKER WARNING: Non-JSON data on {stream_name} for job {job_id}. Data: '{line}'"
+                )
                 message_to_publish = json.dumps(
                     {
-                        "level": "DEBUG",
+                        "level": "WARNING",
                         "event_type": "ORCHESTRATOR_LOG",
-                        "message": f"[{stream_name.upper()}_RAW] {line}",
+                        "message": f"[{stream_name.upper()}_RAW_NON_JSON] {line}",
                         "timestamp": datetime.utcnow().isoformat(),
                         "job_id": job_id,
                     }
                 )
         else:
+            # 🔑 ENHANCEMENT: Explicitly log raw stderr/stdout that is NOT the JSON payload.
+            # This captures orchestrator logs (e.g., "Starting orchestrator...")
+            if stream_name == "stderr":
+                logger.error(f"WORKER RAW STDERR (JOB {job_id}): {line}")
+            else:
+                logger.debug(f"WORKER RAW STDOUT (JOB {job_id}): {line}")
+
+            # Standard wrapper for non-JSON content to keep the frontend updated
             message_to_publish = json.dumps(
                 {
                     "level": "LOG",
@@ -127,6 +141,7 @@ async def stream_reader(
             )
 
         if message_to_publish:
+            # Non-blocking task creation for Redis publishing
             asyncio.create_task(
                 async_publish_message(redis_channel, message_to_publish)
             )
@@ -146,7 +161,9 @@ async def run_script_and_stream_to_redis(
     redis_channel = f"{REDIS_CHANNEL_PREFIX}{job_id}"
     full_command = [PYTHON_INTERPRETER_PATH, "-u", str(script_path)] + cmd_args
 
-    # --- Setup Environment for Subprocess ---
+    logger.debug(f"WORKER: Job {job_id} FULL COMMAND: {' '.join(full_command)}")
+
+    # --- Setup Environment ---
     subprocess_env = os.environ.copy()
     script_parent_dir = str(script_path.parent)
     subprocess_env["PYTHONPATH"] = (
@@ -179,21 +196,27 @@ async def run_script_and_stream_to_redis(
             }
         )
         asyncio.create_task(async_publish_message(redis_channel, error_payload))
-        logger.error(f"FATAL ERROR: Job {job_id} failed to spawn: {e}")
+        logger.critical(f"FATAL ERROR: Job {job_id} failed to spawn: {e}")
         return
 
-    # 🔑 FIX: This explicit check ensures process.stdout and process.stderr are treated
-    # as non-Optional asyncio.StreamReader objects by the type checker for the next block.
+    # 2. Concurrently Stream and Publish Output
     if process.stdout is None or process.stderr is None:
         logger.error(f"WORKER: Job {job_id} subprocess failed to provide I/O streams.")
         return
 
-    # 2. Concurrently Stream and Publish Output
+    # 🔑 CRITICAL FIX: The orchestrator is sending its structured JSON progress messages
+    # to STDERR (due to how Python logging is configured in run.py).
+    # We map STDERR to the JSON stream handler (is_json_stream=True).
+    # We map STDOUT to the non-JSON handler (is_json_stream=False).
     stdout_task = stream_reader(
-        process.stdout, redis_channel, "stdout", job_id, is_json_stream=True
+        process.stdout, redis_channel, "stdout", job_id, is_json_stream=False
     )
     stderr_task = stream_reader(
-        process.stderr, redis_channel, "stderr", job_id, is_json_stream=False
+        process.stderr,
+        redis_channel,
+        "stderr",
+        job_id,
+        is_json_stream=True,  # <--- THE FIX
     )
 
     await asyncio.gather(stdout_task, stderr_task)
@@ -225,9 +248,10 @@ async def run_script_and_stream_to_redis(
     logger.info(f"WORKER: Job {job_id} completed and stream tasks closed.")
 
 
+# ---------------------------------------------------------------------------------------------------
+
+
 # --- Main Worker Loop (The Job Consumer) ---
-
-
 async def job_consumer():
     """Continuously monitors the Redis queue and executes jobs concurrently."""
     global r
@@ -238,29 +262,23 @@ async def job_consumer():
 
     logger.info(f"Worker started, monitoring queue: {REDIS_JOB_QUEUE}")
 
-    # 🔑 FIX: Assign r to a local, non-Optional variable. This eliminates the "blpop is not a known attribute of 'None'" error.
-    # The initial `if not r or not r.ping()` guarantees 'r' is a valid 'redis.Redis' object here.
     redis_sync_client: redis.Redis = r
 
     while True:
         try:
-            # 🔑 FIX: Use asyncio.to_thread for the synchronous blpop call to prevent blocking the event loop.
-            # 🔑 FIX: Pass REDIS_JOB_QUEUE as a List to satisfy strict Redis type hints.
+            # Use asyncio.to_thread for the synchronous blpop call to prevent blocking the event loop.
             result = await asyncio.to_thread(
                 lambda: redis_sync_client.blpop([REDIS_JOB_QUEUE], timeout=0)
             )
 
-            # 🔑 FIX: Use cast to confirm the type checker that the result is an Optional tuple (resolving Awaitable errors).
             item: Optional[Tuple[str, str]] = cast(Optional[Tuple[str, str]], result)
 
             if item:
-                # Item is guaranteed non-None here and can be unpacked.
                 _, job_data_json = item
 
                 job_payload: Dict[str, Any] = json.loads(job_data_json)
 
                 job_id = job_payload.get("job_id")
-                # Using Path() on the script path
                 script_path = Path(job_payload.get("script_path", ""))
                 cmd_args = job_payload.get("cmd_args")
 

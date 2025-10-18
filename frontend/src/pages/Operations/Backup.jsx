@@ -1,12 +1,16 @@
-// frontend/src/pages/Operations/Backup.jsx
-
 /**
  * =================================================================
  * ⚙️ Device Backup Operation Component
  * =================================================================
- * Key Fixes & Enhancements:
- * 1. Cleanup Effect: Adds a dedicated useEffect to UNSUBSCRIBE when the job completes
- * or the component unmounts, preventing channel leakage in the Rust Hub.
+ * Manages the full backup workflow: Configuration, Execution (via FastAPI/Redis), 
+ * and Real-Time Logging (via Rust WebSocket Hub).
+ * * Key Fixes & Enhancements:
+ * 1. CRITICAL WS FILTER: The message filter now correctly uses the 'ws_channel:' prefix
+ * expected from the Rust Hub/Redis system.
+ * 2. DOUBLE PARSING: Implemented robust try/catch logic to handle both structured JSON 
+ * log events and raw text (non-JSON) logs coming from the Python worker.
+ * 3. CLEANUP: Ensured UNSUBSCRIBE command is sent both on job completion and component unmount/reset
+ * to prevent channel leakage in the Rust Hub.
  *
  */
 
@@ -21,7 +25,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 // Local Components & Hooks
 import BackupForm from '../../forms/BackupForm';
 import DeviceTargetSelector from '../../shared/DeviceTargetSelector';
-import { useJobWebSocket } from '@/hooks/useJobWebSocket'; 
+import { useJobWebSocket } from '@/hooks/useJobWebSocket'; // Hook to access WS stream and commands
 
 // Define the API URL for the initial trigger
 const API_URL = import.meta.env.VITE_API_GATEWAY_URL || 'http://localhost:8000';
@@ -36,7 +40,7 @@ export default function Backup() {
     const [backupParams, setBackupParams] = useState({
         username: "admin",
         password: "manolis1",
-        hostname: "192.168.100.10",
+        hostname: "172.27.200.200",
         inventory_file: "",
     });
 
@@ -46,10 +50,10 @@ export default function Backup() {
     const [progress, setProgress] = useState(0);
     const [jobOutput, setJobOutput] = useState([]); // Array to store streamed log messages
     const [jobId, setJobId] = useState(null);
-    const [wsChannel, setWsChannel] = useState(null);
+    const [wsChannel, setWsChannel] = useState(null); // The base channel name from FastAPI (e.g., job:UUID)
     const [finalResults, setFinalResults] = useState(null);
 
-    // 🔑 Hook to access the WebSocket stream and send commands
+    // Hook to access the WebSocket stream and send commands
     const { sendMessage, lastMessage, isConnected } = useJobWebSocket();
 
     const scrollAreaRef = useRef(null);
@@ -66,10 +70,11 @@ export default function Backup() {
         (backupParams.hostname.trim() !== "" || backupParams.inventory_file.trim() !== "")
     );
 
-    // Resets all state for a new job
+    // Resets all state for a new job and cleans up the active WS subscription
     const resetWorkflow = () => {
-        // 🔑 FIX: When resetting, ensure any active subscription is cleaned up
+        // Cleanup: Send UNSUBSCRIBE for the specific channel if one is active
         if (wsChannel) {
+            // Note: The channel sent in the command does *not* need the 'ws_channel:' prefix
             sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
             console.log(`Reset: Sent UNSUBSCRIBE for ${wsChannel}`);
         }
@@ -92,18 +97,18 @@ export default function Backup() {
 
         if (!isFormValid || jobStatus === 'running') return;
         
-        // 🔑 ENHANCEMENT: Check connection before running. 
+        // Check connection before running.
         if (!isConnected) {
-             const connectErrorMsg = "WebSocket connection is not ready. Cannot start job.";
-             setJobOutput([{ time: new Date().toLocaleTimeString(), message: connectErrorMsg, level: 'error' }]);
-             setJobStatus("failed");
-             setActiveTab("results");
-             return;
+            const connectErrorMsg = "WebSocket connection is not ready. Cannot start job. Check Rust Hub status.";
+            setJobOutput([{ time: new Date().toLocaleTimeString(), message: connectErrorMsg, level: 'error' }]);
+            setJobStatus("failed");
+            setActiveTab("results");
+            return;
         }
 
         // 1. Cleanup old state and Transition to Execution Tab
-        // This ensures a clean slate before the new job ID is received
         if (wsChannel) {
+            // Unsubscribe old job if necessary, though 'resetWorkflow' should handle most cases
             sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
         }
         setActiveTab("execute");
@@ -122,7 +127,7 @@ export default function Backup() {
             inventory_file: backupParams.inventory_file.trim(),
             username: backupParams.username,
             password: backupParams.password,
-            backup_path: "/var/backups",
+            backup_path: "/app/shared/data/backups",
         };
 
         try {
@@ -142,12 +147,12 @@ export default function Backup() {
 
             // 4. Set the new job ID, channel, and SUBSCRIBE
             const newJobId = data.job_id;
-            const newWsChannel = data.ws_channel;
+            const newWsChannel = data.ws_channel; // e.g., 'job:UUID' (prefix 'ws_channel:' is added on Rust side)
 
             setJobId(newJobId);
-            setWsChannel(newWsChannel); // <--- This is the channel we will subscribe/unsubscribe to
+            setWsChannel(newWsChannel); // <--- Store the base channel name
 
-            // 🔑 CORE: Send the SUBSCRIBE command to the Rust Hub
+            // CORE: Send the SUBSCRIBE command to the Rust Hub
             sendMessage({ type: 'SUBSCRIBE', channel: newWsChannel });
 
 
@@ -165,78 +170,92 @@ export default function Backup() {
 // =================================================================
 
     useEffect(() => {
-        // 🔑 CRITICAL FIX: Add cleanup logic to UNSUBSCRIBE if the component unmounts
-        // or if a new job is initiated, but only if a channel is active and the job is running.
+        // CRITICAL: Cleanup logic to UNSUBSCRIBE if the component unmounts.
+        // It uses the latest 'wsChannel' and 'jobStatus' from the dependency array.
         return () => {
-            // Use local wsChannel variable in the dependency array (or the jobStatus)
             if (wsChannel && jobStatus === 'running') {
                 console.log(`Component Unmount/Cleanup: Sending UNSUBSCRIBE for ${wsChannel}`);
                 sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
             }
         };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [wsChannel, jobStatus]); 
+    }, [wsChannel, jobStatus, sendMessage]); 
+    // sendMessage is stable (from useCallback), but included for completeness.
 
 
 // =================================================================
-// 4. REAL-TIME WS MESSAGE LISTENER
+// 4. REAL-TIME WS MESSAGE LISTENER (FIXED LOGIC)
 // =================================================================
 
     useEffect(() => {
-        // Only run if we have a new message and a current job ID to filter against
+        // Only run if we have a new message, a current job ID, and a channel to filter against
         if (lastMessage && jobId && wsChannel) {
             
-            // 🔑 FIX: Robustly filter out non-JSON server diagnostic messages.
+            // 1. Initial check: Filter out non-JSON pings or diagnostic messages from the raw stream
             if (typeof lastMessage !== 'string' || (!lastMessage.startsWith('{') && !lastMessage.startsWith('['))) {
-                if (lastMessage.includes('Client') && lastMessage.includes('says')) {
-                    console.warn("WS Listener: Ignoring server diagnostic message.", lastMessage);
-                } else {
-                    console.error("WS Listener: Received unparsable, non-JSON message:", lastMessage);
-                }
                 return;
             }
 
             try {
+                // Parse the outer RedisMessage object { channel, data }
                 const message = JSON.parse(lastMessage);
 
-                // 🔑 FILTER: Ignore messages not belonging to this job's channel
-                if (message.channel !== wsChannel) return;
+                // CRITICAL FIX 1: The Rust Hub prefix the channel with 'ws_channel:'. Filter must match this.
+                if (message.channel !== `ws_channel:${wsChannel}`) { 
+                    return; // Ignore messages not meant for this component's job
+                }
 
-                // Parse the nested data string (the actual payload from Python/Redis)
-                const update = JSON.parse(message.data);
+                let update = {};
 
-                // 1. Update Log Output
+                // CRITICAL FIX 2: Handle the nested JSON string (the log payload) vs. raw text logs
+                try {
+                    // Attempt to parse the inner data as JSON (for logs with event_type)
+                    update = JSON.parse(message.data);
+                } catch (innerError) {
+                    // If inner parsing fails, assume it's a raw text log (e.g., [STDERR_RAW_NON_JSON])
+                    // Create a pseudo-update object for consistent logging structure
+                    update = {
+                        message: message.data,
+                        // Heuristic to set level for raw messages
+                        level: message.data.toLowerCase().includes('error') ? 'error' : 'warning',
+                        event_type: 'RAW_LOG'
+                    };
+                }
+
+                // 2. Update Log Output
                 const logEntry = {
                     time: new Date().toLocaleTimeString(),
-                    message: update.message || 'Processing event...',
+                    // Use the message from the parsed/pseudo-parsed 'update' object
+                    message: update.message || 'Processing event (no message field)...',
                     level: update.level ? update.level.toLowerCase() : 'info'
                 };
                 setJobOutput(prev => [...prev, logEntry]);
 
                 // Auto-scroll the log area
                 if (scrollAreaRef.current) {
+                    // Use a short delay to wait for the DOM update
                     setTimeout(() => {
                         scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight;
                     }, 50);
                 }
 
-                // 2. Update Progress Bar
-                if (update.event_type === "PROGRESS_UPDATE" && typeof update.data.progress === 'number') {
+                // 3. Update Progress Bar (Only for structured JSON events)
+                if (update.event_type === "PROGRESS_UPDATE" && typeof update.data?.progress === 'number') {
                     const newProgress = Math.min(100, Math.max(0, update.data.progress));
                     setProgress(newProgress);
                 }
 
-                // 3. Handle Completion
+                // 4. Handle Completion (Only for structured JSON events)
                 if (update.event_type === "OPERATION_COMPLETE") {
                     const finalStatus = update.data.status === "SUCCESS" ? "success" : "failed";
                     setJobStatus(finalStatus);
                     setFinalResults(update.data.final_results);
                     setProgress(100);
 
-                    // 🔑 CORE: Send the UNSUBSCRIBE command when job is completed
+                    // CORE: Send the UNSUBSCRIBE command when job is completed
                     sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
 
-                    // 🚀 RACE CONDITION GUARD: Switch tabs after a short delay
+                    // Switch tabs after a short delay
                     setTimeout(() => {
                         setActiveTab(currentTab => {
                             if (currentTab === "execute") {
@@ -249,11 +268,14 @@ export default function Backup() {
                 }
 
             } catch (e) {
+                // Catches errors from the outer JSON.parse(lastMessage) or unexpected structure
                 console.error("Failed to process WebSocket message:", e, lastMessage);
                 setJobOutput(prev => [...prev, { time: new Date().toLocaleTimeString(), message: `WS Error: Failed to parse message`, level: 'error' }]);
             }
         }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [lastMessage, jobId, wsChannel, sendMessage]); 
+    // Note: scrollAreaRef is omitted from deps as it's a ref, but is used inside the handler.
 
 // =================================================================
 // 5. RENDER METHOD
@@ -261,7 +283,6 @@ export default function Backup() {
 
     return (
         <div className="p-8 pt-6">
-            {/* ... JSX remains the same ... */}
             <h1 className="text-3xl font-bold tracking-tight mb-2">Device Backup Operation</h1>
             <p className="text-muted-foreground mb-6">
                 A guided workflow to configure, execute, and view results for device backups.
