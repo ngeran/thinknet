@@ -143,7 +143,24 @@ async def main():
         if args.command == "backup":
             # Determine list of hosts
             if args.inventory_file:
-                inventory_path = Path(args.inventory_file)
+                # --- START OF FIX for Frontend Path Resolution ---
+                # Define the absolute base path for inventory files inside the container
+                INVENTORY_BASE_PATH = Path("/app/shared/data/inventories")
+
+                # The Path object is created from the argument (e.g., 'basement.yaml')
+                inventory_path_candidate = Path(args.inventory_file)
+
+                # If the path is not absolute (i.e., a filename from the frontend),
+                # resolve it by joining it with the base path.
+                if not inventory_path_candidate.is_absolute():
+                    inventory_path = INVENTORY_BASE_PATH / inventory_path_candidate
+                else:
+                    # If it is absolute (e.g., from manual execution), use it directly
+                    inventory_path = inventory_path_candidate
+
+                logger.debug(f"Resolved inventory path: {inventory_path}")
+                # --- END OF FIX ---
+
                 if not inventory_path.is_file():
                     error_msg = f"Inventory file not found at: {inventory_path}"
                     logger.error(error_msg)
@@ -307,4 +324,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
