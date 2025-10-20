@@ -32,6 +32,7 @@ export default function Templates() {
 
   useEffect(() => {
     fetchTemplates();
+
   }, []);
 
   useEffect(() => {
@@ -224,8 +225,8 @@ export default function Templates() {
                             key={template.path}
                             onClick={() => handleTemplateSelect(template)}
                             className={`w-full flex items-center justify-between px-3 py-2 rounded-md transition-colors text-sm ${selectedTemplate?.path === template.path
-                                ? 'bg-primary text-primary-foreground font-medium'
-                                : 'hover:bg-muted'
+                              ? 'bg-primary text-primary-foreground font-medium'
+                              : 'hover:bg-muted'
                               }`}
                           >
                             <div className="flex items-center gap-2">
