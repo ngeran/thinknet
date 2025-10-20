@@ -1,0 +1,26 @@
+{# Interface Configuration Template #}
+interfaces {
+    {{ interface_name }} {
+        {% if description %}
+        description "{{ description }}";
+        {% endif %}
+        {% if vlan_id %}
+        vlan-tagging;
+        unit {{ vlan_id }} {
+            vlan-id {{ vlan_id }};
+            family inet {
+                address {{ ip_address }};
+            }
+        }
+        {% else %}
+        unit 0 {
+            family inet {
+                address {{ ip_address }};
+            }
+        }
+        {% endif %}
+        {% if mtu %}
+        mtu {{ mtu }};
+        {% endif %}
+    }
+}

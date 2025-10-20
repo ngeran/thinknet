@@ -16,7 +16,8 @@ from app_gateway.api.routers import (
     sidebar_metadata,
     restore,
     operations,
-    software_images,  # NEW: Import software_images router
+    software_images,
+    configuration_templates,  # NEW: Import configuration_templates router
 )
 
 from .core.config import settings
@@ -41,9 +42,10 @@ app.include_router(inventory.router, prefix="/api")
 app.include_router(sidebar_metadata.router, prefix="/api")
 app.include_router(restore.router, prefix="/api")
 app.include_router(operations.router, prefix="/api")
+app.include_router(software_images.router, prefix="/api")
 app.include_router(
-    software_images.router, prefix="/api"
-)  # NEW: Include software_images router
+    configuration_templates.router, prefix="/api"
+)  # NEW: Include configuration_templates router
 
 
 # --- Root Health Check ---
@@ -56,6 +58,3 @@ def root_health_check():
 def health_check():
     """Comprehensive health check endpoint"""
     return {"status": "healthy", "service": "FastAPI Gateway", "version": "1.0.0"}
-
-
-# (The previous standalone health_check and run_juniper_script were moved to api/routers/automation.py)
