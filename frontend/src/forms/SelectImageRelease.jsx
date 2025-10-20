@@ -1,17 +1,16 @@
 /**
  * =============================================================================
- * SELECT IMAGE RELEASE COMPONENT
+ * SELECT IMAGE RELEASE COMPONENT - MINIMALIST BLACK & WHITE
  * =============================================================================
- * A hierarchical image selection component that allows users to select vendor,
- * platform, release, and specific image files through collapsible sections.
+ * A compact, elegant image selection component with monochrome design
+ * Features: Space-efficient layout, subtle animations, clean aesthetics
  * 
- * @version 1.0.0
- * @last_updated 2025-10-18
+ * @version 2.0.0
+ * @last_updated 2025-10-19
  * =============================================================================
  */
-
 import React, { useState, useEffect, useCallback } from 'react';
-import { Server, Layers, Code, Image, ChevronDown, Check, X } from 'lucide-react';
+import { Server, Layers, Code, Image, ChevronDown, Check, X, Loader2 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -19,121 +18,88 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 // API Configuration
 const API_URL = import.meta.env.VITE_API_GATEWAY_URL || 'http://localhost:8000';
 
-// Icon Library - Using correct lucide-react exports
-const IconLibrary = {
-  Server,
-  Layers,
-  CodeBracket: Code, // Use Code instead of CodeBracket
-  Photo: Image,
-  ChevronDown,
-  Check,
-  X
-};
-
 /**
- * Collapsible Section Component
+ * Compact Selection Display
  */
-const CollapsibleSection = ({
-  title,
-  icon: Icon,
-  isOpen,
-  onToggle,
-  children,
-  color = 'blue',
-  hasSelection = false
-}) => {
-  const colorClasses = {
-    blue: { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-600' },
-    slate: { bg: 'bg-slate-50', border: 'border-slate-200', text: 'text-slate-600' },
-    zinc: { bg: 'bg-zinc-50', border: 'border-zinc-200', text: 'text-zinc-600' },
-    stone: { bg: 'bg-stone-50', border: 'border-stone-200', text: 'text-stone-600' },
-    gray: { bg: 'bg-gray-50', border: 'border-gray-200', text: 'text-gray-600' }
-  };
-
-  const currentColor = colorClasses[color] || colorClasses.blue;
+const CompactSelectionPill = ({ icon: Icon, label, value, onClear, isLast }) => {
+  if (!value) return null;
 
   return (
-    <div className="border border-gray-200 rounded-lg overflow-hidden">
-      <button
-        onClick={onToggle}
-        className={`w-full px-4 py-3 flex items-center justify-between transition-colors ${isOpen
-            ? `${currentColor.bg} border-b ${currentColor.border}`
-            : hasSelection
-              ? `${currentColor.bg}`
-              : 'bg-gray-50 hover:bg-gray-100'
-          }`}
-      >
-        <div className="flex items-center gap-2">
-          <Icon className={`w-4 h-4 ${hasSelection ? currentColor.text : 'text-gray-500'}`} />
-          <span className={`text-sm font-medium ${hasSelection ? 'text-gray-900' : 'text-gray-700'}`}>
-            {title}
-          </span>
-          {hasSelection && (
-            <div className={`w-2 h-2 ${currentColor.bg.replace('bg-', 'bg-').replace('-50', '-500')} rounded-full`}></div>
-          )}
-        </div>
-        <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''} ${hasSelection ? currentColor.text : 'text-gray-400'}`} />
-      </button>
-      {isOpen && (
-        <div className="p-4 bg-white animate-in fade-in duration-200">
-          {children}
-        </div>
-      )}
+    <div className="flex items-center gap-2">
+      <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-black dark:bg-white text-white dark:text-black rounded-full text-xs font-medium group hover:pr-2 transition-all">
+        <Icon className="w-3 h-3" />
+        <span className="max-w-[120px] truncate">{value}</span>
+        <button
+          onClick={onClear}
+          className="opacity-0 group-hover:opacity-100 w-4 h-4 flex items-center justify-center hover:bg-white/20 dark:hover:bg-black/20 rounded-full transition-opacity"
+        >
+          <X className="w-3 h-3" />
+        </button>
+      </div>
+      {!isLast && <ChevronDown className="w-3 h-3 text-gray-400 rotate-[-90deg]" />}
     </div>
   );
 };
 
 /**
- * Option Item Component
+ * Minimal Option Button
  */
-const OptionItem = ({ option, isSelected, onSelect, color = 'blue' }) => {
-  const colorClasses = {
-    blue: { border: 'border-blue-400', bg: 'bg-blue-50', text: 'text-blue-900' },
-    slate: { border: 'border-slate-400', bg: 'bg-slate-50', text: 'text-slate-900' },
-    zinc: { border: 'border-zinc-400', bg: 'bg-zinc-50', text: 'text-zinc-900' },
-    stone: { border: 'border-stone-400', bg: 'bg-stone-50', text: 'text-stone-900' },
-    gray: { border: 'border-gray-400', bg: 'bg-gray-50', text: 'text-gray-900' }
-  };
-
-  const currentColor = colorClasses[color] || colorClasses.blue;
-
+const MinimalOption = ({ option, isSelected, onSelect }) => {
   return (
     <button
       onClick={() => onSelect(option.name)}
-      className={`w-full text-left p-3 rounded-lg border transition-all duration-200 ${isSelected
-          ? `${currentColor.border} ${currentColor.bg} ${currentColor.text}`
-          : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-        } group flex items-center justify-between`}
+      className={`w-full text-left px-3 py-2 text-sm rounded-lg transition-all duration-200 ${isSelected
+        ? 'bg-black dark:bg-white text-white dark:text-black font-medium'
+        : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
+        }`}
     >
-      <span className="text-sm font-medium truncate pr-2">{option.name}</span>
-      {isSelected && (
-        <div className={`w-4 h-4 ${currentColor.bg.replace('bg-', 'bg-').replace('-50', '-500')} rounded-full flex items-center justify-center flex-shrink-0`}>
-          <Check className="w-2 h-2 text-white" />
-        </div>
-      )}
+      <div className="flex items-center justify-between">
+        <span className="truncate">{option.name}</span>
+        {isSelected && (
+          <Check className="w-3.5 h-3.5 flex-shrink-0 ml-2" />
+        )}
+      </div>
     </button>
   );
 };
 
 /**
- * Main Select Image Release Component
+ * Compact Selection Section
+ */
+const CompactSection = ({ title, icon: Icon, options, selectedValue, onSelect, isActive }) => {
+  if (!isActive) return null;
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-1">
+        <Icon className="w-3.5 h-3.5" />
+        {title}
+      </div>
+      <div className="space-y-1">
+        {options.map((option) => (
+          <MinimalOption
+            key={option.name || option.version || option.file}
+            option={{ name: option.name || option.version || option.file }}
+            isSelected={selectedValue === (option.name || option.version || option.file)}
+            onSelect={onSelect}
+          />
+        ))}
+      </div>
+    </div>
+  );
+};
+
+/**
+ * Main Component
  */
 export default function SelectImageRelease({ parameters = {}, onParamChange }) {
   const [inventory, setInventory] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
-
   const [selectedVendor, setSelectedVendor] = useState(parameters.vendor || '');
   const [selectedPlatform, setSelectedPlatform] = useState(parameters.platform || '');
   const [selectedRelease, setSelectedRelease] = useState(parameters.target_version || '');
   const [selectedImage, setSelectedImage] = useState(parameters.image_filename || '');
-
-  const [openSections, setOpenSections] = useState({
-    vendor: true,
-    platform: false,
-    release: false,
-    image: false
-  });
 
   // Fetch software versions from API
   useEffect(() => {
@@ -155,61 +121,52 @@ export default function SelectImageRelease({ parameters = {}, onParamChange }) {
     fetchSoftwareVersions();
   }, []);
 
-  // Get available options based on current selections
   const vendorOptions = inventory?.vendors || [];
   const platformOptions = vendorOptions.find(v => v.name === selectedVendor)?.platforms || [];
   const releaseOptions = platformOptions.find(p => p.name === selectedPlatform)?.releases || [];
   const imageOptions = releaseOptions.find(r => r.version === selectedRelease)?.images || [];
 
-  // Selection handlers
-  const handleSelection = useCallback((setter, paramName, value, nextSection) => {
+  const handleSelection = useCallback((setter, paramName, value) => {
     setter(value);
     onParamChange(paramName, value);
-    if (nextSection) {
-      setOpenSections(prev => ({ ...prev, [nextSection]: true }));
-    }
   }, [onParamChange]);
 
   const handleVendorSelect = (name) => {
-    handleSelection(setSelectedVendor, 'vendor', name, 'platform');
+    handleSelection(setSelectedVendor, 'vendor', name);
     setSelectedPlatform(''); onParamChange('platform', '');
     setSelectedRelease(''); onParamChange('target_version', '');
     setSelectedImage(''); onParamChange('image_filename', '');
   };
 
   const handlePlatformSelect = (name) => {
-    handleSelection(setSelectedPlatform, 'platform', name, 'release');
+    handleSelection(setSelectedPlatform, 'platform', name);
     setSelectedRelease(''); onParamChange('target_version', '');
     setSelectedImage(''); onParamChange('image_filename', '');
   };
 
   const handleReleaseSelect = (version) => {
-    handleSelection(setSelectedRelease, 'target_version', version, 'image');
+    handleSelection(setSelectedRelease, 'target_version', version);
     setSelectedImage(''); onParamChange('image_filename', '');
   };
 
   const handleImageSelect = (file) => {
-    handleSelection(setSelectedImage, 'image_filename', file, null);
+    handleSelection(setSelectedImage, 'image_filename', file);
   };
 
-  const clearSelection = () => {
+  const clearAll = () => {
     setSelectedVendor(''); onParamChange('vendor', '');
     setSelectedPlatform(''); onParamChange('platform', '');
     setSelectedRelease(''); onParamChange('target_version', '');
     setSelectedImage(''); onParamChange('image_filename', '');
-    setOpenSections({ vendor: true, platform: false, release: false, image: false });
   };
 
-  // Loading and error states
   if (isLoading) {
     return (
-      <Card>
-        <CardContent className="pt-6">
-          <div className="flex items-center justify-center py-8">
-            <div className="text-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
-              <p className="text-sm text-gray-500">Loading software inventory...</p>
-            </div>
+      <Card className="border border-gray-200 dark:border-gray-800">
+        <CardContent className="py-12">
+          <div className="flex flex-col items-center justify-center gap-3">
+            <Loader2 className="w-6 h-6 animate-spin text-gray-900 dark:text-gray-100" />
+            <p className="text-sm text-gray-500 dark:text-gray-400">Loading inventory...</p>
           </div>
         </CardContent>
       </Card>
@@ -218,11 +175,12 @@ export default function SelectImageRelease({ parameters = {}, onParamChange }) {
 
   if (error) {
     return (
-      <Card>
-        <CardContent className="pt-6">
-          <div className="text-center py-8">
-            <div className="text-red-500 text-sm mb-2">Error loading software images</div>
-            <p className="text-xs text-gray-500">{error}</p>
+      <Card className="border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950">
+        <CardContent className="py-8">
+          <div className="text-center space-y-3">
+            <X className="w-8 h-8 mx-auto text-red-600 dark:text-red-400" />
+            <div className="text-sm text-red-900 dark:text-red-100 font-medium">Failed to load</div>
+            <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
             <Button
               onClick={() => window.location.reload()}
               variant="outline"
@@ -237,150 +195,137 @@ export default function SelectImageRelease({ parameters = {}, onParamChange }) {
     );
   }
 
+  const hasAnySelection = selectedVendor || selectedPlatform || selectedRelease || selectedImage;
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Image className="h-5 w-5" />
-          Software Image Selection
-        </CardTitle>
-        <CardDescription>
-          Select vendor, platform, release, and specific image file for upgrade
-        </CardDescription>
+    <Card className="border border-gray-200 dark:border-gray-800">
+      <CardHeader className="pb-4">
+        <div className="flex items-start justify-between">
+          <div>
+            <CardTitle className="text-lg font-bold flex items-center gap-2">
+              <Image className="w-4 h-4" />
+              Software Image
+            </CardTitle>
+            <CardDescription className="text-xs mt-1">
+              Select your target configuration
+            </CardDescription>
+          </div>
+          {hasAnySelection && (
+            <Button
+              onClick={clearAll}
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs"
+            >
+              Clear all
+            </Button>
+          )}
+        </div>
       </CardHeader>
-      <CardContent>
-        <div className="space-y-4">
+
+      <CardContent className="space-y-4">
+        {/* Current Selection Path */}
+        {hasAnySelection && (
+          <div className="flex flex-wrap items-center gap-2 pb-3 border-b border-gray-200 dark:border-gray-800">
+            <CompactSelectionPill
+              icon={Server}
+              label="Vendor"
+              value={selectedVendor}
+              onClear={() => handleVendorSelect('')}
+              isLast={!selectedPlatform && !selectedRelease && !selectedImage}
+            />
+            <CompactSelectionPill
+              icon={Layers}
+              label="Platform"
+              value={selectedPlatform}
+              onClear={() => handlePlatformSelect('')}
+              isLast={!selectedRelease && !selectedImage}
+            />
+            <CompactSelectionPill
+              icon={Code}
+              label="Release"
+              value={selectedRelease}
+              onClear={() => handleReleaseSelect('')}
+              isLast={!selectedImage}
+            />
+            <CompactSelectionPill
+              icon={Image}
+              label="Image"
+              value={selectedImage}
+              onClear={() => handleImageSelect('')}
+              isLast={true}
+            />
+          </div>
+        )}
+
+        {/* Horizontal Layout for Vendor, Platform, Release */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {/* Vendor Selection */}
-          <CollapsibleSection
+          <CompactSection
             title="Vendor"
             icon={Server}
-            isOpen={openSections.vendor}
-            onToggle={() => setOpenSections(s => ({ ...s, vendor: !s.vendor }))}
-            color="gray"
-            hasSelection={!!selectedVendor}
-          >
-            <div className="space-y-2">
-              {vendorOptions.map(vendor => (
-                <OptionItem
-                  key={vendor.name}
-                  option={vendor}
-                  isSelected={selectedVendor === vendor.name}
-                  onSelect={handleVendorSelect}
-                  color="gray"
-                />
-              ))}
-            </div>
-          </CollapsibleSection>
+            options={vendorOptions}
+            selectedValue={selectedVendor}
+            onSelect={handleVendorSelect}
+            isActive={true}
+          />
 
           {/* Platform Selection */}
           {selectedVendor && (
-            <CollapsibleSection
+            <CompactSection
               title="Platform"
               icon={Layers}
-              isOpen={openSections.platform}
-              onToggle={() => setOpenSections(s => ({ ...s, platform: !s.platform }))}
-              color="slate"
-              hasSelection={!!selectedPlatform}
-            >
-              <div className="space-y-2">
-                {platformOptions.map(platform => (
-                  <OptionItem
-                    key={platform.name}
-                    option={platform}
-                    isSelected={selectedPlatform === platform.name}
-                    onSelect={handlePlatformSelect}
-                    color="slate"
-                  />
-                ))}
-              </div>
-            </CollapsibleSection>
+              options={platformOptions}
+              selectedValue={selectedPlatform}
+              onSelect={handlePlatformSelect}
+              isActive={true}
+            />
           )}
 
           {/* Release Selection */}
           {selectedPlatform && (
-            <CollapsibleSection
+            <CompactSection
               title="Release"
-              icon={Code} // Using Code icon instead of CodeBracket
-              isOpen={openSections.release}
-              onToggle={() => setOpenSections(s => ({ ...s, release: !s.release }))}
-              color="zinc"
-              hasSelection={!!selectedRelease}
-            >
-              <div className="space-y-2">
-                {releaseOptions.map(release => (
-                  <OptionItem
-                    key={release.version}
-                    option={{ name: release.version }}
-                    isSelected={selectedRelease === release.version}
-                    onSelect={handleReleaseSelect}
-                    color="zinc"
+              icon={Code}
+              options={releaseOptions.map(r => ({ name: r.version }))}
+              selectedValue={selectedRelease}
+              onSelect={handleReleaseSelect}
+              isActive={true}
+            />
+          )}
+        </div>
+
+        {/* Image File Selection */}
+        {selectedRelease && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-1">
+              <Image className="w-3.5 h-3.5" />
+              Image File
+            </div>
+            <ScrollArea className="h-32">
+              <div className="space-y-1 pr-3">
+                {imageOptions.map((image) => (
+                  <MinimalOption
+                    key={image.file}
+                    option={{ name: image.file }}
+                    isSelected={selectedImage === image.file}
+                    onSelect={handleImageSelect}
                   />
                 ))}
               </div>
-            </CollapsibleSection>
-          )}
+            </ScrollArea>
+          </div>
+        )}
 
-          {/* Image File Selection */}
-          {selectedRelease && (
-            <CollapsibleSection
-              title="Image File"
-              icon={Image}
-              isOpen={openSections.image}
-              onToggle={() => setOpenSections(s => ({ ...s, image: !s.image }))}
-              color="stone"
-              hasSelection={!!selectedImage}
-            >
-              <ScrollArea className="h-48">
-                <div className="space-y-2 pr-4">
-                  {imageOptions.map(image => (
-                    <OptionItem
-                      key={image.file}
-                      option={{ name: image.file }}
-                      isSelected={selectedImage === image.file}
-                      onSelect={handleImageSelect}
-                      color="stone"
-                    />
-                  ))}
-                </div>
-              </ScrollArea>
-            </CollapsibleSection>
-          )}
-
-          {/* Final Selection Summary */}
-          {selectedImage && (
-            <div className="mt-4 p-4 bg-green-50 rounded-lg border border-green-200">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-sm font-medium text-green-800">Selected Image</span>
-                <Button
-                  onClick={clearSelection}
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 w-6 p-0 text-green-600 hover:text-green-800"
-                >
-                  <X className="h-3 w-3" />
-                </Button>
-              </div>
-              <div className="space-y-2 text-xs text-green-700">
-                <div className="flex justify-between">
-                  <span className="font-medium">Vendor:</span>
-                  <span>{selectedVendor}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="font-medium">Platform:</span>
-                  <span>{selectedPlatform}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="font-medium">Release:</span>
-                  <span>{selectedRelease}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="font-medium">Image:</span>
-                  <span className="font-mono text-xs break-all">{selectedImage}</span>
-                </div>
-              </div>
+        {/* Completion Indicator */}
+        {selectedImage && (
+          <div className="pt-4 border-t border-gray-200 dark:border-gray-800">
+            <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+              <div className="w-1.5 h-1.5 bg-black dark:bg-white rounded-full animate-pulse" />
+              <span>Configuration complete</span>
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
