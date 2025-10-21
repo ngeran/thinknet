@@ -1,7 +1,7 @@
 // src/hooks/useTestDiscovery.js
 import { useState, useEffect } from "react";
 
-const API_BASE_URL = "http://localhost:3001";
+const API_BASE_URL = "http://localhost:8000"; // Updated to match Atlas API
 
 // A generic hook to fetch discoverable tests for ANY script.
 export function useTestDiscovery(scriptId, environment = "development") {
@@ -26,28 +26,19 @@ export function useTestDiscovery(scriptId, environment = "development") {
       setError(null);
 
       try {
-        const requestBody = JSON.stringify({ scriptId, environment });
-        console.log("useTestDiscovery: Request body:", requestBody);
-
+        // Use the new Atlas API endpoint
         const response = await fetch(
-          `${API_BASE_URL}/api/scripts/discover-tests`,
+          `${API_BASE_URL}/api/tests`,
           {
-            method: "POST",
+            method: "GET",
             headers: {
-              "Content-Type": "application/json",
-              Accept: "application/json",
+              "Accept": "application/json",
             },
-            body: requestBody,
           },
         );
 
         console.log("useTestDiscovery: Response status:", response.status);
-        console.log(
-          "useTestDiscovery: Response headers:",
-          Object.fromEntries(response.headers.entries()),
-        );
 
-        // Check if response is ok
         if (!response.ok) {
           const errorText = await response.text();
           console.error("useTestDiscovery: HTTP error response:", errorText);
@@ -57,13 +48,9 @@ export function useTestDiscovery(scriptId, environment = "development") {
         const data = await response.json();
         console.log("useTestDiscovery: Response data:", data);
 
-        if (!data.success) {
-          throw new Error(data.message || "Failed to discover tests.");
-        }
-
-        // The API returns tests in a flat structure, we can categorize them here if needed,
-        // or assume the backend provides a categorized structure. For now, let's use the backend's structure.
-        setCategorizedTests(data.discovered_tests || {});
+        // Transform the API response to match the expected format
+        const transformedTests = transformTestsData(data.tests || []);
+        setCategorizedTests(transformedTests);
         console.log("useTestDiscovery: Successfully set categorized tests");
       } catch (err) {
         console.error(
@@ -78,8 +65,68 @@ export function useTestDiscovery(scriptId, environment = "development") {
     };
 
     fetchTests();
-    // Re-run this effect if the scriptId or environment changes
   }, [scriptId, environment]);
 
   return { categorizedTests, loading, error };
+}
+
+// Helper function to transform the API response to the expected format
+function transformTestsData(tests) {
+  const categorized = {
+    "Validation Tests": tests.map(test => ({
+      id: test.name.replace('.yml', ''),
+      name: test.name,
+      description: `Test file: ${test.path} (${test.size_kb} KB)`,
+      category: "Validation Tests",
+      path: test.path,
+      size: test.size,
+      modified: test.modified
+    }))
+  };
+
+  return categorized;
+}
+
+// Additional hook to fetch individual test content if needed
+export function useTestContent(testPath) {
+  const [content, setContent] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!testPath) return;
+
+    const fetchContent = async () => {
+      setLoading(true);
+      setError(null);
+
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/api/tests/${testPath}`,
+          {
+            method: "GET",
+            headers: {
+              "Accept": "application/json",
+            },
+          },
+        );
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        setContent(data.content);
+      } catch (err) {
+        console.error(`useTestContent: Error fetching test content for ${testPath}:`, err);
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchContent();
+  }, [testPath]);
+
+  return { content, loading, error };
 }

@@ -24,6 +24,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card.j
 
 // --- Custom Hook Imports ---
 import { useJobWebSocket } from '@/hooks/useJobWebSocket';
+import { useTestDiscovery } from '@/hooks/useTestDiscovery';
 
 // API Configuration
 const API_URL = import.meta.env.VITE_API_GATEWAY_URL || 'http://localhost:8000';
@@ -67,6 +68,9 @@ function Validation({ script, parameters = {}, onParamChange }) {
 
   // WebSocket Hook
   const { sendMessage, lastMessage, isConnected } = useJobWebSocket();
+
+  // Test Discovery Hook
+  const { categorizedTests, loading: testsLoading, error: testsError } = useTestDiscovery(script?.id);
 
   // Safe parameter change handler
   const handleSafeParamChange = (name, value) => {
@@ -150,6 +154,11 @@ function Validation({ script, parameters = {}, onParamChange }) {
     latestStepMessageRef.current = "";
     loggedMessagesRef.current.clear();
 
+    // Transform test IDs to match the expected format
+    const formattedTests = Array.isArray(safeParameters.tests)
+      ? safeParameters.tests
+      : [safeParameters.tests].filter(Boolean);
+
     const payload = {
       command: "validation",
       scriptId: script?.id || "validation_script",
@@ -157,7 +166,7 @@ function Validation({ script, parameters = {}, onParamChange }) {
       inventory_file: safeParameters.inventory_file?.trim() || "",
       username: safeParameters.username,
       password: safeParameters.password,
-      tests: Array.isArray(safeParameters.tests) ? safeParameters.tests : [safeParameters.tests].filter(Boolean),
+      tests: formattedTests,
       // Include any additional parameters from script options
       ...safeParameters
     };
@@ -169,6 +178,8 @@ function Validation({ script, parameters = {}, onParamChange }) {
       }
     });
 
+    console.log("[VALIDATION START] Sending payload:", payload);
+
     try {
       const response = await fetch(`${API_URL}/api/operations/execute`, {
         method: 'POST',
@@ -177,15 +188,21 @@ function Validation({ script, parameters = {}, onParamChange }) {
       });
 
       if (!response.ok) {
-        throw new Error(`API error ${response.status}: ${response.statusText}`);
+        const errorText = await response.text();
+        throw new Error(`API error ${response.status}: ${errorText}`);
       }
 
       const data = await response.json();
+      console.log("[VALIDATION START] Response data:", data);
 
-      setJobId(data.job_id);
-      setWsChannel(data.ws_channel);
-      console.log(`[VALIDATION START] Validation initiated - ID: ${data.job_id}, Channel: ${data.ws_channel}`);
-      sendMessage({ type: 'SUBSCRIBE', channel: data.ws_channel });
+      if (data.job_id && data.ws_channel) {
+        setJobId(data.job_id);
+        setWsChannel(data.ws_channel);
+        console.log(`[VALIDATION START] Validation initiated - ID: ${data.job_id}, Channel: ${data.ws_channel}`);
+        sendMessage({ type: 'SUBSCRIBE', channel: data.ws_channel });
+      } else {
+        throw new Error('Invalid response: missing job_id or ws_channel');
+      }
 
     } catch (error) {
       console.error("[VALIDATION START] API Call Failed:", error);
@@ -205,63 +222,53 @@ function Validation({ script, parameters = {}, onParamChange }) {
   useEffect(() => {
     if (!lastMessage || !jobId) return;
 
-    const raw = lastMessage;
-
-    if (typeof raw !== 'string' || (!raw.startsWith('{') && !raw.startsWith('['))) {
-      console.log('[VALIDATION WEBSOCKET] Skipping non-JSON message:', raw.substring(0, 100));
-      return;
-    }
+    console.log('[VALIDATION WEBSOCKET] Raw message:', lastMessage);
 
     let parsed;
     try {
-      parsed = JSON.parse(raw);
+      parsed = JSON.parse(lastMessage);
     } catch (error) {
-      console.warn('[VALIDATION WEBSOCKET DEBUG] Failed to parse initial JSON:', raw.substring(0, 200));
-      return;
-    }
-
-    if (parsed.channel && wsChannel && !parsed.channel.includes(wsChannel)) {
-      console.log('[VALIDATION WEBSOCKET] Skipping message from different channel:', parsed.channel);
-      return;
-    }
-
-    // Extract nested progress data (similar to CodeUpgrades.jsx)
-    const extractNestedProgressData = (initialParsed) => {
-      let currentPayload = initialParsed;
-      let deepestNestedData = null;
-
-      if (initialParsed.data) {
-        try {
-          const dataPayload = typeof initialParsed.data === 'string'
-            ? JSON.parse(initialParsed.data)
-            : initialParsed.data;
-
-          currentPayload = dataPayload;
-
-          if (dataPayload.event_type === "ORCHESTRATOR_LOG" && dataPayload.message) {
-            const message = dataPayload.message;
-            const jsonMatch = message.match(/\[(STDOUT|STDERR)(?:_RAW)?\]\s*(\{.*\})/s);
-
-            if (jsonMatch && jsonMatch[2]) {
-              try {
-                deepestNestedData = JSON.parse(jsonMatch[2]);
-              } catch (parseError) {
-                console.warn('[VALIDATION WEBSOCKET DEBUG] Failed to parse nested JSON:', jsonMatch[2].substring(0, 200));
-              }
-            }
-          }
-        } catch (error) {
-          console.warn('[VALIDATION WEBSOCKET DEBUG] Failed to parse data field:', error.message);
-        }
-      }
-
-      return {
-        payload: deepestNestedData || currentPayload,
-        isNested: !!deepestNestedData
+      console.warn('[VALIDATION WEBSOCKET] Failed to parse JSON, treating as raw message');
+      // Treat as raw message
+      const logEntry = {
+        timestamp: new Date().toISOString(),
+        message: lastMessage,
+        level: 'info',
+        event_type: 'RAW_MESSAGE'
       };
-    };
 
-    const { payload: finalPayload, isNested } = extractNestedProgressData(parsed);
+      setJobOutput(prev => [...prev, logEntry]);
+      return;
+    }
+
+    // Check if message is for our channel
+    if (parsed.channel && wsChannel && parsed.channel !== wsChannel) {
+      return;
+    }
+
+    // Handle different message formats
+    let finalPayload = parsed;
+
+    // Extract nested data if present
+    if (parsed.data && typeof parsed.data === 'object') {
+      // Check if data contains nested JSON in message
+      if (parsed.data.message && typeof parsed.data.message === 'string') {
+        const jsonMatch = parsed.data.message.match(/\{.*\}/s);
+        if (jsonMatch) {
+          try {
+            const nestedData = JSON.parse(jsonMatch[0]);
+            finalPayload = { ...parsed.data, ...nestedData };
+          } catch (e) {
+            // If nested parse fails, use the original data
+            finalPayload = parsed.data;
+          }
+        } else {
+          finalPayload = parsed.data;
+        }
+      } else {
+        finalPayload = parsed.data;
+      }
+    }
 
     // Log message deduplication
     const createLogSignature = (payload) => {
@@ -278,9 +285,9 @@ function Validation({ script, parameters = {}, onParamChange }) {
       const logEntry = {
         timestamp: finalPayload.timestamp || new Date().toISOString(),
         message: finalPayload.message || (typeof finalPayload === 'string' ? finalPayload : "Processing..."),
-        level: finalPayload.level?.toLowerCase() || "info",
+        level: (finalPayload.level || 'info').toLowerCase(),
         event_type: finalPayload.event_type,
-        data: finalPayload.data,
+        data: finalPayload.data || finalPayload,
       };
 
       setJobOutput(prev => [...prev, logEntry]);
@@ -292,14 +299,14 @@ function Validation({ script, parameters = {}, onParamChange }) {
     }
 
     // Handle progress and step tracking
-    if (finalPayload.event_type === "OPERATION_START" && typeof finalPayload.data?.total_steps === "number") {
-      console.log(`[VALIDATION PROGRESS] Operation started with ${finalPayload.data.total_steps} total steps`);
-      setTotalSteps(finalPayload.data.total_steps);
+    if (finalPayload.event_type === "OPERATION_START" && typeof finalPayload.total_steps === "number") {
+      console.log(`[VALIDATION PROGRESS] Operation started with ${finalPayload.total_steps} total steps`);
+      setTotalSteps(finalPayload.total_steps);
       setProgress(5);
     }
 
-    if (finalPayload.event_type === "STEP_COMPLETE" && typeof finalPayload.data?.step === "number") {
-      const stepNum = finalPayload.data.step;
+    if (finalPayload.event_type === "STEP_COMPLETE" && typeof finalPayload.step === "number") {
+      const stepNum = finalPayload.step;
 
       if (!processedStepsRef.current.has(stepNum)) {
         processedStepsRef.current.add(stepNum);
@@ -320,8 +327,8 @@ function Validation({ script, parameters = {}, onParamChange }) {
       }
     }
 
-    if (finalPayload.event_type === "PROGRESS_UPDATE" && typeof finalPayload.data?.progress === "number") {
-      setProgress(Math.min(99, Math.max(0, finalPayload.data.progress)));
+    if (finalPayload.event_type === "PROGRESS_UPDATE" && typeof finalPayload.progress === "number") {
+      setProgress(Math.min(99, Math.max(0, finalPayload.progress)));
     }
 
     // Handle completion
@@ -338,10 +345,10 @@ function Validation({ script, parameters = {}, onParamChange }) {
     if (isCompletionEvent) {
       let finalSuccess = false;
 
-      if (finalPayload.success === true || finalPayload.data?.final_results?.success === true) {
+      if (finalPayload.success === true || finalPayload.final_results?.success === true) {
         finalSuccess = true;
       }
-      else if (finalPayload.data?.status === "SUCCESS") {
+      else if (finalPayload.status === "SUCCESS") {
         finalSuccess = true;
       }
       else if (finalPayload.message && (finalPayload.message.includes('success: True') || finalPayload.message.includes('completed successfully'))) {
@@ -466,6 +473,9 @@ function Validation({ script, parameters = {}, onParamChange }) {
               <ValidationForm
                 parameters={safeParameters}
                 onParamChange={handleSafeParamChange}
+                categorizedTests={categorizedTests}
+                testsLoading={testsLoading}
+                testsError={testsError}
               />
 
               <div className="border-t pt-6">
@@ -493,15 +503,16 @@ function Validation({ script, parameters = {}, onParamChange }) {
                     WebSocket not connected. Please check your connection.
                   </p>
                 )}
+                {disabledReason && !isRunning && isConnected && (
+                  <p className="text-sm text-muted-foreground mt-2">
+                    {disabledReason}
+                  </p>
+                )}
               </div>
             </CardContent>
           </Card>
 
-          {/*
-            All output rendering is delegated to the ScriptOutputDisplay component.
-            We pass the entire script object and all relevant state from the hook.
-            This component will internally handle progress, results, errors, and the save button.
-          */}
+          {/* Script Output Display */}
           {(isRunning || isComplete) && (
             <ScriptOutputDisplay
               script={safeScript}
