@@ -1,0 +1,10 @@
+tests_include:
+  - check_device_model_exists
+
+check_device_model_exists:
+  - rpc: get-software-information
+  - xpath: /software-information/product-model
+    tests:
+      - is-not-empty:
+        err: "❌ Device product model string is empty!"
+        info: "✅ Test Passed. Device model is '{{post}}'."

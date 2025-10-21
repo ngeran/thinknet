@@ -1,8 +1,3 @@
-"""
-FastAPI Application Entry Point
-Initializes the application, applies middleware, and includes all necessary routers.
-"""
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
@@ -17,7 +12,8 @@ from app_gateway.api.routers import (
     restore,
     operations,
     software_images,
-    configuration_templates,  # NEW: Import configuration_templates router
+    configuration_templates,
+    jsnapy_tests,  # Updated: Import jsnapy_tests router
 )
 
 from .core.config import settings
@@ -43,9 +39,10 @@ app.include_router(sidebar_metadata.router, prefix="/api")
 app.include_router(restore.router, prefix="/api")
 app.include_router(operations.router, prefix="/api")
 app.include_router(software_images.router, prefix="/api")
+app.include_router(configuration_templates.router, prefix="/api")
 app.include_router(
-    configuration_templates.router, prefix="/api"
-)  # NEW: Include configuration_templates router
+    jsnapy_tests.router, prefix="/api"
+)  # Updated: Include jsnapy_tests router
 
 
 # --- Root Health Check ---
