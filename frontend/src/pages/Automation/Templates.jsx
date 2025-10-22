@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { FileCode, Download, Copy, Check, Loader2, ChevronRight, ChevronDown, Search, ArrowRight } from 'lucide-react';
+import { FileCode, Download, Copy, Check, Loader2, ChevronRight, ChevronDown, Search, ArrowRight, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -27,12 +27,13 @@ export default function Templates() {
     username: '',
     password: ''
   });
+  const [deploying, setDeploying] = useState(false);
+  const [deploymentResult, setDeploymentResult] = useState(null);
 
   const API_BASE = 'http://localhost:8000/api';
 
   useEffect(() => {
     fetchTemplates();
-
   }, []);
 
   useEffect(() => {
@@ -45,6 +46,7 @@ export default function Templates() {
   }, [categories]);
 
   const fetchTemplates = async () => {
+    // ... (fetchTemplates logic is unchanged)
     try {
       setLoading(true);
       const response = await fetch(`${API_BASE}/templates`);
@@ -60,6 +62,7 @@ export default function Templates() {
   };
 
   const fetchTemplateDetails = async (path) => {
+    // ... (fetchTemplateDetails logic is unchanged)
     try {
       setLoading(true);
       const response = await fetch(`${API_BASE}/templates/${path}`);
@@ -71,6 +74,7 @@ export default function Templates() {
       variables.forEach(v => initialValues[v] = '');
       setFormValues(initialValues);
       setGeneratedConfig('');
+      setDeploymentResult(null);
       setError(null);
     } catch (err) {
       setError('Failed to load template details');
@@ -81,11 +85,15 @@ export default function Templates() {
   };
 
   const extractVariables = (content) => {
+    // Exclude common device parameters from the template-specific form
+    const deploymentVars = ['username', 'password', 'hostname', 'inventory_file'];
     const regex = /\{\{\s*(\w+)\s*\}\}/g;
     const variables = new Set();
     let match;
     while ((match = regex.exec(content)) !== null) {
-      variables.add(match[1]);
+      if (!deploymentVars.includes(match[1])) {
+        variables.add(match[1]);
+      }
     }
     return Array.from(variables);
   };
@@ -99,6 +107,10 @@ export default function Templates() {
     setFormValues(prev => ({ ...prev, [variable]: value }));
   };
 
+  /**
+   * FIX: This function is the key! It correctly updates the `parameters` state.
+   * We ensure this is properly wired to the shared components below.
+   */
   const handleParamChange = (key, value) => {
     setParameters(prev => ({ ...prev, [key]: value }));
   };
@@ -111,32 +123,87 @@ export default function Templates() {
   };
 
   const generateConfig = () => {
-    let config = templateDetails.content;
+    // ... (generateConfig logic is unchanged)
+    if (!templateDetails) return;
 
-    Object.entries(formValues).forEach(([key, value]) => {
-      const regex = new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, 'g');
-      config = config.replace(regex, value);
+    let config = templateDetails.content;
+    const allValues = { ...formValues, ...parameters };
+
+    Object.entries(allValues).forEach(([key, value]) => {
+      const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`\\{\\{\\s*${escapedKey}\\s*\\}\\}`, 'g');
+      // Replace only if value is not empty, otherwise template might be cleaner without it
+      config = config.replace(regex, value || '');
     });
 
     config = config.replace(/\{#.*?#\}/gs, '');
-
     config = config.replace(/\{%\s*if\s+(\w+)\s*%\}(.*?)\{%\s*endif\s*%\}/gs, (match, variable, content) => {
-      return formValues[variable] ? content : '';
+      const variableValue = formValues[variable] || parameters[variable];
+      return variableValue ? content : '';
     });
-
     config = config.replace(/\{%.*?%\}/g, '');
     config = config.split('\n').filter(line => line.trim()).join('\n');
 
     setGeneratedConfig(config);
   };
 
+  const deployTemplate = async () => {
+    // ... (deployTemplate logic is unchanged)
+    if (!generatedConfig || (!parameters.hostname && !parameters.inventory_file)) {
+      setError('Cannot deploy. Generate configuration and ensure a target device (hostname or inventory) is selected.');
+      return;
+    }
+
+    setDeploying(true);
+    setDeploymentResult(null);
+    setError(null);
+
+    const payload = {
+      template_path: selectedTemplate.path,
+      config: generatedConfig,
+      hostname: parameters.hostname,
+      inventory_file: parameters.inventory_file,
+      username: parameters.username,
+      password: parameters.password,
+      template_vars: formValues
+    };
+
+    try {
+      const response = await fetch(`${API_BASE}/deploy`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setDeploymentResult({ success: true, message: 'Deployment successful!', details: data });
+      } else {
+        setDeploymentResult({ success: false, message: data.message || 'Deployment failed.', details: data });
+        setError(data.message || 'Deployment failed.');
+      }
+    } catch (err) {
+      setDeploymentResult({ success: false, message: 'Network or server error during deployment.', details: err.toString() });
+      setError('Network or server error during deployment.');
+      console.error(err);
+    } finally {
+      setDeploying(false);
+    }
+  };
+
+
   const copyToClipboard = async () => {
+    // ... (copyToClipboard logic is unchanged)
     await navigator.clipboard.writeText(generatedConfig);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
   const downloadConfig = () => {
+    // ... (downloadConfig logic is unchanged)
     const blob = new Blob([generatedConfig], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -146,7 +213,7 @@ export default function Templates() {
     URL.revokeObjectURL(url);
   };
 
-  // Filter categories and templates based on search
+  // ... (filteredCategories logic is unchanged)
   const filteredCategories = categories.map(category => {
     const filteredTemplates = category.templates.filter(template =>
       template.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -154,6 +221,7 @@ export default function Templates() {
     );
     return { ...category, templates: filteredTemplates };
   }).filter(category => category.templates.length > 0);
+
 
   if (loading && categories.length === 0) {
     return (
@@ -165,6 +233,7 @@ export default function Templates() {
 
   return (
     <div className="container mx-auto p-6 space-y-6">
+      {/* ... (Header and Error Card unchanged) ... */}
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Network Templates</h1>
         <p className="text-muted-foreground">Select a template and configure your network device</p>
@@ -173,14 +242,15 @@ export default function Templates() {
       {error && (
         <Card className="border-destructive">
           <CardContent className="pt-6">
-            <p className="text-destructive">{error}</p>
+            <p className="text-destructive">⚠️ {error}</p>
           </CardContent>
         </Card>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* ... (Templates Sidebar Card unchanged) ... */}
         <div className="lg:col-span-1">
-          <Card className="h-[calc(100vh-12rem)]">
+          <Card className="lg:h-[calc(100vh-12rem)]">
             <CardHeader className="pb-3">
               <CardTitle>Available Templates</CardTitle>
               <CardDescription>Choose a configuration template</CardDescription>
@@ -276,7 +346,7 @@ export default function Templates() {
                           {selectedTemplate.path}
                         </Badge>
                       </div>
-                      <CardDescription>Configure the template parameters below</CardDescription>
+                      <CardDescription>Configure the template and device parameters below</CardDescription>
                     </div>
                     {templateDetails && (
                       <div className="text-right">
@@ -287,10 +357,11 @@ export default function Templates() {
                   </div>
                 </CardHeader>
 
-                {templateDetails && Object.keys(formValues).length > 0 && (
-                  <CardContent className="space-y-6">
+                <CardContent className="space-y-6">
+                  {/* Template Parameters Section */}
+                  {templateDetails && Object.keys(formValues).length > 0 && (
                     <div className="space-y-4">
-                      <h3 className="text-sm font-semibold">Template Parameters</h3>
+                      <h3 className="text-md font-semibold text-primary">Template Parameters</h3>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {Object.keys(formValues).map((variable) => (
                           <div key={variable} className="space-y-2">
@@ -308,17 +379,47 @@ export default function Templates() {
                         ))}
                       </div>
                     </div>
-                  </CardContent>
-                )}
+                  )}
+
+                  {/* Device and Auth Parameters Section */}
+                  <Separator />
+                  <div className="space-y-4">
+                    <h3 className="text-md font-semibold text-primary">Target Device & Authentication</h3>
+
+                    {/* FIX: Ensure all required props are passed correctly */}
+                    <DeviceTargetSelector
+                      hostname={parameters.hostname}
+                      inventory_file={parameters.inventory_file}
+                      // Pass handlers that use the central handleParamChange function
+                      onHostnameChange={(value) => handleParamChange('hostname', value)}
+                      onInventoryChange={(value) => handleParamChange('inventory_file', value)}
+                    />
+                    <DeviceAuthFields
+                      username={parameters.username}
+                      password={parameters.password}
+                      // Pass handlers that use the central handleParamChange function
+                      onUsernameChange={(value) => handleParamChange('username', value)}
+                      onPasswordChange={(value) => handleParamChange('password', value)}
+                    />
+                  </div>
+
+                  {/* Generate Config Button */}
+                  <div className="flex justify-end pt-4">
+                    <Button onClick={generateConfig} disabled={!selectedTemplate || loading}>
+                      Generate Configuration <ArrowRight className="w-4 h-4 ml-2" />
+                    </Button>
+                  </div>
+                </CardContent>
               </Card>
 
+              {/* Generated Configuration Card */}
               {generatedConfig && (
                 <Card>
                   <CardHeader>
                     <div className="flex items-center justify-between">
                       <div>
                         <CardTitle>Generated Configuration</CardTitle>
-                        <CardDescription>Ready to deploy</CardDescription>
+                        <CardDescription>Ready to review and deploy</CardDescription>
                       </div>
                       <div className="flex gap-2">
                         <Button
@@ -332,22 +433,55 @@ export default function Templates() {
                         <Button
                           onClick={downloadConfig}
                           size="sm"
+                          variant="secondary"
                         >
                           <Download className="w-4 h-4 mr-2" />
                           Download
+                        </Button>
+                        {/* DEPLOY BUTTON */}
+                        <Button
+                          onClick={deployTemplate}
+                          disabled={deploying || (!parameters.hostname && !parameters.inventory_file)}
+                          className="bg-green-600 hover:bg-green-700 text-white"
+                        >
+                          {deploying ? (
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          ) : (
+                            <Upload className="w-4 h-4 mr-2" />
+                          )}
+                          {deploying ? 'Deploying...' : 'Deploy Template'}
                         </Button>
                       </div>
                     </div>
                   </CardHeader>
                   <CardContent>
-                    <ScrollArea className="h-96 w-full rounded-md border">
-                      <pre className="p-4 text-sm font-mono whitespace-pre-wrap">
+                    <ScrollArea className="h-96 w-full rounded-md border bg-gray-50 dark:bg-gray-900">
+                      <pre className="p-4 text-sm font-mono whitespace-pre-wrap text-foreground">
                         {generatedConfig}
                       </pre>
                     </ScrollArea>
                   </CardContent>
                 </Card>
               )}
+
+              {/* Deployment Result Card */}
+              {deploymentResult && (
+                <Card className={deploymentResult.success ? 'border-green-500' : 'border-red-500'}>
+                  <CardHeader>
+                    <CardTitle className={deploymentResult.success ? 'text-green-600' : 'text-red-600'}>
+                      {deploymentResult.success ? '✅ Deployment Success' : '❌ Deployment Failed'}
+                    </CardTitle>
+                    <CardDescription>{deploymentResult.message}</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <h4 className="text-sm font-medium mb-2">Details:</h4>
+                    <pre className="p-3 text-xs rounded-md border bg-muted font-mono whitespace-pre-wrap overflow-x-auto">
+                      {JSON.stringify(deploymentResult.details, null, 2)}
+                    </pre>
+                  </CardContent>
+                </Card>
+              )}
+
             </div>
           )}
         </div>
