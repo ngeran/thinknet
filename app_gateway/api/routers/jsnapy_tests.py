@@ -1,7 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from loguru import logger
 
-# Import from data_access layer
 try:
     from app_gateway.data_access import test_reader
 except ImportError as e:
@@ -14,7 +13,7 @@ router = APIRouter()
 @router.get("/tests")
 async def get_tests():
     """
-    Returns structured test file inventory (list of .yml files only)
+    Returns structured test file inventory (list of .yml files in all subdirectories)
     """
     try:
         inventory = test_reader.scan_tests_directory()
@@ -28,7 +27,8 @@ async def get_tests():
 @router.get("/tests/{test_path:path}")
 async def get_test(test_path: str):
     """
-    Returns a specific test file by relative path (e.g., tests/test_bgp_summary.yml)
+    Returns the contents of a specific test file by relative path
+    (e.g., tests/protocols/test_bgp_summary.yml)
     """
     try:
         test_data = test_reader.get_test_by_path(test_path)

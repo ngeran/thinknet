@@ -50,6 +50,7 @@ from redis.exceptions import (
     WatchError,
 )
 from redis.lock import Lock
+from redis.maint_notifications import MaintNotificationsConfig
 from redis.retry import Retry
 from redis.utils import (
     deprecated_args,
@@ -170,6 +171,7 @@ REDIS_ALLOWED_KEYS = (
     "redis_connect_func",
     "password",
     "port",
+    "timeout",
     "queue_class",
     "retry",
     "retry_on_timeout",
@@ -183,6 +185,8 @@ REDIS_ALLOWED_KEYS = (
     "ssl_ca_data",
     "ssl_certfile",
     "ssl_cert_reqs",
+    "ssl_include_verify_flags",
+    "ssl_exclude_verify_flags",
     "ssl_keyfile",
     "ssl_password",
     "ssl_check_hostname",
@@ -692,6 +696,7 @@ class RedisCluster(AbstractRedisCluster, RedisClusterCommands):
             self._event_dispatcher = EventDispatcher()
         else:
             self._event_dispatcher = event_dispatcher
+        self.startup_nodes = startup_nodes
         self.nodes_manager = NodesManager(
             startup_nodes=startup_nodes,
             from_url=from_url,
@@ -1659,6 +1664,11 @@ class NodesManager:
             backoff=NoBackoff(), retries=0, supported_errors=(ConnectionError,)
         )
 
+        protocol = kwargs.get("protocol", None)
+        if protocol in [3, "3"]:
+            kwargs.update(
+                {"maint_notifications_config": MaintNotificationsConfig(enabled=False)}
+            )
         if self.from_url:
             # Create a redis node with a costumed connection pool
             kwargs.update({"host": host})
@@ -2716,8 +2726,8 @@ class PipelineStrategy(AbstractStrategy):
 
         If one of the retryable exceptions has been thrown we assume that:
          - connection_pool was disconnected
-         - connection_pool was reseted
-         - refereh_table_asap set to True
+         - connection_pool was reset
+         - refresh_table_asap set to True
 
         It will try the number of times specified by
         the retries in config option "self.retry"
@@ -3161,7 +3171,8 @@ class TransactionStrategy(AbstractStrategy):
                 self._nodes_manager.initialize()
                 self.reinitialize_counter = 0
             else:
-                self._nodes_manager.update_moved_exception(error)
+                if isinstance(error, AskError):
+                    self._nodes_manager.update_moved_exception(error)
 
         self._executing = False
 
