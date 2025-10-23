@@ -13,7 +13,8 @@ from app_gateway.api.routers import (
     operations,
     software_images,
     configuration_templates,
-    jsnapy_tests,  # Updated: Import jsnapy_tests router
+    jsnapy_tests,
+    configuration_deployment,
 )
 
 from .core.config import settings
@@ -40,6 +41,7 @@ app.include_router(restore.router, prefix="/api")
 app.include_router(operations.router, prefix="/api")
 app.include_router(software_images.router, prefix="/api")
 app.include_router(configuration_templates.router, prefix="/api")
+app.include_router(configuration_deployment.router, prefix="/api")
 app.include_router(
     jsnapy_tests.router, prefix="/api"
 )  # Updated: Include jsnapy_tests router
