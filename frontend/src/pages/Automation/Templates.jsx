@@ -19,7 +19,7 @@ import DeviceTargetSelector from '@/shared/DeviceTargetSelector';
 // Define API Base (FastAPI Gateway)
 const API_BASE = 'http://localhost:8000/api';
 // Define WebSocket Base (Rust Hub/WebSocket Server)
-const WS_BASE = 'ws://localhost:8080/ws';
+const WS_BASE = 'ws://localhost:3100/ws';
 
 export default function Templates() {
   // --- Core State Hooks ---
