@@ -14,7 +14,6 @@ import { Separator } from '@/components/ui/separator';
 import DeviceAuthFields from '@/shared/DeviceAuthFields';
 import DeviceTargetSelector from '@/shared/DeviceTargetSelector';
 
-
 // --- Constants ---
 // Define API Base (FastAPI Gateway)
 const API_BASE = 'http://localhost:8000/api';
@@ -50,7 +49,6 @@ export default function Templates() {
   const [deploymentResult, setDeploymentResult] = useState(null);
   const [wsConnection, setWsConnection] = useState(null); // Tracks the active WebSocket connection
 
-
   // --- Stepper Configuration (Kept from original file) ---
   const steps = [
     { id: 1, name: 'Select Template', icon: FileCode },
@@ -58,7 +56,6 @@ export default function Templates() {
     { id: 3, name: 'Review', icon: Eye },
     { id: 4, name: 'Deploy', icon: Play }
   ];
-
 
   // --- Data Fetching and Logic ---
 
@@ -163,7 +160,43 @@ export default function Templates() {
     setCurrentStep(4);
   };
 
-  // --- REAL-TIME DEPLOYMENT IMPLEMENTATION (Replaces Simulation) ---
+  // --- Nested JSON Extraction Logic (Compatible with fastapi_worker.py) ---
+  const extractNestedProgressData = (initialParsed) => {
+    let currentPayload = initialParsed;
+    let deepestNestedData = null;
+
+    if (initialParsed.data) {
+      try {
+        const dataPayload = typeof initialParsed.data === 'string'
+          ? JSON.parse(initialParsed.data)
+          : initialParsed.data;
+
+        currentPayload = dataPayload;
+
+        if (dataPayload.event_type === "ORCHESTRATOR_LOG" && dataPayload.message) {
+          const message = dataPayload.message;
+          const jsonMatch = message.match(/\[(STDOUT|STDERR)(?:_RAW)?\]\s*(\{.*\})/s);
+
+          if (jsonMatch && jsonMatch[2]) {
+            try {
+              deepestNestedData = JSON.parse(jsonMatch[2]);
+            } catch (parseError) {
+              console.warn('[TEMPLATES] Failed to parse nested JSON:', jsonMatch[2].substring(0, 200));
+            }
+          }
+        }
+      } catch (error) {
+        console.warn('[TEMPLATES] Failed to parse data field:', error.message);
+      }
+    }
+
+    return {
+      payload: deepestNestedData || currentPayload,
+      isNested: !!deepestNestedData
+    };
+  };
+
+  // --- REAL-TIME DEPLOYMENT IMPLEMENTATION (Updated with WebSocket Subscription Fix) ---
   const deployTemplate = async () => {
     if (!generatedConfig || (!parameters.hostname && !parameters.inventory_file)) {
       setError('Cannot deploy. Generate configuration and ensure a target device is selected.');
@@ -221,30 +254,55 @@ export default function Templates() {
       }]);
 
       // B. Establish WebSocket connection to the Rust Hub
-      ws = new WebSocket(`${WS_BASE}/subscribe?channel=${ws_channel}`);
+      // FIX: Use correct WebSocket endpoint (without /subscribe)
+      ws = new WebSocket(`${WS_BASE}`);
       setWsConnection(ws);
 
       ws.onopen = () => {
+        // 🔑 CRITICAL FIX: Send SUBSCRIBE command after connection is established
+        const subscribeCommand = {
+          type: 'SUBSCRIBE',
+          channel: ws_channel // This should be 'job:config-deploy-UUID'
+        };
+        ws.send(JSON.stringify(subscribeCommand));
+
         // Update the queue step to COMPLETE after connection is established
         setDeploymentSteps(prev => prev.map(step =>
           step.id === 'job-queue' ? { ...step, status: 'COMPLETE' } : step
         ));
-        setDeploymentSteps(prev => [...prev, { message: 'Real-time connection established. Waiting for worker start...', status: 'COMPLETE', id: 'ws-connected' }]);
+        setDeploymentSteps(prev => [...prev, {
+          message: 'Real-time connection established. Subscribed to job channel.',
+          status: 'COMPLETE',
+          id: 'ws-connected'
+        }]);
         console.log(`Subscribed to job channel: ${ws_channel}`);
       };
 
       ws.onmessage = (event) => {
+        // Debug logging to see raw WebSocket messages
+        console.log('[TEMPLATES] Raw WebSocket message received:', event.data);
+
         // C. Process real-time updates from the worker
         let realTimeData;
         try {
           realTimeData = JSON.parse(event.data);
+          console.log('[TEMPLATES] Parsed WebSocket message:', realTimeData);
         } catch (e) {
-          // FIX 2: Use 'e' to clear the linting error
           console.error("Failed to parse WebSocket message:", event.data, e);
           return;
         }
 
-        if (realTimeData.event_type === 'STEP_START') {
+        // 🔑 CRITICAL FIX: Extract nested progress data from ORCHESTRATOR_LOG wrapper
+        // This handles the double-wrapped JSON format produced by fastapi_worker.py
+        const { payload: finalPayload, isNested } = extractNestedProgressData(realTimeData);
+
+        // Debug logging (optional)
+        console.log('[TEMPLATES] Final payload after extraction:', finalPayload);
+        console.log('[TEMPLATES] Event type:', finalPayload.event_type);
+        console.log('[TEMPLATES] Was nested:', isNested);
+
+        // Process events using the final extracted payload
+        if (finalPayload.event_type === 'STEP_START') {
           setDeploymentSteps(prev => {
             // Mark the last 'IN_PROGRESS' step (if any) as 'COMPLETE' before adding the new one
             const newSteps = prev.map(step =>
@@ -252,21 +310,21 @@ export default function Templates() {
             );
             // Add the new step with status 'IN_PROGRESS'
             return [...newSteps, {
-              message: realTimeData.message,
+              message: finalPayload.message,
               status: 'IN_PROGRESS',
-              id: realTimeData.data.step_name
+              id: finalPayload.data?.name || `step-${finalPayload.data?.step}`
             }];
           });
         }
-        else if (realTimeData.event_type === 'STEP_COMPLETE') {
+        else if (finalPayload.event_type === 'STEP_COMPLETE') {
           // Mark the current in-progress step as COMPLETE (if STEP_START was missed or out of order)
           setDeploymentSteps(prev => prev.map(step =>
             step.status === 'IN_PROGRESS' ? { ...step, status: 'COMPLETE' } : step
           ));
         }
-        else if (realTimeData.event_type === 'OPERATION_COMPLETE') {
-          const finalStatus = realTimeData.data.status; // SUCCESS or FAILED
-          const finalMessage = realTimeData.message || `Deployment ${finalStatus}.`;
+        else if (finalPayload.event_type === 'OPERATION_COMPLETE') {
+          const finalStatus = finalPayload.data?.status; // SUCCESS or FAILED
+          const finalMessage = finalPayload.message || `Deployment ${finalStatus}.`;
 
           // Finalize last running step
           setDeploymentSteps(prev => prev.map(step =>
@@ -287,12 +345,38 @@ export default function Templates() {
           setDeploymentResult({
             success: finalStatus === 'SUCCESS',
             message: finalMessage,
-            details: realTimeData.data // Full result payload from worker
+            details: finalPayload.data // Full result payload from worker
           });
 
           setDeploying(false);
           intendedClose = true; // <-- SET FLAG HERE
           ws.close(); // Close connection on completion
+        }
+        // Also handle ORCHESTRATOR_LOG messages that might contain progress
+        else if (finalPayload.event_type === 'ORCHESTRATOR_LOG' && isNested) {
+          // This handles cases where we have nested progress events
+          console.log('[TEMPLATES] Processing nested progress event:', finalPayload.event_type);
+        }
+        // Handle raw success messages that might come through
+        else if (finalPayload.success !== undefined) {
+          const finalStatus = finalPayload.success ? 'SUCCESS' : 'FAILED';
+          const finalMessage = finalPayload.message || `Deployment ${finalStatus}.`;
+
+          setDeploymentSteps(prev => [...prev, {
+            message: finalMessage,
+            status: finalStatus === 'SUCCESS' ? 'COMPLETE' : 'FAILED',
+            id: 'final-result'
+          }]);
+
+          setDeploymentResult({
+            success: finalPayload.success,
+            message: finalMessage,
+            details: finalPayload
+          });
+
+          setDeploying(false);
+          intendedClose = true;
+          ws.close();
         }
         // Ignore ORCHESTRATOR_LOG or other internal messages for the main progress view
       };
@@ -325,7 +409,6 @@ export default function Templates() {
     }
   };
   // --- END REAL-TIME DEPLOYMENT IMPLEMENTATION ---
-
 
   // --- Helper Functions and Effects ---
 
@@ -390,7 +473,6 @@ export default function Templates() {
     // Default/Pending status
     return <Circle className="w-5 h-5 text-gray-300 dark:text-gray-700 flex-shrink-0" />;
   };
-
 
   if (loading && categories.length === 0) {
     return (
