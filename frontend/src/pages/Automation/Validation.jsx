@@ -1,3 +1,18 @@
+/**
+ * VALIDATION COMPONENT
+ * 
+ * Primary component for executing validation tests against network devices.
+ * Features:
+ * - Test discovery and selection from categorized test suites
+ * - Real-time execution progress via WebSocket
+ * - Comprehensive results display with statistics and export capabilities
+ * - Integration with TableDisplay component for enhanced data visualization
+ * 
+ * @component
+ * @example
+ * <Validation />
+ */
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -18,7 +33,9 @@ import {
   CheckCircle2,
   Circle,
   AlertCircle,
-  Download
+  Download,
+  Table,
+  FileText
 } from 'lucide-react';
 
 // Shared components
@@ -28,12 +45,19 @@ import DeviceTargetSelector from '@/shared/DeviceTargetSelector';
 // Custom Hooks
 import { useTestDiscovery } from '@/hooks/useTestDiscovery';
 
+// Enhanced Table Display Component
+import TableDisplay from '@/shared/TableDisplay';
+
 // API Configuration
 const API_URL = import.meta.env.VITE_API_GATEWAY_URL || 'http://localhost:8000';
 
 // =========================================================================================
 // DIRECT WEBSOCKET HOOK
 // =========================================================================================
+/**
+ * Custom hook for managing WebSocket connections with real-time message handling
+ * @returns {Object} WebSocket connection methods and state
+ */
 const useDirectWebSocket = () => {
   const [lastMessage, setLastMessage] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
@@ -104,12 +128,27 @@ const useDirectWebSocket = () => {
   };
 };
 
-// TestSelectionPanel component
+// =========================================================================================
+// TEST SELECTION PANEL COMPONENT
+// =========================================================================================
+/**
+ * Panel for selecting and managing validation tests with search and categorization
+ * @param {Object} props - Component props
+ * @param {Object} props.categorizedTests - Tests organized by category
+ * @param {Array} props.selectedTests - Currently selected test IDs
+ * @param {Function} props.onTestToggle - Callback for test selection/deselection
+ * @param {boolean} props.testsLoading - Loading state for tests
+ * @param {string} props.testsError - Error message for test loading
+ */
 function TestSelectionPanel({ categorizedTests, selectedTests, onTestToggle, testsLoading, testsError }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedCategories, setExpandedCategories] = useState(new Set());
   const [selectedCategory, setSelectedCategory] = useState('all');
 
+  /**
+   * Toggles category expansion state
+   * @param {string} category - Category name to toggle
+   */
   const toggleCategory = (category) => {
     const newExpanded = new Set(expandedCategories);
     if (newExpanded.has(category)) {
@@ -120,6 +159,7 @@ function TestSelectionPanel({ categorizedTests, selectedTests, onTestToggle, tes
     setExpandedCategories(newExpanded);
   };
 
+  // Filter tests based on search query and selected category
   const filteredTests = React.useMemo(() => {
     let filtered = { ...categorizedTests };
     if (searchQuery.trim()) {
@@ -145,6 +185,7 @@ function TestSelectionPanel({ categorizedTests, selectedTests, onTestToggle, tes
   const totalTests = Object.values(categorizedTests).flat().length;
   const categories = Object.keys(categorizedTests);
 
+  // Loading state
   if (testsLoading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -154,6 +195,7 @@ function TestSelectionPanel({ categorizedTests, selectedTests, onTestToggle, tes
     );
   }
 
+  // Error state
   if (testsError) {
     return (
       <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-6">
@@ -171,6 +213,7 @@ function TestSelectionPanel({ categorizedTests, selectedTests, onTestToggle, tes
   return (
     <div className="space-y-4">
       <div className="space-y-3">
+        {/* Search Input */}
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
@@ -190,6 +233,7 @@ function TestSelectionPanel({ categorizedTests, selectedTests, onTestToggle, tes
           )}
         </div>
 
+        {/* Category Filter Badges */}
         {categories.length > 1 && (
           <div className="flex flex-wrap gap-2">
             <Badge
@@ -216,6 +260,7 @@ function TestSelectionPanel({ categorizedTests, selectedTests, onTestToggle, tes
         )}
       </div>
 
+      {/* Selected Tests Summary */}
       {selectedTests.length > 0 && (
         <div className="bg-primary/5 border border-primary/20 rounded-lg p-3">
           <div className="flex items-center justify-between mb-2">
@@ -249,6 +294,7 @@ function TestSelectionPanel({ categorizedTests, selectedTests, onTestToggle, tes
         </div>
       )}
 
+      {/* Tests List */}
       <ScrollArea className="h-[500px] pr-4">
         <div className="space-y-3">
           {Object.keys(filteredTests).length === 0 ? (
@@ -326,7 +372,14 @@ function TestSelectionPanel({ categorizedTests, selectedTests, onTestToggle, tes
   );
 }
 
-// Status Icon Component (matching Templates.jsx)
+// =========================================================================================
+// STATUS ICON COMPONENT
+// =========================================================================================
+/**
+ * Reusable status icon component matching Templates.jsx design
+ * @param {Object} props - Component props
+ * @param {string} props.status - Status value ('COMPLETE', 'IN_PROGRESS', 'FAILED')
+ */
 const StepIcon = ({ status }) => {
   if (status === 'COMPLETE') return <CheckCircle2 className="w-5 h-5 text-green-600 flex-shrink-0" />;
   if (status === 'IN_PROGRESS') return <Loader2 className="w-5 h-5 animate-spin text-black dark:text-white flex-shrink-0" />;
@@ -334,8 +387,234 @@ const StepIcon = ({ status }) => {
   return <Circle className="w-5 h-5 text-gray-300 dark:text-gray-700 flex-shrink-0" />;
 };
 
+// =========================================================================================
+// ENHANCED RAW DATA VIEWER COMPONENT - FIXED FOR YOUR DATA STRUCTURE
+// =========================================================================================
+const EnhancedRawDataViewer = ({ finalResults, jobId }) => {
+  const [viewMode, setViewMode] = useState('table');
+
+  // Debug: Log the actual data structure
+  React.useEffect(() => {
+    console.log('🔍 Raw finalResults:', finalResults);
+    if (finalResults?.results_by_host) {
+      console.log('📊 Results by host structure:', finalResults.results_by_host);
+      console.log('🏠 First host data:', finalResults.results_by_host[0]);
+      if (finalResults.results_by_host[0]?.test_results) {
+        console.log('🧪 First test results:', finalResults.results_by_host[0].test_results[0]);
+      }
+    }
+  }, [finalResults]);
+
+  // Process test data for display - SPECIFICALLY FOR YOUR DATA STRUCTURE
+  const allTests = React.useMemo(() => {
+    const tests = [];
+
+    if (!finalResults?.results_by_host) {
+      console.log('❌ No results_by_host found');
+      return tests;
+    }
+
+    console.log('🔄 Processing data...');
+
+    // Your data structure: results_by_host is an ARRAY
+    const hosts = finalResults.results_by_host;
+
+    hosts.forEach((hostData, hostIndex) => {
+      const hostname = hostData.hostname || `Host-${hostIndex + 1}`;
+      console.log(`🏠 Processing host: ${hostname}`, hostData);
+
+      // Check if test_results exists and is an array
+      if (hostData.test_results && Array.isArray(hostData.test_results)) {
+        console.log(`📋 Found ${hostData.test_results.length} test results for ${hostname}`);
+
+        hostData.test_results.forEach((testResult, testIndex) => {
+          const testTitle = testResult.title || `Test ${testIndex + 1}`;
+          console.log(`🧪 Test ${testIndex}: ${testTitle}`, testResult);
+
+          // Check if this test has table data (headers and data arrays)
+          if (testResult.headers && Array.isArray(testResult.headers) &&
+            testResult.data && Array.isArray(testResult.data)) {
+
+            console.log(`📊 Found table data with ${testResult.data.length} rows`);
+
+            // Transform each row of table data into a flat object
+            testResult.data.forEach((rowData, rowIndex) => {
+              const flatRow = {
+                host: hostname,
+                test_name: testTitle,
+                row_number: rowIndex + 1,
+                _source: 'table_data'
+              };
+
+              // Add all columns from the row data
+              Object.keys(rowData).forEach(key => {
+                flatRow[key] = rowData[key];
+              });
+
+              // Also include headers for reference
+              flatRow._headers = testResult.headers.join(', ');
+
+              tests.push(flatRow);
+              console.log(`📝 Added row ${rowIndex}:`, flatRow);
+            });
+          } else if (testResult.error) {
+            // Handle test errors
+            console.log(`❌ Test error: ${testResult.error}`);
+            tests.push({
+              host: hostname,
+              test_name: testTitle,
+              status: 'error',
+              message: testResult.error,
+              row_number: 1,
+              _source: 'error'
+            });
+          } else {
+            // Handle other test result formats
+            console.log(`⚠️ Unhandled test format:`, testResult);
+            tests.push({
+              host: hostname,
+              test_name: testTitle,
+              status: 'unknown',
+              raw_data: JSON.stringify(testResult, null, 2),
+              row_number: 1,
+              _source: 'raw'
+            });
+          }
+        });
+      } else {
+        console.log(`📭 No test_results found for ${hostname}`);
+
+        // Handle case where there are no test_results but we have other data
+        if (hostData.status) {
+          tests.push({
+            host: hostname,
+            test_name: 'Host Status',
+            status: hostData.status,
+            message: 'No detailed test results available',
+            row_number: 1,
+            _source: 'host_status'
+          });
+        }
+      }
+    });
+
+    console.log(`✅ Processed ${tests.length} total test rows`);
+    if (tests.length > 0) {
+      console.log('📋 First processed row:', tests[0]);
+      console.log('🔑 Available columns:', Object.keys(tests[0]));
+    }
+
+    return tests;
+  }, [finalResults]);
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle className="text-lg">Test Results</CardTitle>
+            <CardDescription>
+              {allTests.length} row(s) of data - {viewMode === 'table' ?
+                'Table view' : 'JSON view'}
+              {allTests.length > 0 && (
+                <span className="ml-2 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                  {Object.keys(allTests[0]).length} columns
+                </span>
+              )}
+            </CardDescription>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant={viewMode === 'table' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setViewMode('table')}
+            >
+              <Table className="w-4 h-4 mr-2" />
+              Table
+            </Button>
+            <Button
+              variant={viewMode === 'json' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setViewMode('json')}
+            >
+              <FileText className="w-4 h-4 mr-2" />
+              JSON
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {viewMode === 'table' ? (
+          allTests.length > 0 ? (
+            <div className="space-y-4">
+              <div className="text-sm text-muted-foreground">
+                Showing {allTests.length} row(s) from validation tests
+                {allTests[0]?._headers && (
+                  <div className="text-xs mt-1">
+                    Columns: {allTests[0]._headers}
+                  </div>
+                )}
+              </div>
+              <TableDisplay
+                title="Validation Results"
+                data={allTests}
+                isVisible={true}
+                enableSave={true}
+                searchable={true}
+                maxRows={50}
+                saveConfig={{
+                  formats: ["csv", "json"],
+                  defaultFilename: `validation-results-${jobId || Date.now()}`
+                }}
+              />
+            </div>
+          ) : (
+            <div className="text-center py-8 text-muted-foreground">
+              <div className="flex flex-col items-center gap-3">
+                <AlertCircle className="h-12 w-12 text-orange-500" />
+                <p>No table data could be processed</p>
+                <p className="text-xs">Check browser console for detailed debugging information</p>
+
+                {finalResults && (
+                  <details className="mt-4 text-left w-full max-w-2xl">
+                    <summary className="cursor-pointer text-sm font-medium">
+                      Raw Data Structure (for debugging)
+                    </summary>
+                    <pre className="mt-2 p-4 bg-gray-100 rounded text-xs overflow-auto max-h-60 border">
+                      {JSON.stringify(finalResults, null, 2)}
+                    </pre>
+                  </details>
+                )}
+              </div>
+            </div>
+          )
+        ) : (
+          <div className="space-y-4">
+            <div className="text-sm text-muted-foreground">
+              Raw JSON data structure
+            </div>
+            <ScrollArea className="h-[400px]">
+              <pre className="bg-gray-50 dark:bg-gray-950 p-4 rounded-md text-xs font-mono">
+                {JSON.stringify(finalResults, null, 2)}
+              </pre>
+            </ScrollArea>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+};
+// =========================================================================================
+// MAIN VALIDATION COMPONENT
+// =========================================================================================
+/**
+ * Main Validation Component
+ * Orchestrates the entire validation workflow from configuration to results
+ */
 export default function Validation() {
-  // State Management
+  // =========================================================================================
+  // STATE MANAGEMENT
+  // =========================================================================================
   const [validationParams, setValidationParams] = useState({
     username: "",
     password: "",
@@ -351,9 +630,10 @@ export default function Validation() {
   const [wsChannel, setWsChannel] = useState(null);
   const [finalResults, setFinalResults] = useState(null);
   const [rawDataOpen, setRawDataOpen] = useState(false);
-  const [rawDataView, setRawDataView] = useState('json');
 
-  // Custom Hooks
+  // =========================================================================================
+  // CUSTOM HOOKS
+  // =========================================================================================
   const {
     connect: connectWS,
     disconnect: disconnectWS,
@@ -363,11 +643,22 @@ export default function Validation() {
 
   const { categorizedTests, loading: testsLoading, error: testsError } = useTestDiscovery("validation");
 
-  // Event Handlers
+  // =========================================================================================
+  // EVENT HANDLERS
+  // =========================================================================================
+  /**
+   * Updates validation parameters
+   * @param {string} name - Parameter name
+   * @param {any} value - Parameter value
+   */
   const handleParamChange = (name, value) => {
     setValidationParams(prev => ({ ...prev, [name]: value }));
   };
 
+  /**
+   * Toggles test selection
+   * @param {string} testId - Test ID to toggle
+   */
   const handleTestToggle = (testId) => {
     const currentTests = Array.isArray(validationParams.tests) ? validationParams.tests : [];
     const updatedTests = currentTests.includes(testId)
@@ -376,6 +667,9 @@ export default function Validation() {
     handleParamChange('tests', updatedTests);
   };
 
+  /**
+   * Resets the entire validation workflow to initial state
+   */
   const resetWorkflow = () => {
     disconnectWS();
     setJobStatus("idle");
@@ -385,9 +679,12 @@ export default function Validation() {
     setFinalResults(null);
     setActiveTab("config");
     setRawDataOpen(false);
-    setRawDataView('json');
   };
 
+  /**
+   * Initiates validation execution
+   * @param {Event} e - Form submit event
+   */
   const startValidationExecution = async (e) => {
     e.preventDefault();
 
@@ -425,6 +722,7 @@ export default function Validation() {
       tests: validationParams.tests,
     };
 
+    // Clean up empty values
     Object.keys(payload).forEach(key => {
       if (payload[key] === "" || payload[key] == null) delete payload[key];
     });
@@ -447,7 +745,7 @@ export default function Validation() {
         setJobId(data.job_id);
         setWsChannel(data.ws_channel);
 
-        // Connect to WebSocket
+        // Connect to WebSocket for real-time updates
         connectWS(data.ws_channel).catch(error => {
           console.error(`WebSocket connection failed:`, error);
           setValidationSteps(prev => [...prev, {
@@ -477,7 +775,9 @@ export default function Validation() {
     }
   };
 
-  // WebSocket Message Handler
+  // =========================================================================================
+  // WEBSOCKET MESSAGE HANDLER
+  // =========================================================================================
   useEffect(() => {
     if (!wsLastMessage || !jobId) return;
 
@@ -493,6 +793,7 @@ export default function Validation() {
           if (dataWrapper.event_type === 'ORCHESTRATOR_LOG' && dataWrapper.message) {
             let messageText = dataWrapper.message;
 
+            // Clean up message prefixes
             if (messageText.startsWith('[STDOUT] ')) {
               messageText = messageText.substring('[STDOUT] '.length);
             }
@@ -521,9 +822,14 @@ export default function Validation() {
     }
   }, [wsLastMessage, jobId]);
 
+  /**
+   * Processes actual message content from WebSocket
+   * @param {Object} actualMessage - Parsed message object
+   */
   const processActualMessage = (actualMessage) => {
     console.log(`[VALIDATION] Processing message type: ${actualMessage.type}`);
 
+    // Progress updates
     if (actualMessage.type === 'progress') {
       const { event_type, message: progressMessage } = actualMessage;
 
@@ -579,6 +885,7 @@ export default function Validation() {
       }
     }
 
+    // Final results
     if (actualMessage.type === 'result') {
       console.log('Final result message received!');
       setFinalResults(actualMessage.data);
@@ -586,6 +893,7 @@ export default function Validation() {
       setTimeout(() => setActiveTab('results'), 1000);
     }
 
+    // Error handling
     if (actualMessage.type === 'error') {
       setValidationSteps(prev => [...prev, {
         message: `Error: ${actualMessage.message}`,
@@ -597,7 +905,9 @@ export default function Validation() {
     }
   };
 
-  // Derived state
+  // =========================================================================================
+  // DERIVED STATE
+  // =========================================================================================
   const isRunning = jobStatus === 'running';
   const isComplete = jobStatus === 'success';
   const hasError = jobStatus === 'failed';
@@ -607,9 +917,12 @@ export default function Validation() {
     validationParams.tests && validationParams.tests.length > 0;
   const canStartValidation = isFormValid && jobStatus === 'idle';
 
+  // =========================================================================================
+  // RENDER LOGIC
+  // =========================================================================================
   return (
     <div className="p-8 pt-6">
-      {/* Header */}
+      {/* Header Section */}
       <div className="flex items-center justify-between mb-2">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Validation Tests</h1>
@@ -623,6 +936,7 @@ export default function Validation() {
       </div>
       <Separator className="mb-8" />
 
+      {/* Main Tabs Navigation */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="grid w-full grid-cols-3 mb-6">
           <TabsTrigger value="config" disabled={jobStatus === 'running'}>
@@ -638,6 +952,7 @@ export default function Validation() {
         <TabsContent value="config">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 max-w-7xl">
             <div className="space-y-6 flex flex-col">
+              {/* Target Device Selection */}
               <DeviceTargetSelector
                 parameters={validationParams}
                 onParamChange={handleParamChange}
@@ -645,6 +960,7 @@ export default function Validation() {
                 description="Choose the device to validate"
               />
 
+              {/* Authentication Fields */}
               <DeviceAuthFields
                 parameters={validationParams}
                 onParamChange={handleParamChange}
@@ -652,6 +968,7 @@ export default function Validation() {
                 description="Enter credentials for device access"
               />
 
+              {/* Validation Action Card */}
               <Card className="flex-1 flex flex-col">
                 <CardContent className="pt-6 flex-1 flex flex-col justify-between">
                   <div className="space-y-4">
@@ -679,6 +996,7 @@ export default function Validation() {
                       </div>
                     </div>
 
+                    {/* Start Validation Button */}
                     <Button
                       onClick={startValidationExecution}
                       disabled={!canStartValidation}
@@ -702,6 +1020,7 @@ export default function Validation() {
               </Card>
             </div>
 
+            {/* Test Selection Panel */}
             <div className="flex flex-col">
               <Card className="flex-1 flex flex-col">
                 <CardHeader>
@@ -724,7 +1043,7 @@ export default function Validation() {
           </div>
         </TabsContent>
 
-        {/* Execution Tab - REDESIGNED to match Templates.jsx */}
+        {/* Execution Tab */}
         <TabsContent value="execute">
           <div className="space-y-4 max-w-4xl mx-auto">
             <Card className="border-gray-200 dark:border-gray-800">
@@ -776,11 +1095,11 @@ export default function Validation() {
               </CardContent>
             </Card>
 
-            {/* Validation Progress - Matching Templates.jsx style */}
+            {/* Validation Progress */}
             {(isRunning || isComplete || hasError) && validationSteps.length > 0 && (
               <Card className={`border-2 ${isComplete ? 'border-green-500' :
-                  hasError ? 'border-red-500' :
-                    'border-gray-200 dark:border-gray-800'
+                hasError ? 'border-red-500' :
+                  'border-gray-200 dark:border-gray-800'
                 }`}>
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center gap-2">
@@ -814,9 +1133,9 @@ export default function Validation() {
                       >
                         <StepIcon status={step.status} />
                         <span className={`text-sm ${step.status === 'COMPLETE' ? 'text-green-600' :
-                            step.status === 'IN_PROGRESS' ? 'text-black dark:text-white font-medium' :
-                              step.status === 'FAILED' ? 'text-red-600 font-medium' :
-                                'text-gray-400 dark:text-gray-600'
+                          step.status === 'IN_PROGRESS' ? 'text-black dark:text-white font-medium' :
+                            step.status === 'FAILED' ? 'text-red-600 font-medium' :
+                              'text-gray-400 dark:text-gray-600'
                           }`}>
                           {step.message}
                         </span>
@@ -891,13 +1210,13 @@ export default function Validation() {
           </div>
         </TabsContent>
 
-        {/* Results Tab - ENHANCED MODERN DESIGN */}
+        {/* Results Tab */}
         <TabsContent value="results">
           <div className="space-y-6 max-w-7xl mx-auto">
             {/* Summary Header Card */}
             <Card className={`border-2 ${jobStatus === 'success' ? 'border-green-500' :
-                jobStatus === 'failed' ? 'border-red-500' :
-                  'border-gray-200'
+              jobStatus === 'failed' ? 'border-red-500' :
+                'border-gray-200'
               }`}>
               <CardContent className="pt-6">
                 <div className="flex items-start justify-between">
@@ -1087,275 +1406,13 @@ export default function Validation() {
               );
             })()}
 
-            {/* Detailed Results by Host */}
-            {finalResults && finalResults.results_by_host && (() => {
-              // Collect all tests across all hosts
-              const allTestsAcrossHosts = [];
-              Object.entries(finalResults.results_by_host).forEach(([host, hostResults]) => {
-                if (hostResults.tests && Array.isArray(hostResults.tests) && hostResults.tests.length > 0) {
-                  hostResults.tests.forEach(test => {
-                    allTestsAcrossHosts.push({ host, ...test });
-                  });
-                }
-              });
-
-              // If we have tests, show them in a unified table
-              if (allTestsAcrossHosts.length > 0) {
-                return (
-                  <Card>
-                    <CardHeader>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <CardTitle className="text-lg">Test Results</CardTitle>
-                          <CardDescription>
-                            {allTestsAcrossHosts.length} test(s) executed across all hosts
-                          </CardDescription>
-                        </div>
-                      </div>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="border rounded-lg overflow-hidden">
-                        <div className="overflow-x-auto">
-                          <table className="w-full">
-                            <thead className="bg-gray-50 dark:bg-gray-900">
-                              <tr>
-                                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                  Host
-                                </th>
-                                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                  Status
-                                </th>
-                                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                  Test Name
-                                </th>
-                                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                  Message
-                                </th>
-                                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                  Duration
-                                </th>
-                              </tr>
-                            </thead>
-                            <tbody className="bg-white dark:bg-black divide-y divide-gray-200 dark:divide-gray-800">
-                              {allTestsAcrossHosts.map((test, idx) => {
-                                const status = (test.status || '').toUpperCase();
-                                const isPassed = status === 'PASSED' || status === 'SUCCESS' || status === 'PASS';
-                                const isFailed = status === 'FAILED' || status === 'FAILURE' || status === 'FAIL';
-                                const isSkipped = status === 'SKIPPED' || status === 'SKIP';
-
-                                return (
-                                  <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors">
-                                    <td className="px-4 py-3 whitespace-nowrap">
-                                      <div className="text-sm font-mono font-medium text-gray-900 dark:text-gray-100">
-                                        {test.host}
-                                      </div>
-                                    </td>
-                                    <td className="px-4 py-3 whitespace-nowrap">
-                                      <div className="flex items-center gap-2">
-                                        {isPassed ? (
-                                          <>
-                                            <CheckCircle2 className="w-4 h-4 text-green-600" />
-                                            <Badge variant="outline" className="border-green-500 text-green-700 bg-green-50">
-                                              Passed
-                                            </Badge>
-                                          </>
-                                        ) : isFailed ? (
-                                          <>
-                                            <XCircle className="w-4 h-4 text-red-600" />
-                                            <Badge variant="outline" className="border-red-500 text-red-700 bg-red-50">
-                                              Failed
-                                            </Badge>
-                                          </>
-                                        ) : isSkipped ? (
-                                          <>
-                                            <Circle className="w-4 h-4 text-gray-600" />
-                                            <Badge variant="outline" className="border-gray-500 text-gray-700 bg-gray-50">
-                                              Skipped
-                                            </Badge>
-                                          </>
-                                        ) : (
-                                          <Badge variant="outline">{test.status}</Badge>
-                                        )}
-                                      </div>
-                                    </td>
-                                    <td className="px-4 py-3">
-                                      <div className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                                        {test.test_name || test.test_id || 'Unnamed Test'}
-                                      </div>
-                                      {test.test_id && test.test_name !== test.test_id && (
-                                        <div className="text-xs text-gray-500 font-mono mt-0.5">
-                                          {test.test_id}
-                                        </div>
-                                      )}
-                                    </td>
-                                    <td className="px-4 py-3">
-                                      <div className="text-sm text-gray-700 dark:text-gray-300 max-w-md">
-                                        {test.message || test.error || 'No message provided'}
-                                      </div>
-                                      {test.details && (
-                                        <details className="mt-2">
-                                          <summary className="text-xs text-blue-600 cursor-pointer hover:underline">
-                                            View Details
-                                          </summary>
-                                          <pre className="mt-2 p-2 bg-gray-50 dark:bg-gray-900 rounded text-xs overflow-auto max-h-40">
-                                            {typeof test.details === 'string' ? test.details : JSON.stringify(test.details, null, 2)}
-                                          </pre>
-                                        </details>
-                                      )}
-                                    </td>
-                                    <td className="px-4 py-3 whitespace-nowrap">
-                                      <div className="text-sm text-gray-700 dark:text-gray-300">
-                                        {test.duration ? `${test.duration}s` : 'N/A'}
-                                      </div>
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-
-                      {/* Show host-level errors if any */}
-                      {Object.entries(finalResults.results_by_host).map(([host, hostResults]) =>
-                        hostResults.error ? (
-                          <div key={host} className="mt-4 p-4 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-lg">
-                            <div className="flex items-start gap-2">
-                              <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-                              <div>
-                                <p className="text-sm font-medium text-red-900 dark:text-red-100">
-                                  Error on host: {host}
-                                </p>
-                                <p className="text-sm text-red-700 dark:text-red-300 mt-1">{hostResults.error}</p>
-                              </div>
-                            </div>
-                          </div>
-                        ) : null
-                      )}
-                    </CardContent>
-                  </Card>
-                );
-              }
-
-              // If no tests found, show a message
-              return (
-                <Card>
-                  <CardContent className="pt-6">
-                    <div className="text-center py-8 text-muted-foreground">
-                      <p>No test results available</p>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })()}
-
-            {/* Raw Data Viewer - Collapsible with Table View */}
-            {finalResults && (() => {
-              const allTests = [];
-              if (finalResults.results_by_host) {
-                Object.entries(finalResults.results_by_host).forEach(([host, hostResults]) => {
-                  if (hostResults.tests && Array.isArray(hostResults.tests)) {
-                    hostResults.tests.forEach(test => {
-                      allTests.push({ host, ...test });
-                    });
-                  }
-                });
-              }
-
-              return (
-                <Card>
-                  <CardHeader
-                    className="cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors"
-                    onClick={() => setRawDataOpen(!rawDataOpen)}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <CardTitle className="text-sm flex items-center gap-2">
-                          {rawDataOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                          Raw Results Data
-                        </CardTitle>
-                        <CardDescription>
-                          {rawDataOpen ? 'Click to collapse' : 'Click to expand - View complete JSON response or table format'}
-                        </CardDescription>
-                      </div>
-                      {rawDataOpen && allTests.length > 1 && (
-                        <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
-                          <Button
-                            variant={rawDataView === 'table' ? 'default' : 'outline'}
-                            size="sm"
-                            onClick={() => setRawDataView('table')}
-                          >
-                            Table View
-                          </Button>
-                          <Button
-                            variant={rawDataView === 'json' ? 'default' : 'outline'}
-                            size="sm"
-                            onClick={() => setRawDataView('json')}
-                          >
-                            JSON View
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  </CardHeader>
-                  {rawDataOpen && (
-                    <CardContent>
-                      {rawDataView === 'table' && allTests.length > 1 ? (
-                        <div className="border rounded-lg overflow-hidden">
-                          <ScrollArea className="h-[400px]">
-                            <table className="w-full">
-                              <thead className="bg-gray-50 dark:bg-gray-900 sticky top-0">
-                                <tr>
-                                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Host</th>
-                                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Test ID</th>
-                                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Test Name</th>
-                                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Message</th>
-                                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Duration</th>
-                                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Details</th>
-                                </tr>
-                              </thead>
-                              <tbody className="bg-white dark:bg-black divide-y divide-gray-200 dark:divide-gray-800">
-                                {allTests.map((test, idx) => (
-                                  <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors">
-                                    <td className="px-4 py-3 text-sm font-mono">{test.host}</td>
-                                    <td className="px-4 py-3 text-sm font-mono">{test.test_id || 'N/A'}</td>
-                                    <td className="px-4 py-3 text-sm">{test.test_name || 'N/A'}</td>
-                                    <td className="px-4 py-3 text-sm">
-                                      <Badge variant="outline">{test.status || 'N/A'}</Badge>
-                                    </td>
-                                    <td className="px-4 py-3 text-sm max-w-xs truncate" title={test.message || test.error}>
-                                      {test.message || test.error || 'N/A'}
-                                    </td>
-                                    <td className="px-4 py-3 text-sm">{test.duration ? `${test.duration}s` : 'N/A'}</td>
-                                    <td className="px-4 py-3 text-sm">
-                                      {test.details ? (
-                                        <details>
-                                          <summary className="text-xs text-blue-600 cursor-pointer hover:underline">View</summary>
-                                          <pre className="mt-2 p-2 bg-gray-50 dark:bg-gray-900 rounded text-xs overflow-auto max-h-40 max-w-md">
-                                            {typeof test.details === 'string' ? test.details : JSON.stringify(test.details, null, 2)}
-                                          </pre>
-                                        </details>
-                                      ) : 'N/A'}
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </ScrollArea>
-                        </div>
-                      ) : (
-                        <ScrollArea className="h-[400px]">
-                          <pre className="bg-gray-50 dark:bg-gray-950 p-4 rounded-md text-xs font-mono">
-                            {JSON.stringify(finalResults, null, 2)}
-                          </pre>
-                        </ScrollArea>
-                      )}
-                    </CardContent>
-                  )}
-                </Card>
-              );
-            })()}
+            {/* Enhanced Raw Data Viewer */}
+            {finalResults && (
+              <EnhancedRawDataViewer
+                finalResults={finalResults}
+                jobId={jobId}
+              />
+            )}
           </div>
         </TabsContent>
       </Tabs>
