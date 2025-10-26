@@ -20,6 +20,7 @@ from app_gateway.api.routers import (
     # This is the NEW, CORRECT router that accurately constructs the JSNAPy job.
     jsnapy_runner,
     file_uploader,
+    code_upgrade,
 )
 
 from .core.config import settings
@@ -68,6 +69,7 @@ app.include_router(configuration_deployment.router, prefix="/api")
 app.include_router(
     file_uploader.router, prefix="/api"
 )  # 🔑 FIXED: Changed .route to .router
+app.include_router(code_upgrade.router, prefix="/api")
 
 
 # --- Root Health Checks ---
