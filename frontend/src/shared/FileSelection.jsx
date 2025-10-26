@@ -4,9 +4,8 @@
  * =============================================================================
  * A reusable file selection component with drag-and-drop support, progress display,
  * and file type validation.
- * 
- * @version 2.0.0 - COMPLETELY STANDALONE
- * @last_updated 2025-10-18
+ * * @version 2.0.1 - FIXED SYNTAX ERROR (EXTRA BRACE REMOVED)
+ * @last_updated 2025-10-26
  * =============================================================================
  */
 
@@ -51,7 +50,7 @@ export default function FileSelection({
   const setSelectedFile = externalSetSelectedFile || setInternalSelectedFile;
 
   // =========================================================================
-  // 🎯 FILE HANDLING FUNCTIONS
+  // 📝 FILE HANDLING FUNCTIONS
   // =========================================================================
   const isValidFileType = (file) => {
     if (allowedMimeTypes.includes(file.type)) return true;

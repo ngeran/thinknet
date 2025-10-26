@@ -5,7 +5,7 @@
  * A highly interactive and visually appealing form component for image uploads.
  * Provides a complete UI for file selection (via drag-and-drop or browsing),
  * device targeting, authentication, and initiating the upload process.
- * * @version 2.9.2 - FIXED FINAL SUCCESS PAYLOAD FILTERING
+ * * @version 2.9.5 - FIXED PROGRESS JUMP (Robust Progress Value Extraction and Conversion)
  * @last_updated 2025-10-26
  * =============================================================================
  */
@@ -16,12 +16,12 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 
-// Shared components
+// Shared components - Ensure these files exist and are correctly structured
 import DeviceAuthFields from '@/shared/DeviceAuthFields';
 import DeviceTargetSelector from '@/shared/DeviceTargetSelector';
 import FileSelection from '@/shared/FileSelection';
 
-// WebSocket configuration (same as Templates component)
+// WebSocket configuration (Must match your backend WS server address)
 const WS_BASE = 'ws://localhost:3100/ws';
 
 /**
@@ -29,18 +29,18 @@ const WS_BASE = 'ws://localhost:3100/ws';
  * Handles image file selection and device configuration with real-time progress tracking
  */
 export default function ImageUploader({
-  // Optional props - component works without them
+  // Props for external control (if integrated into a larger system)
   parameters: externalParameters,
   onParamChange: externalOnParamChange,
   selectedFile: externalSelectedFile,
   setSelectedFile: externalSetSelectedFile,
-  onUpload, // Parent can still override if needed
+  onUpload,
   isRunning = false,
   isUploading: externalIsUploading,
   uploadProgress: externalUploadProgress
 }) {
   // =========================================================================
-  // 🧠 COMPLETE STATE MANAGEMENT - Standalone version
+  // 🧠 COMPLETE STATE MANAGEMENT - Internal state for standalone operation
   // =========================================================================
   const [internalSelectedFile, setInternalSelectedFile] = useState(null);
   const [internalParameters, setInternalParameters] = useState({
@@ -49,24 +49,20 @@ export default function ImageUploader({
     username: '',
     password: ''
   });
-  // State for the upload process
   const [internalIsUploading, setInternalIsUploading] = useState(false);
   const [internalUploadProgress, setInternalUploadProgress] = useState(0);
-  // Final result object (success/fail, message, job ID, etc.)
-  const [uploadResult, setUploadResult] = useState(null);
-  // Detailed message for the current step in the process
-  const [currentStep, setCurrentStep] = useState('');
-  // WebSocket status for UI icon
-  const [wsStatus, setWsStatus] = useState('disconnected'); // disconnected, connecting, connected, error
+  const [uploadResult, setUploadResult] = useState(null); // Final result (success/fail)
+  const [currentStep, setCurrentStep] = useState(''); // Detailed message for current process step
+  const [wsStatus, setWsStatus] = useState('disconnected'); // WebSocket status indicator
 
-  // WebSocket reference (using same pattern as Templates)
+  // WebSocket references
   const websocketRef = useRef(null);
   const jobIdRef = useRef(null);
-  // Critical flag to prevent race conditions when manually closing the connection
+  // Flag to manage intentional closure vs. unexpected disconnection
   const intendedCloseRef = useRef(false);
 
   // =========================================================================
-  // 🔄 STATE RESOLUTION - Use external props if provided, otherwise internal state
+  // 🔄 STATE RESOLUTION - Prioritize external props over internal state
   // =========================================================================
   const selectedFile = externalSelectedFile !== undefined ? externalSelectedFile : internalSelectedFile;
   const parameters = externalParameters || internalParameters;
@@ -80,7 +76,7 @@ export default function ImageUploader({
     : (name, value) => setInternalParameters(prev => ({ ...prev, [name]: value }));
 
   // =========================================================================
-  // 🧹 CLEANUP EFFECT - Close WebSocket on unmount
+  // 🧹 CLEANUP EFFECT - Closes WebSocket when the component unmounts
   // =========================================================================
   useEffect(() => {
     return () => {
@@ -93,10 +89,10 @@ export default function ImageUploader({
   }, []);
 
   // =========================================================================
-  // 📡 WEB SOCKET INTEGRATION - USING PROVEN TEMPLATES PATTERN
+  // 📡 WEB SOCKET INTEGRATION - Handles real-time communication for progress
   // =========================================================================
   const connectToWebSocket = (wsChannel, jobId) => {
-    // Clean up any existing connection
+    // 1. Cleanup previous connection
     if (websocketRef.current) {
       intendedCloseRef.current = true;
       websocketRef.current.close(1000, 'New connection requested');
@@ -104,49 +100,31 @@ export default function ImageUploader({
 
     jobIdRef.current = jobId;
     intendedCloseRef.current = false;
-
-    console.log(`[IMAGE UPLOADER] Establishing WebSocket connection for channel: ${wsChannel}`);
+    setWsStatus('connecting');
 
     try {
-      // Use the same WebSocket base as the working Templates component
       const ws = new WebSocket(`${WS_BASE}`);
       websocketRef.current = ws;
-      setWsStatus('connecting');
 
       ws.onopen = () => {
-        console.log(`[IMAGE UPLOADER] WebSocket connected successfully`);
         setWsStatus('connected');
-
-        // 🔑 CRITICAL: Send SUBSCRIBE command exactly like Templates component
-        const subscribeCommand = {
-          type: 'SUBSCRIBE',
-          channel: wsChannel
-        };
+        // Subscribe to the specific job channel
+        const subscribeCommand = { type: 'SUBSCRIBE', channel: wsChannel };
         ws.send(JSON.stringify(subscribeCommand));
-
-        // Update the queue step to COMPLETE after connection is established
         setCurrentStep('Real-time connection established ✓');
-        console.log(`[IMAGE UPLOADER] Subscribed to job channel: ${wsChannel}`);
       };
 
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          console.log('[IMAGE UPLOADER] WebSocket message received:', data);
-
-          // Process WebSocket messages using the same pattern as Templates
           handleWebSocketMessage(data);
-
         } catch (error) {
           console.error('[IMAGE UPLOADER] Error parsing WebSocket message:', error, 'Raw message:', event.data);
         }
       };
 
       ws.onclose = (event) => {
-        console.log(`[IMAGE UPLOADER] WebSocket connection closed:`, event.code, event.reason);
         setWsStatus('disconnected');
-
-        // Only treat as error if closure wasn't intended
         if (!intendedCloseRef.current) {
           console.warn('[IMAGE UPLOADER] WebSocket closed unexpectedly');
           setCurrentStep('Connection lost - progress updates unavailable');
@@ -167,99 +145,91 @@ export default function ImageUploader({
   };
 
   // =========================================================================
-  // 📨 WEB SOCKET MESSAGE HANDLER - FIXED FINAL SUCCESS FILTERING
+  // 📨 WEB SOCKET MESSAGE HANDLER - CORE FIX FOR PROGRESS JUMP
   // =========================================================================
   const handleWebSocketMessage = (data) => {
-    // 1. Extract and normalize the event payload
+    // 1. Extract and normalize the event payload (handles nested logs)
     const { payload: finalPayload, isNested } = extractNestedProgressData(data);
 
-    // 🎯 CRITICAL FIX: The final success payload is nested and lacks an 'event_type'.
-    // Check for the nested success condition BEFORE the event_type filter.
+    // 2. Handle the final success payload (often a unique nested structure)
     if (isNested && finalPayload.success === true) {
-      console.log('[IMAGE UPLOADER] Final success payload (nested) detected and processed.');
       setInternalUploadProgress(100);
       setCurrentStep('Upload completed successfully!');
-      setInternalIsUploading(false); // Stop the spinner
+      setInternalIsUploading(false);
 
-      // Update result for the final success card
       setUploadResult({
         success: true,
         completed: true,
-        // Use the details from the nested payload
         finalMessage: finalPayload.details?.summary || 'File uploaded and verified successfully!',
         deviceInfo: finalPayload.details?.device_info,
-        jobId: jobIdRef.current, // Use the stored job ID
+        jobId: jobIdRef.current,
       });
 
-      // Close connection as job is finished
+      // Job complete, close the connection
       intendedCloseRef.current = true;
       if (websocketRef.current) websocketRef.current.close();
-      return; // Job is complete, stop processing all other logic
-    }
-
-    // 2. Filter out non-actionable payloads (e.g., raw STDERR, or payloads without event_type)
-    if (!finalPayload || !finalPayload.event_type) {
-      // This now only filters out raw, non-JSON error messages or other unexpected formats
       return;
     }
 
-    console.log('[IMAGE UPLOADER] Processing WebSocket event:', finalPayload.event_type);
+    // 3. CORE FIX: Robust Progress Value Extraction and Conversion
+    // Check multiple locations for the progress value for maximum compatibility.
+    let rawProgressValue = finalPayload?.data?.progress; // 1st Check: Standard nested location
 
+    if (rawProgressValue === undefined) {
+      rawProgressValue = finalPayload?.progress; // 2nd Check: Root of nested payload
+    }
+
+    if (rawProgressValue === undefined && data.progress !== undefined) {
+      rawProgressValue = data.progress; // 3rd Check: Original top-level message (for simple events)
+    }
+
+    if (rawProgressValue !== undefined) {
+      // ⭐ CRITICAL FIX: Ensure the value is a number (e.g., convert "5.2" string to 5.2)
+      const progressValue = Math.max(0, Math.min(100, parseFloat(rawProgressValue)));
+
+      // Only update if conversion was successful and a valid number
+      if (!isNaN(progressValue)) {
+        setInternalUploadProgress(progressValue);
+
+        // Update step message based on payload content or progress
+        const message = finalPayload.message || (progressValue < 100 ? 'Uploading file...' : 'File transfer complete.');
+        setCurrentStep(message);
+      }
+    }
+
+    // 4. Filter out non-actionable payloads (e.g., raw text logs)
+    if (!finalPayload || !finalPayload.event_type) {
+      return;
+    }
+
+    // 5. Handle all other event types
     switch (finalPayload.event_type) {
       case 'OPERATION_START':
         setCurrentStep('Starting upload process...');
         break;
 
       case 'STEP_START':
-        setCurrentStep(finalPayload.message);
-        break;
-
       case 'STEP_COMPLETE':
-        setCurrentStep(`${finalPayload.message} ✓`);
-        break;
-
-      case 'PROGRESS_UPDATE':
-        if (finalPayload.data && finalPayload.data.progress !== undefined) {
-          setInternalUploadProgress(finalPayload.data.progress);
-        }
-        setCurrentStep(finalPayload.message || 'Uploading file...');
-        break;
-
-      case 'ORCHESTRATOR_LOG':
-        // All nested success messages are handled at the top. This handles other nested logs.
-        if (isNested) {
-          console.log('[IMAGE UPLOADER] Processing nested (non-success) progress event log.');
-          // Note: If the inner message had an event_type (e.g., STEP_COMPLETE), 
-          // it would have been processed above the switch statement as the primary payload.
+        // Only update step if we didn't just update with progress message
+        if (!rawProgressValue) {
+          setCurrentStep(`${finalPayload.message} ${finalPayload.event_type === 'STEP_COMPLETE' ? '✓' : ''}`);
         }
         break;
 
-      case 'UPLOAD_COMPLETE': // Fall-through case
+      case 'UPLOAD_COMPLETE':
       case 'OPERATION_COMPLETE':
         if (finalPayload.success) {
           setInternalUploadProgress(100);
-          setCurrentStep('Operation completed successfully!');
           setInternalIsUploading(false);
-
-          setUploadResult(prev => ({
-            ...prev,
-            success: true,
-            completed: true,
-            finalMessage: finalPayload.details?.summary || 'Operation completed successfully!',
-            deviceInfo: finalPayload.details?.device_info
-          }));
-
+          // Result state is fully set in Step 2 for this case, so we only update message here
+          setCurrentStep('Operation completed successfully!');
           intendedCloseRef.current = true;
           if (websocketRef.current) websocketRef.current.close();
         } else {
           // Handle failure case
           setInternalIsUploading(false);
           setCurrentStep(`Operation failed: ${finalPayload.message}`);
-          setUploadResult({
-            success: false,
-            error: finalPayload.message,
-            completed: true
-          });
+          setUploadResult({ success: false, error: finalPayload.message, completed: true });
           intendedCloseRef.current = true;
           if (websocketRef.current) websocketRef.current.close();
         }
@@ -269,71 +239,55 @@ export default function ImageUploader({
       case 'UPLOAD_FAILED':
         setInternalIsUploading(false);
         setCurrentStep(`Upload failed: ${finalPayload.message || finalPayload.error}`);
-        setUploadResult({
-          success: false,
-          error: finalPayload.message || finalPayload.error,
-          completed: true
-        });
+        setUploadResult({ success: false, error: finalPayload.message || finalPayload.error, completed: true });
         intendedCloseRef.current = true;
         if (websocketRef.current) websocketRef.current.close();
-        console.error('[IMAGE UPLOADER] Upload failed via WebSocket:', finalPayload);
         break;
 
       default:
-        console.log('[IMAGE UPLOADER] Unknown WebSocket event:', finalPayload.event_type);
+        // Ignore other non-critical log types
+        break;
     }
   };
 
   // =========================================================================
-  // 🔄 NESTED PROGRESS DATA EXTRACTION (SAME AS TEMPLATES COMPONENT)
+  // 🔄 NESTED PROGRESS DATA EXTRACTION - Safely parses embedded JSON data
   // =========================================================================
   const extractNestedProgressData = (initialParsed) => {
     let currentPayload = initialParsed;
     let deepestNestedData = null;
     let isNested = false;
 
-    // Check if the primary payload has a 'data' field that is a JSON string
+    // Check for nested data in the 'data' field (common for queue messages)
     if (initialParsed.data) {
       try {
         const dataPayload = typeof initialParsed.data === 'string'
           ? JSON.parse(initialParsed.data)
           : initialParsed.data;
-
         currentPayload = dataPayload;
 
-        // Handle ORCHESTRATOR_LOG messages with nested JSON in the 'message' field
+        // Check for double-nested data inside ORCHESTRATOR_LOG messages
         if (dataPayload.event_type === "ORCHESTRATOR_LOG" && dataPayload.message) {
-          const message = dataPayload.message;
-          // Regex to extract JSON from [STDOUT] or [STDERR] wrapper
-          const jsonMatch = message.match(/\[(STDOUT|STDERR)(?:_RAW)?\]\s*(\{.*\})/s);
-
+          const jsonMatch = dataPayload.message.match(/\[(STDOUT|STDERR)(?:_RAW)?\]\s*(\{.*\})/s);
           if (jsonMatch && jsonMatch[2]) {
             try {
               deepestNestedData = JSON.parse(jsonMatch[2]);
-              isNested = true; // Mark as nested content
-            } catch {
-              console.warn('[IMAGE UPLOADER] Failed to parse nested JSON:', jsonMatch[2].substring(0, 200));
-            }
+              isNested = true;
+            } catch { }
           }
         }
       } catch (error) {
-        // If initialParsed.data is a string but not JSON, we ignore it and use the original payload
-        console.warn('[IMAGE UPLOADER] Failed to parse data field:', error.message);
+        // Ignore if 'data' field is a string but not valid JSON
       }
     } else {
-      // Handle the Rust Orchestrator log structure which puts the nested message in 'message' field
+      // Check for nested data in the 'message' field (common for worker logs)
       if (currentPayload.event_type === "ORCHESTRATOR_LOG" && currentPayload.message) {
-        const message = currentPayload.message;
-        // Regex to extract JSON from [STDOUT] or [STDERR] wrapper
-        const jsonMatch = message.match(/\[(STDOUT|STDERR)(?:_RAW)?\]\s*(\{.*\})/s);
-
+        const jsonMatch = currentPayload.message.match(/\[(STDOUT|STDERR)(?:_RAW)?\]\s*(\{.*\})/s);
         if (jsonMatch && jsonMatch[2]) {
           try {
             deepestNestedData = JSON.parse(jsonMatch[2]);
             isNested = true;
-          } catch {
-            console.warn('[IMAGE UPLOADER] Failed to parse nested JSON in message field:', jsonMatch[2].substring(0, 200));
-          }
+          } catch { }
         }
       }
     }
@@ -345,81 +299,49 @@ export default function ImageUploader({
   };
 
   // =========================================================================
-  // 🎯 FASTAPI UPLOAD HANDLER
+  // 🎯 FASTAPI UPLOAD HANDLER - Submits the file and job metadata
   // =========================================================================
   const uploadToFastAPI = async () => {
-    if (!isFormValid || !selectedFile) {
-      console.error('[IMAGE UPLOADER] Cannot upload: Form invalid or no file selected');
-      return;
-    }
+    if (!isFormValid || !selectedFile) return;
 
-    // Reset previous results and states
+    // Reset states before starting a new job
     setUploadResult(null);
     setInternalIsUploading(true);
     setInternalUploadProgress(0);
     setCurrentStep('Initializing upload...');
     setWsStatus('disconnected');
 
-    // Close any existing WebSocket connection
+    // Close any prior WebSocket connection
     if (websocketRef.current) {
       intendedCloseRef.current = true;
       websocketRef.current.close(1000, 'New upload starting');
-      websocketRef.current = null;
     }
 
     try {
-      console.log('[IMAGE UPLOADER] Starting file upload to FastAPI...');
-
-      // Create FormData for multipart/form-data request
       const formData = new FormData();
-
-      // 🔑 Append the file ONLY ONCE as File object
       formData.append('file', selectedFile);
 
-      // Device configuration parameters
-      if (parameters.hostname) {
-        formData.append('hostname', parameters.hostname);
-      }
-      if (parameters.inventory_file) {
-        formData.append('inventory_file', parameters.inventory_file);
-      }
+      // Append all necessary device and auth parameters
+      if (parameters.hostname) formData.append('hostname', parameters.hostname);
+      if (parameters.inventory_file) formData.append('inventory_file', parameters.inventory_file);
       formData.append('username', parameters.username);
       formData.append('password', parameters.password);
       formData.append('protocol', 'scp');
+      formData.append('remote_filename', selectedFile.name);
 
-      // Use original filename as remote_filename
-      const remoteFilename = selectedFile.name;
-      formData.append('remote_filename', remoteFilename);
-
-      // Generate required parameters with correct camelCase names
+      // Generate and append required backend job parameters
       const runId = `image_upload_${Date.now()}`;
       const scriptId = `image_upload_${Date.now()}`;
       const wsClientId = `ws_${Date.now()}`;
-
-      // Add required parameters for backend (camelCase)
       formData.append('run_id', runId);
       formData.append('mode', 'cli');
+      formData.append('scriptId', scriptId); // camelCase
+      formData.append('wsClientId', wsClientId); // camelCase
 
-      // 🔑 Use camelCase for required backend parameters
-      formData.append('scriptId', scriptId); // camelCase - required by backend
-      formData.append('wsClientId', wsClientId); // camelCase - required by backend
-
-      console.log('[IMAGE UPLOADER] Sending upload request with backend-compatible parameters:', {
-        file: selectedFile.name,
-        hostname: parameters.hostname,
-        username: parameters.username,
-        remoteFilename: remoteFilename,
-        scriptId, // camelCase
-        wsClientId, // camelCase
-        runId,
-        mode: 'cli'
-      });
-
-      // 🎯 CALL FASTAPI UPLOAD ENDPOINT
+      // Call the FastAPI endpoint
       const response = await fetch('http://localhost:8000/api/files/upload', {
         method: 'POST',
         body: formData,
-        // Note: Don't set Content-Type header - browser will set it with boundary for FormData
       });
 
       if (!response.ok) {
@@ -428,13 +350,9 @@ export default function ImageUploader({
       }
 
       const result = await response.json();
-      console.log('[IMAGE UPLOADER] FastAPI response:', result);
 
-      // Handle successful job queuing
+      // Handle successful job queuing and connect to WebSocket
       if (result.job_id && result.ws_channel) {
-        console.log(`[IMAGE UPLOADER] Upload job queued successfully. Job ID: ${result.job_id}`);
-
-        // Store the initial result for display
         setUploadResult({
           success: true,
           jobId: result.job_id,
@@ -443,7 +361,6 @@ export default function ImageUploader({
           completed: false
         });
 
-        // 🎯 CONNECT TO WEB SOCKET FOR REAL-TIME PROGRESS TRACKING
         setCurrentStep('Connecting to progress tracker...');
         connectToWebSocket(result.ws_channel, result.job_id);
 
@@ -452,16 +369,8 @@ export default function ImageUploader({
       }
 
     } catch (error) {
-      console.error('[IMAGE UPLOADER] Upload failed:', error);
-
-      // Set error result
-      setUploadResult({
-        success: false,
-        error: error.message,
-        completed: true
-      });
-
-      // Reset uploading state on error
+      // Set error state on failure
+      setUploadResult({ success: false, error: error.message, completed: true });
       setInternalIsUploading(false);
       setInternalUploadProgress(0);
       setCurrentStep('');
@@ -469,37 +378,27 @@ export default function ImageUploader({
   };
 
   // =========================================================================
-  // 🎯 UPLOAD HANDLER - DECIDES WHICH UPLOAD METHOD TO USE
+  // 🎯 UPLOAD HANDLER - Executes the upload
   // =========================================================================
   const handleUpload = () => {
-    if (!isFormValid) {
-      console.warn('[IMAGE UPLOADER] Form validation failed, cannot upload');
-      return;
-    }
+    if (!isFormValid) return;
 
     if (onUpload) {
-      // If parent provided onUpload, use it (allows parent to override)
-      console.log('[IMAGE UPLOADER] Calling parent onUpload handler');
-      onUpload();
+      onUpload(); // Use parent's handler if provided
     } else {
-      // Use the built-in FastAPI upload handler
-      console.log('[IMAGE UPLOADER] Using built-in FastAPI upload handler');
-      uploadToFastAPI();
+      uploadToFastAPI(); // Use built-in handler
     }
   };
 
   // =========================================================================
-  // 🧹 RESET HANDLER
+  // 🧹 RESET HANDLER - Clears all states
   // =========================================================================
   const handleReset = () => {
-    // Close WebSocket connection
     if (websocketRef.current) {
       intendedCloseRef.current = true;
       websocketRef.current.close(1000, 'User reset');
-      websocketRef.current = null;
     }
 
-    // Reset all states
     setSelectedFile(null);
     setUploadResult(null);
     setInternalUploadProgress(0);
@@ -511,7 +410,7 @@ export default function ImageUploader({
   };
 
   // =========================================================================
-  // 🧩 VALIDATION
+  // 🧩 VALIDATION - Checks if all required fields are filled
   // =========================================================================
   const isFormValid =
     selectedFile &&
@@ -543,9 +442,7 @@ export default function ImageUploader({
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* ------------------------------------------------------------------ */}
-        {/* FILE SELECTION CARD - Using Shared Component (HAS ITS OWN PROGRESS BAR) */}
-        {/* ------------------------------------------------------------------ */}
+        {/* FILE SELECTION CARD */}
         <FileSelection
           selectedFile={selectedFile}
           setSelectedFile={setSelectedFile}
@@ -557,9 +454,7 @@ export default function ImageUploader({
           acceptText="Supports common file formats (TXT, BIN, IMG, CONF, etc.)"
         />
 
-        {/* ------------------------------------------------------------------ */}
         {/* DEVICE CONFIGURATION CARD */}
-        {/* ------------------------------------------------------------------ */}
         <Card>
           <CardHeader>
             <CardTitle>Device Configuration</CardTitle>
@@ -581,9 +476,7 @@ export default function ImageUploader({
         </Card>
       </div>
 
-      {/* ------------------------------------------------------------------ */}
-      {/* REAL-TIME STATUS DISPLAY - CLEAN VERSION WITHOUT DUPLICATE PROGRESS BARS */}
-      {/* ------------------------------------------------------------------ */}
+      {/* REAL-TIME STATUS DISPLAY (Only visible when uploading) */}
       {isUploading && (
         <Card>
           <CardHeader>
@@ -620,8 +513,8 @@ export default function ImageUploader({
                 )}
               </div>
 
-              {/* Only show file transfer progress if we have actual progress from hardware */}
-              {uploadProgress > 0 && (
+              {/* File transfer progress bar */}
+              {uploadProgress >= 0 && (
                 <div className="p-3 rounded-lg bg-blue-50 border border-blue-200">
                   <div className="flex justify-between text-sm mb-2">
                     <span className="font-medium text-blue-800">File Transfer</span>
@@ -640,9 +533,7 @@ export default function ImageUploader({
         </Card>
       )}
 
-      {/* ------------------------------------------------------------------ */}
-      {/* UPLOAD RESULT DISPLAY */}
-      {/* ------------------------------------------------------------------ */}
+      {/* UPLOAD RESULT DISPLAY (Only visible after job finishes) */}
       {uploadResult && !isUploading && (
         <Card className={
           uploadResult.success
@@ -696,9 +587,7 @@ export default function ImageUploader({
         </Card>
       )}
 
-      {/* ------------------------------------------------------------------ */}
       {/* UPLOAD ACTION CARD */}
-      {/* ------------------------------------------------------------------ */}
       <Card>
         <CardContent className="pt-6">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
