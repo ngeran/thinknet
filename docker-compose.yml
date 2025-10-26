@@ -1,3 +1,9 @@
+# ----------------------------------------------------
+# VOLUME DEFINITIONS
+# ----------------------------------------------------
+volumes:
+  temp_upload_storage:  ## --> ADDED: Dedicated volume for temporary file uploads
+
 services:
   # ----------------------------------------------------
   # 0. REDIS MESSAGE BROKER
@@ -58,6 +64,7 @@ services:
       - ./app_gateway:/app/app_gateway
       - ./shared:/app/shared
       - ./frontend/py_scripts:/app/app_gateway/py_scripts
+      - temp_upload_storage:/tmp/uploads  ## --> ADDED: Gateway writes here
     networks:
       - internal_net
       - crpd-net
@@ -90,6 +97,7 @@ services:
       - ./shared:/app/shared
       - ./frontend/py_scripts:/app/app_gateway/py_scripts
       - ./shared/data:/backups
+      - temp_upload_storage:/tmp/uploads  ## --> ADDED: Worker reads from here
     networks:
       # Only needs the internal network to talk to Redis and devices (via crpd-net)
       - internal_net
