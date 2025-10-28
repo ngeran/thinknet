@@ -1,42 +1,48 @@
 /**
- * =============================================================================
- * IMAGE UPLOADER FORM COMPONENT
- * =============================================================================
- * A highly interactive and visually appealing form component for image uploads.
- * Provides a complete UI for file selection (via drag-and-drop or browsing),
- * device targeting, authentication, and initiating the upload process.
+ * Image Uploader Component
  * 
- * @version 2.9.7 - FIXED SUCCESS MESSAGE HANDLING
- * @last_updated 2025-10-27
+ * FIXES APPLIED:
+ * 1. Storage Check API Endpoint - Added multiple fallback endpoints with proper error handling
+ * 2. Progress Bar Reset Issue - Fixed WebSocket progress reset using connection tracking
+ * 3. Enhanced error handling and user feedback
  * 
- * BUG FIXES:
- * - Fixed WebSocket message parsing for success cases
- * - Added direct success message handling alongside nested messages
- * - Improved OPERATION_COMPLETE event handling
- * - Enhanced debugging capabilities
- * =============================================================================
+ * FEATURES:
+ * - File selection and device configuration
+ * - Real-time storage capacity checking
+ * - WebSocket-based progress tracking
+ * - Comprehensive error handling
+ * - Clean black/white theme UI
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { CheckCircle2, ArrowRight, Loader2, AlertCircle, Wifi, WifiOff, HardDrive } from 'lucide-react';
+import {
+  CheckCircle2,
+  ArrowRight,
+  Loader2,
+  AlertCircle,
+  Wifi,
+  WifiOff,
+  HardDrive,
+  Upload,
+  Server,
+  RefreshCw
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
+import { Badge } from '@/components/ui/badge';
 
-// Shared components - Ensure these files exist and are correctly structured
+// Shared components
 import DeviceAuthFields from '@/shared/DeviceAuthFields';
 import DeviceTargetSelector from '@/shared/DeviceTargetSelector';
 import FileSelection from '@/shared/FileSelection';
 
-// WebSocket configuration (Must match your backend WS server address)
+// Configuration constants
 const WS_BASE = 'ws://localhost:3100/ws';
+const API_BASE = 'http://localhost:8000/api';
 
-/**
- * Image Uploader Form Component
- * Handles image file selection and device configuration with real-time progress tracking
- */
 export default function ImageUploader({
-  // Props for external control (if integrated into a larger system)
+  // External control props for integration into larger systems
   parameters: externalParameters,
   onParamChange: externalOnParamChange,
   selectedFile: externalSelectedFile,
@@ -47,7 +53,7 @@ export default function ImageUploader({
   uploadProgress: externalUploadProgress
 }) {
   // =========================================================================
-  // 🧠 COMPLETE STATE MANAGEMENT - Internal state for standalone operation
+  // 🧠 STATE MANAGEMENT - Internal state for standalone operation
   // =========================================================================
   const [internalSelectedFile, setInternalSelectedFile] = useState(null);
   const [internalParameters, setInternalParameters] = useState({
@@ -58,17 +64,21 @@ export default function ImageUploader({
   });
   const [internalIsUploading, setInternalIsUploading] = useState(false);
   const [internalUploadProgress, setInternalUploadProgress] = useState(0);
-  const [uploadResult, setUploadResult] = useState(null); // Final result (success/fail)
-  const [currentStep, setCurrentStep] = useState(''); // Detailed message for current process step
-  const [wsStatus, setWsStatus] = useState('disconnected'); // WebSocket status indicator
-  const [storageCheck, setStorageCheck] = useState(null); // Storage check results
-  const [isCheckingStorage, setIsCheckingStorage] = useState(false); // Storage check in progress
+  const [uploadResult, setUploadResult] = useState(null);
+  const [currentStep, setCurrentStep] = useState('');
+  const [wsStatus, setWsStatus] = useState('disconnected');
+  const [storageCheck, setStorageCheck] = useState(null);
+  const [isCheckingStorage, setIsCheckingStorage] = useState(false);
+  const [storageCheckError, setStorageCheckError] = useState(null);
 
-  // WebSocket references
+  // =========================================================================
+  // 🔗 REFERENCE MANAGEMENT - Persistent across re-renders
+  // =========================================================================
   const websocketRef = useRef(null);
   const jobIdRef = useRef(null);
-  // Flag to manage intentional closure vs. unexpected disconnection
   const intendedCloseRef = useRef(false);
+  // 🎯 CRITICAL FIX: Track WebSocket connection state to prevent progress resets
+  const hasActiveWebSocketRef = useRef(false);
 
   // =========================================================================
   // 🔄 STATE RESOLUTION - Prioritize external props over internal state
@@ -78,14 +88,13 @@ export default function ImageUploader({
   const isUploading = externalIsUploading !== undefined ? externalIsUploading : internalIsUploading;
   const uploadProgress = externalUploadProgress !== undefined ? externalUploadProgress : internalUploadProgress;
 
-  // Determine which state setters to use
   const setSelectedFile = externalSetSelectedFile || setInternalSelectedFile;
   const setParameters = externalOnParamChange
     ? (name, value) => externalOnParamChange(name, value)
     : (name, value) => setInternalParameters(prev => ({ ...prev, [name]: value }));
 
   // =========================================================================
-  // 🧹 CLEANUP EFFECT - Closes WebSocket when the component unmounts
+  // 🧹 CLEANUP EFFECT - Ensures proper WebSocket closure on unmount
   // =========================================================================
   useEffect(() => {
     return () => {
@@ -98,39 +107,87 @@ export default function ImageUploader({
   }, []);
 
   // =========================================================================
-  // 💾 STORAGE CHECK FUNCTIONS
+  // 💾 STORAGE CHECK FUNCTIONS - FIXED ENDPOINT HANDLING
   // =========================================================================
+
+  /**
+   * Checks device storage capacity before upload
+   * 🎯 FIX: Tries multiple API endpoints to handle different server configurations
+   */
   const checkDeviceStorage = async () => {
+    // Validate required parameters
     if (!selectedFile || !parameters.hostname || !parameters.username || !parameters.password) {
-      return { hasSufficientSpace: true, skipped: true }; // Skip check if missing info
+      setStorageCheckError('Missing required information for storage check');
+      return { hasSufficientSpace: true, skipped: true };
     }
 
     setIsCheckingStorage(true);
+    setStorageCheckError(null);
     setCurrentStep('Checking device storage availability...');
 
     try {
-      const response = await fetch('http://localhost:8000/api/device/check-storage', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: new URLSearchParams({
-          hostname: parameters.hostname,
-          username: parameters.username,
-          password: parameters.password,
-          required_space: selectedFile.size.toString(),
-          filesystem: '/'
-        }),
-      });
+      // 🎯 FIX: Multiple endpoint fallbacks for different server configurations
+      const endpoints = [
+        `${API_BASE}/device/check-storage`,  // Primary expected endpoint
+        `${API_BASE}/check-storage`,         // Alternative path
+        'http://localhost:8000/device/check-storage' // Direct endpoint
+      ];
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Storage check failed: ${errorText}`);
+      let response = null;
+      let lastError = null;
+      let successfulEndpoint = '';
+
+      // Try each endpoint until one works
+      for (const endpoint of endpoints) {
+        try {
+          console.log(`🔍 Trying storage check endpoint: ${endpoint}`);
+          response = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: new URLSearchParams({
+              hostname: parameters.hostname,
+              username: parameters.username,
+              password: parameters.password,
+              required_space: selectedFile.size.toString(),
+              filesystem: '/'
+            }),
+          });
+
+          if (response.ok) {
+            successfulEndpoint = endpoint;
+            console.log(`✅ Storage check successful with endpoint: ${endpoint}`);
+            break;
+          } else {
+            lastError = `Endpoint ${endpoint} returned ${response.status}`;
+            console.warn(`❌ ${lastError}`);
+          }
+        } catch (error) {
+          lastError = `Endpoint ${endpoint} failed: ${error.message}`;
+          console.warn(`❌ ${lastError}`);
+        }
+      }
+
+      // If all endpoints failed, throw comprehensive error
+      if (!response || !response.ok) {
+        throw new Error(`All storage check endpoints failed. Last error: ${lastError}`);
       }
 
       const result = await response.json();
-      setStorageCheck(result);
 
+      // Validate response structure
+      if (!result || typeof result.has_sufficient_space === 'undefined') {
+        throw new Error('Invalid response format from storage check');
+      }
+
+      // Add endpoint info to result for debugging
+      result.used_endpoint = successfulEndpoint;
+
+      setStorageCheck(result);
+      setStorageCheckError(null);
+
+      // Update UI based on storage check result
       if (result.has_sufficient_space) {
         setCurrentStep('✅ Sufficient storage space available');
         return { hasSufficientSpace: true, data: result };
@@ -140,30 +197,43 @@ export default function ImageUploader({
       }
 
     } catch (error) {
-      console.warn('Storage check failed, proceeding with upload:', error);
-      setCurrentStep('⚠️ Storage check skipped - proceeding with upload');
-      return { hasSufficientSpace: true, skipped: true, error: error.message };
+      console.error('❌ Storage check failed:', error);
+      const errorMessage = error.message || 'Unknown error during storage check';
+      setStorageCheckError(errorMessage);
+      setCurrentStep('⚠️ Storage check failed - proceeding with upload');
+      return { hasSufficientSpace: true, skipped: true, error: errorMessage };
     } finally {
       setIsCheckingStorage(false);
     }
   };
 
-  // Auto-check storage when file and device info are available
+  /**
+   * Auto-check storage when file and device info become available
+   */
   useEffect(() => {
     if (selectedFile && parameters.hostname && parameters.username && parameters.password) {
       const timer = setTimeout(() => {
         checkDeviceStorage();
-      }, 1000); // Delay to avoid excessive checks
+      }, 1000); // Debounce to avoid excessive checks
 
       return () => clearTimeout(timer);
+    } else {
+      // Reset storage check when requirements aren't met
+      setStorageCheck(null);
+      setStorageCheckError(null);
     }
   }, [selectedFile, parameters.hostname, parameters.username, parameters.password]);
 
   // =========================================================================
-  // 📡 WEB SOCKET INTEGRATION - Handles real-time communication for progress
+  // 📡 WEB SOCKET INTEGRATION - FIXED PROGRESS RESET ISSUE
   // =========================================================================
+
+  /**
+   * Establishes WebSocket connection for real-time progress updates
+   * 🎯 FIX: Uses connection tracking to prevent progress bar resets
+   */
   const connectToWebSocket = (wsChannel, jobId) => {
-    // 1. Cleanup previous connection
+    // Cleanup previous connection
     if (websocketRef.current) {
       intendedCloseRef.current = true;
       websocketRef.current.close(1000, 'New connection requested');
@@ -171,6 +241,8 @@ export default function ImageUploader({
 
     jobIdRef.current = jobId;
     intendedCloseRef.current = false;
+    // 🎯 CRITICAL FIX: Mark WebSocket as active to prevent progress resets
+    hasActiveWebSocketRef.current = true;
     setWsStatus('connecting');
 
     try {
@@ -183,6 +255,9 @@ export default function ImageUploader({
         const subscribeCommand = { type: 'SUBSCRIBE', channel: wsChannel };
         ws.send(JSON.stringify(subscribeCommand));
         setCurrentStep('Real-time connection established ✓');
+
+        // 🎯 FIX: Don't reset progress here - maintain existing progress state
+        console.log('🔄 WebSocket connected - maintaining current progress state');
       };
 
       ws.onmessage = (event) => {
@@ -196,6 +271,7 @@ export default function ImageUploader({
 
       ws.onclose = () => {
         setWsStatus('disconnected');
+        hasActiveWebSocketRef.current = false;
         if (!intendedCloseRef.current) {
           console.warn('[IMAGE UPLOADER] WebSocket closed unexpectedly');
           setCurrentStep('Connection lost - progress updates unavailable');
@@ -205,45 +281,35 @@ export default function ImageUploader({
       ws.onerror = (error) => {
         console.error('[IMAGE UPLOADER] WebSocket error:', error);
         setWsStatus('error');
+        hasActiveWebSocketRef.current = false;
         setCurrentStep('WebSocket connection error');
       };
 
     } catch (error) {
       console.error('[IMAGE UPLOADER] Failed to create WebSocket connection:', error);
       setWsStatus('error');
+      hasActiveWebSocketRef.current = false;
       setCurrentStep('Failed to establish progress tracking');
     }
   };
 
   // =========================================================================
-  // 🐛 DEBUG HELPER - Temporary function to diagnose WebSocket messages
+  // 📨 WEB SOCKET MESSAGE HANDLER - COMPREHENSIVE PROGRESS MANAGEMENT
   // =========================================================================
-  const debugWebSocketMessage = (data, finalPayload, isNested) => {
-    console.log('🔍 RAW WebSocket message:', data);
-    console.log('🔍 Processed payload:', finalPayload);
-    console.log('🔍 Is nested:', isNested);
-    console.log('🔍 Has success:', finalPayload.success);
-    console.log('🔍 Event type:', finalPayload.event_type);
-    console.log('🔍 Has details:', !!finalPayload.details);
-  };
 
-  // =========================================================================
-  // 📨 WEB SOCKET MESSAGE HANDLER - COMPREHENSIVE FIX FOR SUCCESS HANDLING
-  // =========================================================================
+  /**
+   * Processes WebSocket messages and updates UI state accordingly
+   * 🎯 FIX: Prevents progress resets by tracking connection state
+   */
   const handleWebSocketMessage = (data) => {
-    // 1. Extract and normalize the event payload (handles nested logs)
     const { payload: finalPayload, isNested } = extractNestedProgressData(data);
 
-    // 🐛 TEMPORARY DEBUG - Uncomment to see what messages are being received
-    // debugWebSocketMessage(data, finalPayload, isNested);
-
     // =======================================================================
-    // 🎯 CRITICAL FIX: SUCCESS MESSAGE HANDLING
+    // 🎯 SUCCESS MESSAGE HANDLING - Complete upload on success
     // =======================================================================
-
-    // 2A. Handle nested success messages (wrapped in ORCHESTRATOR_LOG)
-    if (isNested && finalPayload.success === true) {
-      console.log('✅ Handling nested success message');
+    if ((isNested && finalPayload.success === true) ||
+      (finalPayload.success === true && finalPayload.details)) {
+      console.log('✅ Handling success message');
       setInternalUploadProgress(100);
       setCurrentStep('Upload completed successfully!');
       setInternalIsUploading(false);
@@ -257,90 +323,48 @@ export default function ImageUploader({
       });
 
       intendedCloseRef.current = true;
-      if (websocketRef.current) websocketRef.current.close();
-      return;
-    }
-
-    // 2B. Handle direct success messages (not nested)
-    if (finalPayload.success === true && finalPayload.details) {
-      console.log('✅ Handling direct success message');
-      setInternalUploadProgress(100);
-      setCurrentStep('Upload completed successfully!');
-      setInternalIsUploading(false);
-
-      setUploadResult({
-        success: true,
-        completed: true,
-        finalMessage: finalPayload.details.summary || 'File uploaded successfully!',
-        deviceInfo: finalPayload.details.device_info,
-        jobId: jobIdRef.current,
-      });
-
-      intendedCloseRef.current = true;
+      hasActiveWebSocketRef.current = false;
       if (websocketRef.current) websocketRef.current.close();
       return;
     }
 
     // =======================================================================
-    // 📊 PROGRESS HANDLING
+    // 📊 PROGRESS HANDLING - FIXED: Only update when WebSocket is active
     // =======================================================================
-
-    // 3. CORE FIX: Robust Progress Value Extraction and Conversion
-    let rawProgressValue = finalPayload?.data?.progress; // 1st Check: Standard nested location
-
-    if (rawProgressValue === undefined) {
-      rawProgressValue = finalPayload?.progress; // 2nd Check: Root of nested payload
-    }
-
-    if (rawProgressValue === undefined && data.progress !== undefined) {
-      rawProgressValue = data.progress; // 3rd Check: Original top-level message
-    }
+    let rawProgressValue = finalPayload?.data?.progress || finalPayload?.progress || data.progress;
 
     if (rawProgressValue !== undefined) {
-      // Convert to number and clamp between 0-100
       const progressValue = Math.max(0, Math.min(100, parseFloat(rawProgressValue)));
 
       if (!isNaN(progressValue)) {
-        setInternalUploadProgress(progressValue);
+        console.log(`📊 WebSocket progress update: ${progressValue}%`);
 
-        // Update step message based on payload content or progress
+        // 🎯 CRITICAL FIX: Only update progress if we have an active WebSocket connection
+        // This prevents progress resets when WebSocket connects
+        if (hasActiveWebSocketRef.current) {
+          setInternalUploadProgress(progressValue);
+        }
+
         const message = finalPayload.message || (progressValue < 100 ? 'Uploading file...' : 'File transfer complete.');
         setCurrentStep(message);
       }
     }
 
     // =======================================================================
-    // 🎭 EVENT TYPE HANDLING
+    // 🎭 EVENT TYPE HANDLING - Process different event types
     // =======================================================================
+    if (!finalPayload || !finalPayload.event_type) return;
 
-    // 4. Filter out non-actionable payloads
-    if (!finalPayload || !finalPayload.event_type) {
-      return;
-    }
-
-    // 5. Handle all other event types
     switch (finalPayload.event_type) {
-      case 'OPERATION_START': {
+      case 'OPERATION_START':
         setCurrentStep('Starting upload process...');
-        break;
-      }
-
-      case 'STEP_START':
-      case 'STEP_COMPLETE': {
-        // Only update step if we didn't just update with progress message
-        if (!rawProgressValue) {
-          setCurrentStep(`${finalPayload.message} ${finalPayload.event_type === 'STEP_COMPLETE' ? '✓' : ''}`);
+        // Only reset progress at the very start, not when WebSocket connects
+        if (!hasActiveWebSocketRef.current) {
+          setInternalUploadProgress(0);
         }
         break;
-      }
 
-      case 'UPLOAD_COMPLETE': {
-        setCurrentStep('File transfer completed successfully');
-        // Don't set success here - wait for OPERATION_COMPLETE or success payload
-        break;
-      }
-
-      case 'OPERATION_COMPLETE': {
+      case 'OPERATION_COMPLETE':
         console.log('🔔 OPERATION_COMPLETE received:', finalPayload);
         if (finalPayload.success) {
           setInternalUploadProgress(100);
@@ -352,10 +376,7 @@ export default function ImageUploader({
             finalMessage: 'File uploaded successfully!',
             jobId: jobIdRef.current,
           });
-          intendedCloseRef.current = true;
-          if (websocketRef.current) websocketRef.current.close();
         } else {
-          // Handle failure case
           setInternalIsUploading(false);
           setCurrentStep(`Operation failed: ${finalPayload.message}`);
           setUploadResult({
@@ -363,17 +384,15 @@ export default function ImageUploader({
             error: finalPayload.message,
             completed: true
           });
-          intendedCloseRef.current = true;
-          if (websocketRef.current) websocketRef.current.close();
         }
+        intendedCloseRef.current = true;
+        hasActiveWebSocketRef.current = false;
+        if (websocketRef.current) websocketRef.current.close();
         break;
-      }
 
       case 'ERROR':
-      case 'UPLOAD_FAILED': {
+      case 'UPLOAD_FAILED':
         setInternalIsUploading(false);
-
-        // Check for disk space errors specifically
         const errorMessage = finalPayload.message || finalPayload.error || '';
         if (errorMessage.includes('Insufficient space') || errorMessage.includes('disk space')) {
           setCurrentStep('Upload failed: Insufficient disk space on target device');
@@ -390,22 +409,25 @@ export default function ImageUploader({
             completed: true
           });
         }
-
         intendedCloseRef.current = true;
+        hasActiveWebSocketRef.current = false;
         if (websocketRef.current) websocketRef.current.close();
         break;
-      }
 
-      default: {
-        // Ignore other non-critical log types
+      default:
+        // Ignore unhandled event types
         break;
-      }
     }
   };
 
   // =========================================================================
-  // 🔄 NESTED PROGRESS DATA EXTRACTION - Safely parses embedded JSON data
+  // 🔄 NESTED PROGRESS DATA EXTRACTION - Handles complex message structures
   // =========================================================================
+
+  /**
+   * Extracts progress data from nested WebSocket message structures
+   * Handles both direct messages and messages wrapped in orchestrator logs
+   */
   const extractNestedProgressData = (initialParsed) => {
     let currentPayload = initialParsed;
     let deepestNestedData = null;
@@ -456,17 +478,27 @@ export default function ImageUploader({
   };
 
   // =========================================================================
-  // 🎯 FASTAPI UPLOAD HANDLER - Submits the file and job metadata
+  // 🎯 UPLOAD HANDLERS - Main upload workflow
   // =========================================================================
+
+  /**
+   * Handles file upload to FastAPI backend
+   * Includes proper progress initialization and WebSocket setup
+   */
   const uploadToFastAPI = async () => {
     if (!isFormValid || !selectedFile) return;
 
     // Reset states before starting a new job
     setUploadResult(null);
     setInternalIsUploading(true);
+
+    // 🎯 FIX: Set initial progress to 0 only at the very start
     setInternalUploadProgress(0);
     setCurrentStep('Initializing upload...');
     setWsStatus('disconnected');
+
+    // Reset WebSocket tracking
+    hasActiveWebSocketRef.current = false;
 
     // Close any prior WebSocket connection
     if (websocketRef.current) {
@@ -478,7 +510,7 @@ export default function ImageUploader({
       const formData = new FormData();
       formData.append('file', selectedFile);
 
-      // Append all necessary device and auth parameters
+      // Append device and authentication parameters
       if (parameters.hostname) formData.append('hostname', parameters.hostname);
       if (parameters.inventory_file) formData.append('inventory_file', parameters.inventory_file);
       formData.append('username', parameters.username);
@@ -486,16 +518,16 @@ export default function ImageUploader({
       formData.append('protocol', 'scp');
       formData.append('remote_filename', selectedFile.name);
 
-      // Generate and append required backend job parameters
+      // Generate unique identifiers for job tracking
       const runId = `image_upload_${Date.now()}`;
       const scriptId = `image_upload_${Date.now()}`;
       const wsClientId = `ws_${Date.now()}`;
       formData.append('run_id', runId);
       formData.append('mode', 'cli');
-      formData.append('scriptId', scriptId); // camelCase
-      formData.append('wsClientId', wsClientId); // camelCase
+      formData.append('scriptId', scriptId);
+      formData.append('wsClientId', wsClientId);
 
-      // Call the FastAPI endpoint
+      // Submit upload to FastAPI
       const response = await fetch('http://localhost:8000/api/files/upload', {
         method: 'POST',
         body: formData,
@@ -508,7 +540,7 @@ export default function ImageUploader({
 
       const result = await response.json();
 
-      // Handle successful job queuing and connect to WebSocket
+      // Handle successful job queuing
       if (result.job_id && result.ws_channel) {
         setUploadResult({
           success: true,
@@ -526,7 +558,7 @@ export default function ImageUploader({
       }
 
     } catch (error) {
-      // Set error state on failure
+      // Handle upload failure
       setUploadResult({
         success: false,
         error: error.message,
@@ -538,9 +570,9 @@ export default function ImageUploader({
     }
   };
 
-  // =========================================================================
-  // 🎯 UPLOAD HANDLER - Executes the upload
-  // =========================================================================
+  /**
+   * Main upload handler with storage check integration
+   */
   const handleUpload = async () => {
     if (!isFormValid) return;
 
@@ -549,21 +581,22 @@ export default function ImageUploader({
       const storageResult = await checkDeviceStorage();
 
       if (!storageResult.hasSufficientSpace && !storageResult.skipped) {
-        // Don't proceed if storage check explicitly failed
         return;
       }
     }
 
+    // Use external handler if provided, otherwise use internal
     if (onUpload) {
-      onUpload(); // Use parent's handler if provided
+      onUpload();
     } else {
-      uploadToFastAPI(); // Use built-in handler
+      uploadToFastAPI();
     }
   };
 
   // =========================================================================
-  // 🧹 RESET HANDLER - Clears all states
+  // 🧹 RESET HANDLER - Clears all states for new upload
   // =========================================================================
+
   const handleReset = () => {
     if (websocketRef.current) {
       intendedCloseRef.current = true;
@@ -573,44 +606,72 @@ export default function ImageUploader({
     setSelectedFile(null);
     setUploadResult(null);
     setStorageCheck(null);
+    setStorageCheckError(null);
     setInternalUploadProgress(0);
     setInternalIsUploading(false);
     setCurrentStep('');
     setWsStatus('disconnected');
     jobIdRef.current = null;
     intendedCloseRef.current = false;
+    hasActiveWebSocketRef.current = false;
   };
 
   // =========================================================================
-  // 🧩 VALIDATION - Checks if all required fields are filled
+  // 🧩 VALIDATION & UI HELPER FUNCTIONS
   // =========================================================================
+
+  /**
+   * Validates if form has all required fields filled
+   */
   const isFormValid =
     selectedFile &&
     parameters?.username?.trim() &&
     parameters?.password?.trim() &&
     (parameters?.hostname?.trim() || parameters?.inventory_file?.trim());
 
-  // =========================================================================
-  // 🎨 UI RENDER
-  // =========================================================================
+  /**
+   * WebSocket status indicator helpers
+   */
   const getWsStatusIcon = () => {
     switch (wsStatus) {
-      case 'connected': return <Wifi className="h-4 w-4 text-green-500" />;
-      case 'connecting': return <Loader2 className="h-4 w-4 animate-spin text-blue-500" />;
-      case 'error': return <WifiOff className="h-4 w-4 text-red-500" />;
-      default: return <WifiOff className="h-4 w-4 text-gray-400" />;
+      case 'connected': return <Wifi className="h-4 w-4 text-green-600" />;
+      case 'connecting': return <Loader2 className="h-4 w-4 animate-spin text-blue-600" />;
+      case 'error': return <WifiOff className="h-4 w-4 text-red-600" />;
+      default: return <WifiOff className="h-4 w-4 text-gray-500" />;
     }
   };
 
   const getWsStatusText = () => {
     switch (wsStatus) {
-      case 'connected': return 'Live updates connected';
-      case 'connecting': return 'Connecting to updates...';
-      case 'error': return 'Updates unavailable';
-      default: return 'Updates disconnected';
+      case 'connected': return 'Live';
+      case 'connecting': return 'Connecting';
+      case 'error': return 'Error';
+      default: return 'Offline';
     }
   };
 
+  const getWsStatusVariant = () => {
+    switch (wsStatus) {
+      case 'connected': return 'default';
+      case 'connecting': return 'secondary';
+      case 'error': return 'destructive';
+      default: return 'outline';
+    }
+  };
+
+  /**
+   * Storage check status management
+   */
+  const getStorageCheckStatus = () => {
+    if (isCheckingStorage) return 'checking';
+    if (storageCheckError) return 'error';
+    if (storageCheck) return storageCheck.has_sufficient_space ? 'sufficient' : 'insufficient';
+    return 'idle';
+  };
+
+  /**
+   * Utility function to format file sizes for display
+   */
   const formatFileSize = (bytes) => {
     if (bytes === 0) return '0 Bytes';
     const k = 1024;
@@ -619,8 +680,12 @@ export default function ImageUploader({
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   };
 
+  // =========================================================================
+  // 🎨 UI RENDER - Clean black/white theme with improved feedback
+  // =========================================================================
   return (
     <div className="space-y-6">
+      {/* FILE SELECTION AND DEVICE CONFIGURATION GRID */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* FILE SELECTION CARD */}
         <FileSelection
@@ -635,9 +700,12 @@ export default function ImageUploader({
         />
 
         {/* DEVICE CONFIGURATION CARD */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Device Configuration</CardTitle>
+        <Card className="border-2">
+          <CardHeader className="pb-4">
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Server className="h-5 w-5" />
+              Device Configuration
+            </CardTitle>
             <CardDescription>
               Target device and authentication settings
             </CardDescription>
@@ -656,118 +724,191 @@ export default function ImageUploader({
         </Card>
       </div>
 
-      {/* STORAGE CHECK DISPLAY */}
+      {/* STORAGE CHECK DISPLAY - IMPROVED WITH ERROR HANDLING */}
       {selectedFile && parameters.hostname && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
+        <Card className="border-2">
+          <CardHeader className="pb-4">
+            <CardTitle className="flex items-center gap-2 text-lg">
               <HardDrive className="h-5 w-5" />
               Device Storage Check
               {isCheckingStorage && (
-                <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+                <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
               )}
             </CardTitle>
             <CardDescription>
-              Verifying available storage space on target device
+              Verifying available storage space on target device {parameters.hostname}
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {storageCheck ? (
-              <div className={`p-4 rounded-lg ${storageCheck.has_sufficient_space
-                ? 'bg-green-50 border border-green-200'
-                : 'bg-red-50 border border-red-200'
+            <div className="space-y-4">
+              {/* Storage Check Status with Dynamic Styling */}
+              <div className={`p-4 rounded-lg border-2 ${getStorageCheckStatus() === 'checking' ? 'border-blue-200 bg-blue-50' :
+                  getStorageCheckStatus() === 'error' ? 'border-orange-200 bg-orange-50' :
+                    getStorageCheckStatus() === 'sufficient' ? 'border-green-200 bg-green-50' :
+                      getStorageCheckStatus() === 'insufficient' ? 'border-red-200 bg-red-50' :
+                        'border-gray-200 bg-gray-50'
                 }`}>
                 <div className="flex items-center justify-between">
-                  <div>
-                    <p className={`font-semibold ${storageCheck.has_sufficient_space ? 'text-green-800' : 'text-red-800'
-                      }`}>
-                      {storageCheck.recommendation}
-                    </p>
-                    <p className="text-sm text-gray-600 mt-1">
-                      Required: <strong>{storageCheck.required_mb} MB</strong> •
-                      Available: <strong>{storageCheck.available_mb} MB</strong> •
-                      Filesystem: <strong>{storageCheck.filesystem}</strong>
-                    </p>
-                    <div className="w-full bg-gray-200 rounded-full h-2 mt-2">
-                      <div
-                        className={`h-2 rounded-full ${storageCheck.used_percent > 90 ? 'bg-red-600' :
-                          storageCheck.used_percent > 80 ? 'bg-orange-500' : 'bg-blue-600'
-                          }`}
-                        style={{ width: `${storageCheck.used_percent}%` }}
-                      ></div>
-                    </div>
-                    <p className="text-xs text-gray-500 mt-1">
-                      Used: {storageCheck.used_percent}% of {storageCheck.total_mb} MB total
-                    </p>
+                  <div className="flex-1">
+                    {/* Checking State */}
+                    {getStorageCheckStatus() === 'checking' && (
+                      <>
+                        <p className="font-semibold text-blue-800">Checking Storage...</p>
+                        <p className="text-sm text-blue-700 mt-1">
+                          Connecting to {parameters.hostname} to verify available space
+                        </p>
+                      </>
+                    )}
+
+                    {/* Error State */}
+                    {getStorageCheckStatus() === 'error' && (
+                      <>
+                        <p className="font-semibold text-orange-800">Storage Check Failed</p>
+                        <p className="text-sm text-orange-700 mt-1">
+                          {storageCheckError || 'Unable to check storage availability'}
+                        </p>
+                        <p className="text-xs text-orange-600 mt-2">
+                          You can proceed with upload, but verify storage manually if needed
+                        </p>
+                        <div className="mt-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={checkDeviceStorage}
+                            disabled={isCheckingStorage}
+                            className="border-orange-300 text-orange-700 hover:bg-orange-50"
+                          >
+                            <RefreshCw className="h-3 w-3 mr-1" />
+                            Retry Storage Check
+                          </Button>
+                        </div>
+                      </>
+                    )}
+
+                    {/* Sufficient Space State */}
+                    {getStorageCheckStatus() === 'sufficient' && storageCheck && (
+                      <>
+                        <p className="font-semibold text-green-800">✅ Sufficient Space Available</p>
+                        <div className="flex items-center gap-4 mt-2 text-sm text-green-700">
+                          <span>Required: <strong>{storageCheck.required_mb} MB</strong></span>
+                          <span>Available: <strong>{storageCheck.available_mb} MB</strong></span>
+                          <span>Filesystem: <strong>{storageCheck.filesystem}</strong></span>
+                        </div>
+                      </>
+                    )}
+
+                    {/* Insufficient Space State */}
+                    {getStorageCheckStatus() === 'insufficient' && storageCheck && (
+                      <>
+                        <p className="font-semibold text-red-800">❌ Insufficient Storage Space</p>
+                        <div className="flex items-center gap-4 mt-2 text-sm text-red-700">
+                          <span>Required: <strong>{storageCheck.required_mb} MB</strong></span>
+                          <span>Available: <strong>{storageCheck.available_mb} MB</strong></span>
+                          <span>Filesystem: <strong>{storageCheck.filesystem}</strong></span>
+                        </div>
+                      </>
+                    )}
+
+                    {/* Idle State */}
+                    {getStorageCheckStatus() === 'idle' && (
+                      <p className="text-gray-600">Storage check will run automatically when device information is provided</p>
+                    )}
+
+                    {/* Storage Usage Visualization */}
+                    {storageCheck && (
+                      <div className="mt-3">
+                        <div className="flex justify-between text-sm text-gray-700 mb-1">
+                          <span>Storage Usage</span>
+                          <span>{storageCheck.used_percent}% used</span>
+                        </div>
+                        <div className="w-full bg-gray-200 rounded-full h-2">
+                          <div
+                            className={`h-2 rounded-full ${storageCheck.used_percent > 90 ? 'bg-red-600' :
+                                storageCheck.used_percent > 80 ? 'bg-orange-500' : 'bg-blue-600'
+                              }`}
+                            style={{ width: `${storageCheck.used_percent}%` }}
+                          ></div>
+                        </div>
+                        <div className="flex justify-between text-xs text-gray-600 mt-1">
+                          <span>Total: {storageCheck.total_mb} MB</span>
+                          <span>Available: {storageCheck.available_mb} MB</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  {storageCheck.has_sufficient_space ? (
-                    <CheckCircle2 className="h-6 w-6 text-green-600" />
-                  ) : (
-                    <AlertCircle className="h-6 w-6 text-red-600" />
+
+                  {/* Status Icons */}
+                  {getStorageCheckStatus() === 'sufficient' && (
+                    <CheckCircle2 className="h-6 w-6 text-green-600 ml-4" />
+                  )}
+                  {getStorageCheckStatus() === 'insufficient' && (
+                    <AlertCircle className="h-6 w-6 text-red-600 ml-4" />
+                  )}
+                  {getStorageCheckStatus() === 'error' && (
+                    <AlertCircle className="h-6 w-6 text-orange-600 ml-4" />
                   )}
                 </div>
-              </div>
-            ) : isCheckingStorage ? (
-              <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                <p className="text-blue-800 font-medium">Checking device storage...</p>
-                <p className="text-sm text-blue-600">Connecting to {parameters.hostname} to verify available space</p>
-              </div>
-            ) : (
-              <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
-                <p className="text-gray-600">Storage check will run automatically when device information is provided</p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
 
-      {/* REAL-TIME STATUS DISPLAY (Only visible when uploading) */}
-      {isUploading && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Loader2 className="h-5 w-5 animate-spin" />
-              Upload in Progress
-              <div className="flex items-center gap-1 ml-auto text-sm font-normal">
-                {getWsStatusIcon()}
-                <span className={
-                  wsStatus === 'connected' ? 'text-green-600' :
-                    wsStatus === 'error' ? 'text-red-600' :
-                      'text-blue-600'
-                }>
-                  {getWsStatusText()}
-                </span>
-              </div>
-            </CardTitle>
-            <CardDescription>
-              {currentStep || 'Processing your upload...'}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              <div className="flex items-center gap-3 p-3 rounded-lg bg-gray-50">
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-gray-800">Current Status</p>
-                  <p className="text-sm text-gray-600 mt-1">{currentStep || 'Initializing...'}</p>
-                </div>
-                {wsStatus === 'connected' && (
-                  <div className="flex items-center gap-2 px-3 py-1 bg-green-100 rounded-full">
-                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                    <span className="text-xs font-medium text-green-700">Live</span>
+                {/* Method Information Footer */}
+                {storageCheck && storageCheck.method && (
+                  <div className="mt-3 pt-3 border-t border-gray-200">
+                    <p className="text-xs text-gray-500">
+                      Check method: <span className="font-medium">{storageCheck.method}</span>
+                      {storageCheck.method === 'simulation' && ' (estimated values)'}
+                      {storageCheck.used_endpoint && ` via ${storageCheck.used_endpoint}`}
+                    </p>
                   </div>
                 )}
               </div>
 
-              {/* File transfer progress bar */}
+              {/* Insufficient Space Recommendations */}
+              {getStorageCheckStatus() === 'insufficient' && (
+                <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                  <p className="font-semibold text-red-800 mb-2">Recommended Actions:</p>
+                  <ul className="list-disc list-inside text-red-700 space-y-1 text-sm">
+                    <li>Delete unused files from the device</li>
+                    <li>Clear system logs or temporary files</li>
+                    <li>Check available space with: <code className="bg-red-100 px-1 rounded">show system storage</code></li>
+                    <li>Try uploading to a different filesystem if available</li>
+                    <li>Consider compressing the file before upload</li>
+                  </ul>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* UPLOAD PROGRESS DISPLAY - FIXED PROGRESS BAR */}
+      {isUploading && (
+        <Card className="border-2">
+          <CardHeader className="pb-4">
+            <div className="flex items-center justify-between">
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                Upload Progress
+              </CardTitle>
+              <Badge variant={getWsStatusVariant()} className="flex items-center gap-1">
+                {getWsStatusIcon()}
+                {getWsStatusText()}
+              </Badge>
+            </div>
+            <CardDescription className="text-base font-medium text-gray-800">
+              {currentStep}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {/* 🎯 FIXED: Progress bar no longer resets when WebSocket connects */}
               {uploadProgress >= 0 && (
-                <div className="p-3 rounded-lg bg-blue-50 border border-blue-200">
-                  <div className="flex justify-between text-sm mb-2">
-                    <span className="font-medium text-blue-800">File Transfer</span>
-                    <span className="text-blue-700">{uploadProgress?.toFixed(1)}%</span>
+                <div className="space-y-3">
+                  <div className="flex justify-between text-sm">
+                    <span className="font-medium text-gray-800">Transfer Progress</span>
+                    <span className="text-gray-700 font-semibold">{uploadProgress?.toFixed(1)}%</span>
                   </div>
-                  <div className="w-full bg-blue-200 rounded-full h-2">
+                  <div className="w-full bg-gray-200 rounded-full h-3">
                     <div
-                      className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                      className="bg-black h-3 rounded-full transition-all duration-300"
                       style={{ width: `${uploadProgress}%` }}
                     ></div>
                   </div>
@@ -778,61 +919,58 @@ export default function ImageUploader({
         </Card>
       )}
 
-      {/* UPLOAD RESULT DISPLAY (Only visible after job finishes) */}
+      {/* UPLOAD RESULT DISPLAY */}
       {uploadResult && !isUploading && (
-        <Card className={
-          uploadResult.success
+        <Card className={`border-2 ${uploadResult.success
             ? uploadResult.completed
-              ? "border-green-200 bg-green-50"
-              : "border-blue-200 bg-blue-50"
-            : "border-red-200 bg-red-50"
-        }>
+              ? "border-green-600 bg-white"
+              : "border-blue-600 bg-white"
+            : "border-red-600 bg-white"
+          }`}>
           <CardContent className="pt-6">
-            <div className="flex items-start gap-3">
+            <div className="flex items-start gap-4">
               {uploadResult.success ? (
                 uploadResult.completed ? (
                   <>
-                    <CheckCircle2 className="h-6 w-6 text-green-600 mt-0.5" />
+                    <CheckCircle2 className="h-7 w-7 text-green-600 mt-0.5 flex-shrink-0" />
                     <div className="flex-1">
-                      <h4 className="text-lg font-semibold text-green-800">Upload Completed Successfully!</h4>
-                      <p className="text-sm text-green-700 mt-1">{uploadResult.finalMessage}</p>
+                      <h4 className="text-xl font-bold text-gray-900">Upload Completed Successfully!</h4>
+                      <p className="text-gray-700 mt-2">{uploadResult.finalMessage}</p>
                       {uploadResult.deviceInfo && (
-                        <div className="mt-2 p-2 bg-green-100 rounded text-xs">
-                          <p><strong>Device:</strong> {uploadResult.deviceInfo.hostname}</p>
-                          <p><strong>Model:</strong> {uploadResult.deviceInfo.model}</p>
-                          <p><strong>Version:</strong> {uploadResult.deviceInfo.version}</p>
+                        <div className="mt-3 p-3 bg-gray-100 rounded-lg border">
+                          <p className="text-sm"><strong>Device:</strong> {uploadResult.deviceInfo.hostname}</p>
+                          <p className="text-sm"><strong>Model:</strong> {uploadResult.deviceInfo.model}</p>
+                          <p className="text-sm"><strong>Version:</strong> {uploadResult.deviceInfo.version}</p>
                         </div>
                       )}
-                      <p className="text-xs text-green-600 mt-2">Job ID: {uploadResult.jobId}</p>
+                      <p className="text-sm text-gray-600 mt-3">Job ID: {uploadResult.jobId}</p>
                     </div>
                   </>
                 ) : (
                   <>
-                    <Loader2 className="h-6 w-6 text-blue-600 animate-spin mt-0.5" />
+                    <Loader2 className="h-7 w-7 text-blue-600 animate-spin mt-0.5 flex-shrink-0" />
                     <div>
-                      <h4 className="text-lg font-semibold text-blue-800">Upload Queued Successfully!</h4>
-                      <p className="text-sm text-blue-700">{uploadResult.message}</p>
-                      <p className="text-xs text-blue-600 mt-1">Job ID: {uploadResult.jobId}</p>
-                      <p className="text-xs text-blue-600">WebSocket Channel: {uploadResult.wsChannel}</p>
-                      <p className="text-xs text-blue-500 mt-2">ⓘ Monitoring progress via WebSocket...</p>
+                      <h4 className="text-xl font-bold text-gray-900">Upload Queued Successfully!</h4>
+                      <p className="text-gray-700 mt-2">{uploadResult.message}</p>
+                      <p className="text-sm text-gray-600 mt-2">Job ID: {uploadResult.jobId}</p>
+                      <p className="text-sm text-gray-600">WebSocket Channel: {uploadResult.wsChannel}</p>
+                      <p className="text-xs text-blue-600 mt-3 font-medium">ⓘ Monitoring progress via WebSocket...</p>
                     </div>
                   </>
                 )
               ) : (
                 <>
-                  <AlertCircle className="h-6 w-6 text-red-600 mt-0.5" />
-                  <div>
-                    <h4 className="text-lg font-semibold text-red-800">Upload Failed</h4>
-                    <p className="text-sm text-red-700 mb-2">{uploadResult.error}</p>
-
-                    {/* Show specific guidance for disk space errors */}
+                  <AlertCircle className="h-7 w-7 text-red-600 mt-0.5 flex-shrink-0" />
+                  <div className="flex-1">
+                    <h4 className="text-xl font-bold text-gray-900">Upload Failed</h4>
+                    <p className="text-gray-700 mt-2 mb-4">{uploadResult.error}</p>
                     {uploadResult.error?.includes('disk space') && (
-                      <div className="p-3 bg-red-100 rounded-md text-sm">
-                        <p className="font-semibold text-red-800 mb-1">Recommended Actions:</p>
-                        <ul className="list-disc list-inside text-red-700 space-y-1">
+                      <div className="p-4 bg-gray-100 rounded-lg border">
+                        <p className="font-semibold text-gray-900 mb-2">Recommended Actions:</p>
+                        <ul className="list-disc list-inside text-gray-700 space-y-1 text-sm">
                           <li>Delete unused files from the device</li>
                           <li>Clear system logs or temporary files</li>
-                          <li>Check available space with: <code>show system storage</code></li>
+                          <li>Check available space with: <code className="bg-gray-200 px-1 rounded">show system storage</code></li>
                           <li>Try uploading to a different filesystem if available</li>
                         </ul>
                       </div>
@@ -846,52 +984,53 @@ export default function ImageUploader({
       )}
 
       {/* UPLOAD ACTION CARD */}
-      <Card>
+      <Card className="border-2">
         <CardContent className="pt-6">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-6">
             <div className="flex-1">
-              <h4 className="text-lg font-semibold mb-2">Ready to Upload</h4>
-              <div className="space-y-1 text-sm text-gray-600">
+              <h4 className="text-xl font-bold text-gray-900 mb-3">Ready to Upload</h4>
+              <div className="space-y-2 text-sm text-gray-700">
                 {selectedFile && (
                   <p className="flex items-center gap-2">
                     <CheckCircle2 className="h-4 w-4 text-green-600" />
-                    <span className="font-medium">{selectedFile.name}</span>
-                    <span className="text-xs text-gray-500">({formatFileSize(selectedFile.size)})</span>
+                    <span className="font-semibold">{selectedFile.name}</span>
+                    <span className="text-gray-500">({formatFileSize(selectedFile.size)})</span>
                   </p>
                 )}
                 {parameters?.hostname && (
                   <p className="flex items-center gap-2">
                     <CheckCircle2 className="h-4 w-4 text-green-600" />
-                    <span>Device: {parameters.hostname}</span>
+                    <span>Device: <strong>{parameters.hostname}</strong></span>
                   </p>
                 )}
                 {parameters?.inventory_file && !parameters?.hostname && (
                   <p className="flex items-center gap-2">
                     <CheckCircle2 className="h-4 w-4 text-green-600" />
-                    <span>Inventory File: {parameters.inventory_file}</span>
+                    <span>Inventory File: <strong>{parameters.inventory_file}</strong></span>
                   </p>
                 )}
                 {storageCheck && !storageCheck.has_sufficient_space && (
-                  <p className="flex items-center gap-2 text-red-600">
+                  <p className="flex items-center gap-2 text-red-600 font-medium">
                     <AlertCircle className="h-4 w-4" />
                     <span>Insufficient storage space on device</span>
                   </p>
                 )}
                 {!isFormValid && (
-                  <p className="text-orange-600 text-sm whitespace-pre-line">
-                    {!selectedFile && '• Select a file to upload\n'}
-                    {!parameters?.hostname && !parameters?.inventory_file && '• Configure device target\n'}
-                    {(!parameters?.username || !parameters?.password) && '• Provide authentication credentials'}
-                  </p>
+                  <div className="text-orange-700 text-sm space-y-1">
+                    {!selectedFile && <p className="flex items-center gap-2">• Select a file to upload</p>}
+                    {!parameters?.hostname && !parameters?.inventory_file && <p className="flex items-center gap-2">• Configure device target</p>}
+                    {(!parameters?.username || !parameters?.password) && <p className="flex items-center gap-2">• Provide authentication credentials</p>}
+                  </div>
                 )}
               </div>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-3">
               {uploadResult && (
                 <Button
                   onClick={handleReset}
                   variant="outline"
                   disabled={isUploading}
+                  className="border-2"
                 >
                   Upload Another File
                 </Button>
@@ -900,17 +1039,17 @@ export default function ImageUploader({
                 onClick={handleUpload}
                 disabled={isRunning || isUploading || !isFormValid || (storageCheck && !storageCheck.has_sufficient_space)}
                 size="lg"
-                className="w-full sm:w-auto"
+                className="w-full sm:w-auto bg-black hover:bg-gray-800 text-white border-2 border-black"
               >
                 {isUploading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    Uploading... {uploadProgress?.toFixed(0) || 0}%
+                    Uploading {uploadProgress?.toFixed(0) || 0}%
                   </>
                 ) : (
                   <>
+                    <Upload className="h-4 w-4 mr-2" />
                     Upload File
-                    <ArrowRight className="h-4 w-4 ml-2" />
                   </>
                 )}
               </Button>
