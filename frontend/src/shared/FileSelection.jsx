@@ -26,12 +26,13 @@ export default function FileSelection({
   allowedExtensions = [
     'jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff', 'svg',
     'bin', 'img', 'rom', 'fw', 'chk', 'tar', 'gz', 'zip', '7z',
-    'pkg', 'spa', 'a6', 'a8', 'a9'
+    'pkg', 'spa', 'a6', 'a8', 'a9', 'tgz', 'tar.gz' // ADDED: tar.gz extension
   ],
   allowedMimeTypes = [
     'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/bmp',
     'image/webp', 'image/tiff', 'image/svg+xml', 'application/octet-stream',
-    'application/zip', 'application/x-tar', 'application/gzip', 'application/x-7z-compressed'
+    'application/zip', 'application/x-tar', 'application/gzip',
+    'application/x-7z-compressed', 'application/x-compressed-tar' // ADDED: compressed tar MIME type
   ],
   title = "File Selection",
   description = "Choose a file to upload to your network device",
@@ -149,7 +150,7 @@ export default function FileSelection({
             type="file"
             className="hidden"
             onChange={handleFileChange}
-            accept={allowedExtensions.map(ext => `.${ext}`).join(',')}
+            accept={allowedExtensions.map(ext => `.${ext}`).join(',') + ',.tar.gz,.tgz'} // UPDATED: Added compressed tar extensions
             disabled={isRunning || isUploading}
           />
 

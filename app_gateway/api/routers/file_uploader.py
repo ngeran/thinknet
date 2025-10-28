@@ -126,10 +126,10 @@ REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 REDIS_JOB_QUEUE = "automation_jobs_queue"
 
 # File upload configuration
-MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB maximum file size
+MAX_FILE_SIZE = 1 * 1024 * 1024 * 1024 * 1024  # 1 TB in bytes
 ALLOWED_FILE_TYPES = {
     "image/": ["jpg", "jpeg", "png", "gif", "bmp", "webp"],
-    "application/": ["bin", "img", "rom", "pkg", "tar", "gz", "zip"],
+    "application/": ["bin", "img", "rom", "pkg", "tar", "gz", "zip", "tgz", "gz.tgz"],
     "text/": ["txt", "cfg", "conf", "xml", "json", "yaml", "yml"],
 }
 TEMP_UPLOAD_DIR = Path("/app/shared/data/uploads")
