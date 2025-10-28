@@ -764,10 +764,10 @@ export default function ImageUploader({
           <CardContent>
             <div className="space-y-4">
               <div className={`p-4 rounded-lg border-2 ${getStorageCheckStatus() === 'checking' ? 'border-blue-200 bg-blue-50' :
-                  getStorageCheckStatus() === 'error' ? 'border-orange-200 bg-orange-50' :
-                    getStorageCheckStatus() === 'sufficient' ? 'border-green-200 bg-green-50' :
-                      getStorageCheckStatus() === 'insufficient' ? 'border-red-200 bg-red-50' :
-                        'border-gray-200 bg-gray-50'
+                getStorageCheckStatus() === 'error' ? 'border-orange-200 bg-orange-50' :
+                  getStorageCheckStatus() === 'sufficient' ? 'border-green-200 bg-green-50' :
+                    getStorageCheckStatus() === 'insufficient' ? 'border-red-200 bg-red-50' :
+                      'border-gray-200 bg-gray-50'
                 }`}>
                 <div className="flex items-center justify-between">
                   <div className="flex-1">
@@ -878,7 +878,7 @@ export default function ImageUploader({
                         <div className="w-full bg-gray-200 rounded-full h-2">
                           <div
                             className={`h-2 rounded-full ${storageCheck.used_percent > 90 ? 'bg-red-600' :
-                                storageCheck.used_percent > 80 ? 'bg-orange-500' : 'bg-blue-600'
+                              storageCheck.used_percent > 80 ? 'bg-orange-500' : 'bg-blue-600'
                               }`}
                             style={{ width: `${storageCheck.used_percent}%` }}
                           ></div>
@@ -976,10 +976,10 @@ export default function ImageUploader({
       {/* Upload Result Display */}
       {uploadResult && !isUploading && (
         <Card className={`border-2 ${uploadResult.success
-            ? uploadResult.completed
-              ? "border-green-600 bg-white"
-              : "border-blue-600 bg-white"
-            : "border-red-600 bg-white"
+          ? uploadResult.completed
+            ? "border-green-600 bg-white"
+            : "border-blue-600 bg-white"
+          : "border-red-600 bg-white"
           }`}>
           <CardContent className="pt-6">
             <div className="flex items-start gap-4">
