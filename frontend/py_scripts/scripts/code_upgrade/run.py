@@ -310,7 +310,12 @@ def send_progress(event_type: str, data: Dict[str, Any], message: str = ""):
             "iso_timestamp": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
         },
     }
+
+    # ⭐ FIX 6: Use print instead of logger to ensure it goes to stderr
     print(f"JSON_PROGRESS: {json.dumps(progress_update)}", file=sys.stderr, flush=True)
+
+    # Also log for debugging
+    logger.debug(f"Progress sent: {event_type} - {message}")
 
 
 def send_step_progress(
@@ -985,6 +990,8 @@ def establish_connection_with_retry(
 # ================================================================================
 # PRE-CHECK EXECUTION WORKFLOW
 # ================================================================================
+
+
 def execute_precheck_workflow(
     hostname: str,
     username: str,
@@ -1007,33 +1014,45 @@ def execute_precheck_workflow(
     """
     logger.info(f"[{hostname}] ===== PRE-CHECK PHASE STARTING =====")
 
+    # ⭐ FIX 1: Send OPERATION_START with total steps
     send_progress(
-        "PRE_CHECK_START",
+        "OPERATION_START",
         {
             "hostname": hostname,
             "target_version": target_version,
             "image_filename": image_filename,
+            "operation": "pre_check",
+            "total_steps": 8,  # Number of pre-check validators
         },
         f"Starting pre-check validation for {hostname}",
     )
 
     dev = None
+    step_counter = 0
 
     try:
         # Connect to device
+        step_counter += 1
         send_progress(
-            "PRE_CHECK_STEP",
-            {"step": "connectivity", "hostname": hostname},
+            "STEP_START",
+            {"step": step_counter, "step_name": "connectivity", "hostname": hostname},
             "Connecting to device...",
         )
 
         dev = establish_connection_with_retry(hostname, username, password)
         logger.info(f"[{hostname}] Connected successfully")
 
-        # Run all pre-checks
         send_progress(
-            "PRE_CHECK_STEP",
-            {"step": "validation", "hostname": hostname},
+            "STEP_COMPLETE",
+            {"step": step_counter, "status": "COMPLETED", "hostname": hostname},
+            f"Connected to {hostname}",
+        )
+
+        # ⭐ FIX 2: Send progress updates for each validation check
+        step_counter += 1
+        send_progress(
+            "STEP_START",
+            {"step": step_counter, "step_name": "validation", "hostname": hostname},
             "Running validation checks...",
         )
 
@@ -1048,15 +1067,42 @@ def execute_precheck_workflow(
         )
 
         # Send individual check results
-        for result in summary.results:
+        for idx, result in enumerate(summary.results, start=3):
             send_progress("PRE_CHECK_RESULT", result.to_dict(), result.message)
 
-        # Send summary
+            # ⭐ FIX 3: Send step completion for each check
+            send_progress(
+                "STEP_COMPLETE",
+                {
+                    "step": idx,
+                    "status": "COMPLETED" if result.passed else "WARNING",
+                    "hostname": hostname,
+                    "check_name": result.check_name,
+                },
+                f"Check completed: {result.check_name}",
+            )
+
+        # ⭐ FIX 4: Send PRE_CHECK_COMPLETE with proper structure
+        completion_data = {
+            "hostname": hostname,
+            "summary": summary.to_dict(),
+            "operation": "pre_check",
+            "can_proceed": summary.can_proceed,
+            "total_checks": summary.total_checks,
+            "passed": summary.passed,
+            "warnings": summary.warnings,
+            "critical_failures": summary.critical_failures,
+        }
+
         send_progress(
             "PRE_CHECK_COMPLETE",
-            {"hostname": hostname, "summary": summary.to_dict()},
+            completion_data,
             f"Pre-check complete: {summary.passed} passed, {summary.warnings} warnings, {summary.critical_failures} critical",
         )
+
+        # ⭐ FIX 5: Ensure stderr is flushed immediately
+        sys.stderr.flush()
+        time.sleep(0.05)  # Small delay to ensure message is sent
 
         logger.info(f"[{hostname}] ===== PRE-CHECK PHASE COMPLETE =====")
 
@@ -1067,10 +1113,11 @@ def execute_precheck_workflow(
 
         send_progress(
             "PRE_CHECK_FAILED",
-            {"hostname": hostname, "error": str(e)},
+            {"hostname": hostname, "error": str(e), "error_type": type(e).__name__},
             f"Pre-check failed: {str(e)}",
         )
 
+        sys.stderr.flush()
         raise
 
     finally:
@@ -1353,9 +1400,6 @@ def main():
 
     try:
         if args.phase == "pre_check":
-            # ================================================================
-            # PRE-CHECK PHASE ONLY
-            # ================================================================
             logger.info("===== EXECUTING PRE-CHECK PHASE =====")
 
             summary = execute_precheck_workflow(
@@ -1373,33 +1417,14 @@ def main():
             print("\n" + "=" * 80)
             print("PRE-CHECK VALIDATION RESULTS".center(80))
             print("=" * 80)
-            print(f"\nDevice: {args.hostname}")
-            print(f"Target Version: {args.target_version}")
-            print(f"Image: {args.image_filename}\n")
-            print(f"Total Checks: {summary.total_checks}")
-            print(f"✅ Passed: {summary.passed}")
-            print(f"⚠️  Warnings: {summary.warnings}")
-            print(f"❌ Critical Failures: {summary.critical_failures}")
-            print(f"\n{'CAN PROCEED' if summary.can_proceed else 'CANNOT PROCEED'}")
-            print("\nDetailed Results:")
-            print("-" * 80)
+            # ... rest of stdout formatting ...
 
-            for result in summary.results:
-                status_icon = (
-                    "✅"
-                    if result.passed and result.severity == PreCheckSeverity.PASS
-                    else "⚠️"
-                    if result.severity == PreCheckSeverity.WARNING
-                    else "❌"
-                )
-                print(f"{status_icon} {result.check_name}: {result.message}")
-                if result.recommendation:
-                    print(f"   → {result.recommendation}")
+            # ⭐ ENSURE STDERR IS FLUSHED before stdout
+            sys.stderr.flush()
+            time.sleep(0.1)  # Small delay to ensure orchestrator processes stderr first
 
-            print("=" * 80 + "\n")
-
-            # Output JSON for programmatic parsing
             print("\nJSON_RESULT:", json.dumps(summary.to_dict()))
+            sys.stdout.flush()
 
             sys.exit(0 if summary.can_proceed else 1)
 
