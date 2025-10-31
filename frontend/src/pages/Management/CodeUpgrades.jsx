@@ -1,20 +1,20 @@
 /**
  * =============================================================================
- * CODE UPGRADES COMPONENT - PRODUCTION READY v5.0.0 (5-TAB WORKFLOW)
+ * CODE UPGRADES COMPONENT - PRODUCTION READY v5.0.1 (5-TAB WORKFLOW WITH FIXES)
  * =============================================================================
  * 
  * PART 1 OF 2: Main Component Structure and Supporting Components
  * 
- * @version 5.0.0
+ * @version 5.0.1
  * @last_updated 2025-11-01
  * @author nikos-geranios_vgi
  *
  * 🔧 UPDATES IN THIS VERSION:
- * ✅ NEW: 5-Tab workflow (Configure → Pre-Check → Review → Execute → Results)
- * ✅ ENHANCED: Improved workflow progression with clear separation of concerns
- * ✅ MAINTAINED: All enhanced validation UI features from v4.6.0
- * ✅ IMPROVED: Better state management for multi-tab workflow
- * ✅ OPTIMIZED: Enhanced user experience with logical progression
+ * ✅ FIXED: Upgrade execution API call with enhanced error handling
+ * ✅ FIXED: Proper payload validation and error parsing for 422 errors
+ * ✅ MAINTAINED: All 5-tab workflow enhancements from v5.0.0
+ * ✅ ENHANCED: Better debugging and error reporting
+ * ✅ IMPROVED: API response handling with detailed error messages
  *
  * 🎯 5-TAB WORKFLOW OVERVIEW:
  * 1. CONFIGURE   - User selects device, image, and credentials
@@ -566,22 +566,24 @@ const EnhancedPreCheckResults = ({ preCheckSummary }) => {
     </div>
   );
 };
+
 /**
  * =============================================================================
- * CODE UPGRADES COMPONENT - PRODUCTION READY v5.0.0 (5-TAB WORKFLOW)
+ * CODE UPGRADES COMPONENT - PRODUCTION READY v5.0.1 (5-TAB WORKFLOW WITH FIXES)
  * =============================================================================
  * 
  * PART 2 OF 2: Main Component Implementation and WebSocket Handling
  * 
- * @version 5.0.0
+ * @version 5.0.1
  * @last_updated 2025-11-01
  * @author nikos-geranios_vgi
  *
  * 🔧 UPDATES IN THIS VERSION:
- * ✅ NEW: 5-Tab workflow with improved state management
- * ✅ ENHANCED: Better WebSocket handling for tab transitions
- * ✅ IMPROVED: Clear separation between pre-check and execution phases
- * ✅ OPTIMIZED: Enhanced user experience with logical workflow progression
+ * ✅ FIXED: Upgrade execution API call with enhanced error handling
+ * ✅ FIXED: Proper payload validation and error parsing for 422 errors
+ * ✅ ENHANCED: Better debugging and error reporting for API calls
+ * ✅ MAINTAINED: All 5-tab workflow functionality
+ * ✅ IMPROVED: API response handling with detailed error messages
  * =============================================================================
  */
 
@@ -871,14 +873,16 @@ export default function CodeUpgrades() {
   };
 
   // ==========================================================================
-  // UPGRADE EXECUTION HANDLER
+  // UPGRADE EXECUTION HANDLER - FIXED VERSION v5.0.1
   // ==========================================================================
 
   /**
-   * Initiate upgrade execution workflow
+   * Initiate upgrade execution workflow - FIXED VERSION
+   * Enhanced with better error handling and payload validation
    */
   const startUpgradeExecution = async () => {
     console.log("[UPGRADE] ===== UPGRADE EXECUTION INITIATED =====");
+    console.log("[UPGRADE] Pre-check job ID:", preCheckJobId);
 
     if (!isConnected) {
       setJobOutput(prev => [...prev, {
@@ -908,43 +912,109 @@ export default function CodeUpgrades() {
     processedStepsRef.current.clear();
     loggedMessagesRef.current.clear();
 
-    // Payload construction
+    // ========================================================================
+    // PAYLOAD CONSTRUCTION - ENHANCED WITH VALIDATION
+    // ========================================================================
+
+    // Validate required parameters
+    if (!upgradeParams.hostname && !upgradeParams.inventory_file) {
+      console.error("[UPGRADE] Validation failed: No target specified");
+      setJobOutput(prev => [...prev, {
+        timestamp: new Date().toISOString(),
+        message: "Error: Must specify either hostname or inventory file",
+        level: 'error'
+      }]);
+      setJobStatus("failed");
+      setIsRunningUpgrade(false);
+      return;
+    }
+
+    if (!upgradeParams.image_filename) {
+      console.error("[UPGRADE] Validation failed: No image selected");
+      setJobOutput(prev => [...prev, {
+        timestamp: new Date().toISOString(),
+        message: "Error: Must select an image file",
+        level: 'error'
+      }]);
+      setJobStatus("failed");
+      setIsRunningUpgrade(false);
+      return;
+    }
+
+    // Build payload according to FastAPI schema
     const payload = {
       command: "code_upgrade",
-      hostname: upgradeParams.hostname.trim(),
-      inventory_file: upgradeParams.inventory_file.trim(),
+      hostname: upgradeParams.hostname?.trim() || "",
+      inventory_file: upgradeParams.inventory_file?.trim() || "",
       username: upgradeParams.username,
       password: upgradeParams.password,
       vendor: upgradeParams.vendor,
       platform: upgradeParams.platform,
       target_version: upgradeParams.target_version,
       image_filename: upgradeParams.image_filename,
-      pre_check_job_id: preCheckJobId,
+      pre_check_job_id: preCheckJobId,  // Reference to pre-check job
       skip_pre_check: false,
       force_upgrade: false,
     };
 
-    // API Call
+    // Log the payload (without password)
+    console.log("[UPGRADE] Submitting payload:", {
+      ...payload,
+      password: '***REDACTED***'
+    });
+
+    // ========================================================================
+    // API CALL - ENHANCED ERROR HANDLING
+    // ========================================================================
+
     try {
       const response = await fetch(`${API_URL}/api/operations/execute`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+        },
         credentials: 'include',
         body: JSON.stringify(payload),
       });
 
+      console.log("[UPGRADE] Response status:", response.status);
+
+      // Handle HTTP errors with detailed parsing
       if (!response.ok) {
-        const errorText = await response.text();
-        let errorMessage;
+        let errorDetail = '';
+        
         try {
-          const errorJson = JSON.parse(errorText);
-          errorMessage = errorJson.detail || errorJson.message || errorText;
-        } catch {
-          errorMessage = errorText;
+          const errorData = await response.json();
+          console.error("[UPGRADE] API Error Response:", errorData);
+          
+          // Extract detailed error message from FastAPI validation
+          if (errorData.detail) {
+            if (Array.isArray(errorData.detail)) {
+              // Pydantic validation errors
+              errorDetail = errorData.detail.map(err => 
+                `${err.loc?.join('.')}: ${err.msg}`
+              ).join(', ');
+            } else if (typeof errorData.detail === 'string') {
+              errorDetail = errorData.detail;
+            } else if (errorData.detail.message) {
+              errorDetail = errorData.detail.message;
+            }
+          } else if (errorData.message) {
+            errorDetail = errorData.message;
+          } else {
+            errorDetail = JSON.stringify(errorData);
+          }
+        } catch (parseError) {
+          // Fallback if response is not JSON
+          const errorText = await response.text();
+          console.error("[UPGRADE] Non-JSON error response:", errorText);
+          errorDetail = errorText || `HTTP ${response.status}`;
         }
-        throw new Error(`API error ${response.status}: ${errorMessage}`);
+
+        throw new Error(`API error ${response.status}: ${errorDetail}`);
       }
 
+      // Parse successful response
       const data = await response.json();
       console.log("[UPGRADE] Job queued successfully:", data);
 
@@ -966,14 +1036,18 @@ export default function CodeUpgrades() {
 
     } catch (error) {
       console.error("[UPGRADE] API Call Failed:", error);
+      
       setJobOutput(prev => [...prev, {
         timestamp: new Date().toISOString(),
         message: `Upgrade start failed: ${error.message}`,
         level: 'error'
       }]);
+
       setJobStatus("failed");
       setIsRunningUpgrade(false);
-      setActiveTab(WORKFLOW_PHASES.RESULTS);
+      
+      // Stay on current tab to show error, don't auto-transition to results
+      console.error("[UPGRADE] Execution failed - remaining on Execute tab for error review");
     }
   };
 
@@ -1574,6 +1648,41 @@ export default function CodeUpgrades() {
                     </Button>
                   </div>
                 </div>
+
+                {/* API Debug Information (Development Only) */}
+                {process.env.NODE_ENV === 'development' && (
+                  <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                    <p className="text-sm text-yellow-800 mb-2">
+                      🛠 Debug Mode: API Call Information
+                    </p>
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={() => {
+                          const debugPayload = {
+                            command: "code_upgrade",
+                            hostname: upgradeParams.hostname?.trim() || "",
+                            inventory_file: upgradeParams.inventory_file?.trim() || "",
+                            username: upgradeParams.username,
+                            password: "***REDACTED***",
+                            vendor: upgradeParams.vendor,
+                            platform: upgradeParams.platform,
+                            target_version: upgradeParams.target_version,
+                            image_filename: upgradeParams.image_filename,
+                            pre_check_job_id: preCheckJobId,
+                            skip_pre_check: false,
+                            force_upgrade: false,
+                          };
+                          console.log("[DEBUG] Upgrade Payload:", debugPayload);
+                          alert("Payload logged to console. Check browser developer tools.");
+                        }}
+                        variant="outline"
+                        size="sm"
+                      >
+                        🛠 Log Payload to Console
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -1638,6 +1747,17 @@ export default function CodeUpgrades() {
                 <AlertTitle>Upgrade in Progress</AlertTitle>
                 <AlertDescription>
                   Upgrade execution is running. This may take several minutes. Do not interrupt the process.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {/* Error Information */}
+            {hasError && currentPhase === WORKFLOW_PHASES.EXECUTE && (
+              <Alert variant="destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Upgrade Execution Failed</AlertTitle>
+                <AlertDescription>
+                  The upgrade execution failed. Check the logs above for details and try again.
                 </AlertDescription>
               </Alert>
             )}
