@@ -1,19 +1,28 @@
 /**
  * =============================================================================
- * CODE UPGRADES COMPONENT - PRODUCTION READY v4.6.0 (ENHANCED VALIDATION UI)
+ * CODE UPGRADES COMPONENT - PRODUCTION READY v5.0.0 (5-TAB WORKFLOW)
  * =============================================================================
  * 
  * PART 1 OF 2: Main Component Structure and Supporting Components
  * 
- * @version 4.6.0
+ * @version 5.0.0
  * @last_updated 2025-11-01
  * @author nikos-geranios_vgi
  *
  * 🔧 UPDATES IN THIS VERSION:
- * ✅ Completely redesigned validation results presentation
- * ✅ Categorized validation results by domain (Connectivity, System, Storage, etc.)
- * ✅ Action-oriented recommendations with clear next steps
- * ✅ Enhanced visual hierarchy with domain-based organization
+ * ✅ NEW: 5-Tab workflow (Configure → Pre-Check → Review → Execute → Results)
+ * ✅ ENHANCED: Improved workflow progression with clear separation of concerns
+ * ✅ MAINTAINED: All enhanced validation UI features from v4.6.0
+ * ✅ IMPROVED: Better state management for multi-tab workflow
+ * ✅ OPTIMIZED: Enhanced user experience with logical progression
+ *
+ * 🎯 5-TAB WORKFLOW OVERVIEW:
+ * 1. CONFIGURE   - User selects device, image, and credentials
+ * 2. PRE-CHECK   - Validation checks run with real-time progress
+ * 3. REVIEW      - Enhanced validation results with actionable insights
+ * 4. EXECUTE     - Upgrade execution with progress tracking
+ * 5. RESULTS     - Final outcome and statistics
+ *
  * =============================================================================
  */
 
@@ -50,7 +59,10 @@ import {
   Wifi,
   Server,
   Cpu,
-  MemoryStick
+  MemoryStick,
+  Settings,
+  FileText,
+  Rocket
 } from 'lucide-react';
 
 // ============================================================================
@@ -87,6 +99,17 @@ const TIMING = {
   AUTO_SCROLL_DELAY: 50,
   TAB_TRANSITION_DELAY: 1500,
   PROGRESS_UPDATE_INTERVAL: 100
+};
+
+/**
+ * Workflow phase definitions for the 5-tab structure
+ */
+const WORKFLOW_PHASES = {
+  CONFIGURE: 'configure',
+  PRE_CHECK: 'pre_check',
+  REVIEW: 'review',
+  EXECUTE: 'execute',
+  RESULTS: 'results'
 };
 
 // ============================================================================
@@ -545,20 +568,20 @@ const EnhancedPreCheckResults = ({ preCheckSummary }) => {
 };
 /**
  * =============================================================================
- * CODE UPGRADES COMPONENT - PRODUCTION READY v4.6.0 (ENHANCED VALIDATION UI)
+ * CODE UPGRADES COMPONENT - PRODUCTION READY v5.0.0 (5-TAB WORKFLOW)
  * =============================================================================
  * 
  * PART 2 OF 2: Main Component Implementation and WebSocket Handling
  * 
- * @version 4.6.0
+ * @version 5.0.0
  * @last_updated 2025-11-01
  * @author nikos-geranios_vgi
  *
  * 🔧 UPDATES IN THIS VERSION:
- * ✅ Enhanced WebSocket message handling for reliable tab transitions
- * ✅ Improved state management for validation results
- * ✅ Better error handling and user feedback
- * ✅ Maintained all existing functionality with enhanced UI
+ * ✅ NEW: 5-Tab workflow with improved state management
+ * ✅ ENHANCED: Better WebSocket handling for tab transitions
+ * ✅ IMPROVED: Clear separation between pre-check and execution phases
+ * ✅ OPTIMIZED: Enhanced user experience with logical workflow progression
  * =============================================================================
  */
 
@@ -588,11 +611,11 @@ export default function CodeUpgrades() {
   });
 
   /**
-   * UI state management
+   * UI state management for 5-tab workflow
    */
-  const [activeTab, setActiveTab] = useState("config");
+  const [activeTab, setActiveTab] = useState(WORKFLOW_PHASES.CONFIGURE);
   const [jobStatus, setJobStatus] = useState("idle");
-  const [currentPhase, setCurrentPhase] = useState("config");
+  const [currentPhase, setCurrentPhase] = useState(WORKFLOW_PHASES.CONFIGURE);
 
   /**
    * Progress tracking state
@@ -617,6 +640,12 @@ export default function CodeUpgrades() {
   const [preCheckSummary, setPreCheckSummary] = useState(null);
   const [isRunningPreCheck, setIsRunningPreCheck] = useState(false);
   const [canProceedWithUpgrade, setCanProceedWithUpgrade] = useState(false);
+
+  /**
+   * Execution specific state
+   */
+  const [isRunningUpgrade, setIsRunningUpgrade] = useState(false);
+  const [upgradeJobId, setUpgradeJobId] = useState(null);
 
   /**
    * Statistics for results display
@@ -676,13 +705,13 @@ export default function CodeUpgrades() {
 
     // Reset all state to initial values
     setJobStatus("idle");
-    setCurrentPhase("config");
+    setCurrentPhase(WORKFLOW_PHASES.CONFIGURE);
     setProgress(0);
     setJobOutput([]);
     setJobId(null);
     setWsChannel(null);
     setFinalResults(null);
-    setActiveTab("config");
+    setActiveTab(WORKFLOW_PHASES.CONFIGURE);
     setCompletedSteps(0);
     setTotalSteps(0);
     setStatistics({ total: 0, succeeded: 0, failed: 0 });
@@ -693,6 +722,10 @@ export default function CodeUpgrades() {
     setPreCheckSummary(null);
     setIsRunningPreCheck(false);
     setCanProceedWithUpgrade(false);
+
+    // Reset execution state
+    setIsRunningUpgrade(false);
+    setUpgradeJobId(null);
 
     // Clear refs
     processedStepsRef.current.clear();
@@ -758,8 +791,8 @@ export default function CodeUpgrades() {
     }
 
     // UI Preparation
-    setActiveTab("execute");
-    setCurrentPhase("pre_check");
+    setActiveTab(WORKFLOW_PHASES.PRE_CHECK);
+    setCurrentPhase(WORKFLOW_PHASES.PRE_CHECK);
     setIsRunningPreCheck(true);
     setJobStatus("running");
     setProgress(0);
@@ -863,9 +896,10 @@ export default function CodeUpgrades() {
     }
 
     // UI Preparation
-    setActiveTab("execute");
-    setCurrentPhase("upgrade");
+    setActiveTab(WORKFLOW_PHASES.EXECUTE);
+    setCurrentPhase(WORKFLOW_PHASES.EXECUTE);
     setJobStatus("running");
+    setIsRunningUpgrade(true);
     setProgress(0);
     setJobOutput([]);
     setFinalResults(null);
@@ -915,6 +949,7 @@ export default function CodeUpgrades() {
       console.log("[UPGRADE] Job queued successfully:", data);
 
       // State update
+      setUpgradeJobId(data.job_id);
       setJobId(data.job_id);
       setWsChannel(data.ws_channel);
 
@@ -937,7 +972,8 @@ export default function CodeUpgrades() {
         level: 'error'
       }]);
       setJobStatus("failed");
-      setActiveTab("results");
+      setIsRunningUpgrade(false);
+      setActiveTab(WORKFLOW_PHASES.RESULTS);
     }
   };
 
@@ -1141,7 +1177,7 @@ export default function CodeUpgrades() {
       });
 
       // Pre-check phase completion
-      if (currentPhase === "pre_check" || operationType === "pre_check") {
+      if (currentPhase === WORKFLOW_PHASES.PRE_CHECK || operationType === "pre_check") {
         console.log("[PRE-CHECK] Operation complete - finalizing pre-check phase");
 
         // Extract and set summary if not already set
@@ -1195,15 +1231,15 @@ export default function CodeUpgrades() {
             preCheckSummary: preCheckSummary !== null
           });
           
-          setActiveTab("review");
-          setCurrentPhase("review");
+          setActiveTab(WORKFLOW_PHASES.REVIEW);
+          setCurrentPhase(WORKFLOW_PHASES.REVIEW);
           
           console.log("[TAB TRANSITION] ✅ Tab transition to REVIEW commands executed");
         }, TIMING.TAB_TRANSITION_DELAY);
       }
 
       // Upgrade phase completion
-      else if (currentPhase === "upgrade" || operationType === "upgrade") {
+      else if (currentPhase === WORKFLOW_PHASES.EXECUTE || operationType === "upgrade") {
         console.log("[UPGRADE] Operation complete - finalizing upgrade phase");
 
         // Determine success status
@@ -1224,6 +1260,7 @@ export default function CodeUpgrades() {
         // Update state
         setJobStatus(finalSuccess ? "success" : "failed");
         setFinalResults(finalPayload);
+        setIsRunningUpgrade(false);
         setProgress(100);
 
         if (totalSteps > 0) {
@@ -1239,8 +1276,8 @@ export default function CodeUpgrades() {
         // Auto-transition to results tab
         console.log("[UPGRADE] Transitioning to results tab in", TIMING.TAB_TRANSITION_DELAY, "ms");
         setTimeout(() => {
-          setActiveTab("results");
-          setCurrentPhase("results");
+          setActiveTab(WORKFLOW_PHASES.RESULTS);
+          setCurrentPhase(WORKFLOW_PHASES.RESULTS);
           console.log("[UPGRADE] Tab transition complete - now on results tab");
         }, TIMING.TAB_TRANSITION_DELAY);
       }
@@ -1283,7 +1320,7 @@ export default function CodeUpgrades() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Code Upgrade Operation</h1>
           <p className="text-muted-foreground">
-            Upgrade device operating system with enhanced pre-flight validation
+            Complete 5-step workflow for safe and reliable device upgrades
           </p>
         </div>
 
@@ -1297,29 +1334,40 @@ export default function CodeUpgrades() {
 
       <Separator className="mb-8" />
 
-      {/* TABS NAVIGATION */}
+      {/* TABS NAVIGATION - 5-TAB WORKFLOW */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-4 mb-6">
-          <TabsTrigger value="config" disabled={isRunning}>
+        <TabsList className="grid w-full grid-cols-5 mb-6">
+          <TabsTrigger value={WORKFLOW_PHASES.CONFIGURE} disabled={isRunning}>
+            <Settings className="h-4 w-4 mr-2" />
             Configure
           </TabsTrigger>
-          <TabsTrigger value="execute" disabled={currentPhase === "config"}>
-            {currentPhase === "pre_check" ? "Pre-Check" : "Execute"}
+          <TabsTrigger value={WORKFLOW_PHASES.PRE_CHECK} disabled={currentPhase === WORKFLOW_PHASES.CONFIGURE}>
+            <Shield className="h-4 w-4 mr-2" />
+            Pre-Check
+            {preCheckSummary && " ✅"}
           </TabsTrigger>
           <TabsTrigger 
-            value="review" 
-            disabled={!preCheckSummary && activeTab !== "review"}
+            value={WORKFLOW_PHASES.REVIEW} 
+            disabled={!preCheckSummary && activeTab !== WORKFLOW_PHASES.REVIEW}
             className={preCheckSummary ? "bg-green-50 border-green-200" : ""}
           >
-            Review {preCheckSummary && "✅"}
+            <FileText className="h-4 w-4 mr-2" />
+            Review
           </TabsTrigger>
-          <TabsTrigger value="results" disabled={currentPhase !== "results"}>
+          <TabsTrigger value={WORKFLOW_PHASES.EXECUTE} disabled={!preCheckSummary?.can_proceed}>
+            <Rocket className="h-4 w-4 mr-2" />
+            Execute
+          </TabsTrigger>
+          <TabsTrigger value={WORKFLOW_PHASES.RESULTS} disabled={currentPhase !== WORKFLOW_PHASES.RESULTS}>
+            <CheckCircle className="h-4 w-4 mr-2" />
             Results
           </TabsTrigger>
         </TabsList>
 
-        {/* TAB 1: CONFIGURATION */}
-        <TabsContent value="config">
+        {/* ==================================================================
+            TAB 1: CONFIGURE
+            ================================================================== */}
+        <TabsContent value={WORKFLOW_PHASES.CONFIGURE}>
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 max-w-7xl">
             {/* Image Selection (Left Column) */}
             <div className="xl:col-span-1">
@@ -1343,7 +1391,7 @@ export default function CodeUpgrades() {
                     <div className="flex-1">
                       <h4 className="text-lg font-semibold mb-2 flex items-center gap-2">
                         <Shield className="h-5 w-5 text-blue-600" />
-                        Ready for Enhanced Pre-Check Validation
+                        Ready for Pre-Check Validation
                       </h4>
                       <div className="space-y-1 text-sm text-gray-600">
                         {/* Show selected configuration */}
@@ -1418,11 +1466,14 @@ export default function CodeUpgrades() {
           </div>
         </TabsContent>
 
-        {/* TAB 2: EXECUTION */}
-        <TabsContent value="execute">
+        {/* ==================================================================
+            TAB 2: PRE-CHECK
+            ================================================================== */}
+        <TabsContent value={WORKFLOW_PHASES.PRE_CHECK}>
           <div className="space-y-6 p-4 border rounded-lg max-w-6xl">
-            <h2 className="text-xl font-semibold mb-4">
-              {currentPhase === "pre_check" ? "Pre-Check Validation" : "Upgrade Progress"}
+            <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
+              <Shield className="h-5 w-5 text-blue-600" />
+              Pre-Check Validation Progress
             </h2>
 
             {/* Progress Bar */}
@@ -1431,10 +1482,10 @@ export default function CodeUpgrades() {
               currentStep={latestStepMessageRef.current}
               totalSteps={totalSteps}
               completedSteps={completedSteps}
-              isRunning={isRunning}
+              isRunning={isRunningPreCheck}
               isComplete={isComplete}
               hasError={hasError}
-              animated={isRunning}
+              animated={isRunningPreCheck}
               showStepCounter={true}
               showPercentage={true}
               compact={false}
@@ -1446,9 +1497,7 @@ export default function CodeUpgrades() {
               <div ref={scrollAreaRef} className="space-y-3">
                 {jobOutput.length === 0 ? (
                   <p className="text-center text-muted-foreground pt-4">
-                    {currentPhase === "pre_check"
-                      ? "Waiting for pre-check to start..."
-                      : "Waiting for upgrade to start..."}
+                    Waiting for pre-check validation to start...
                   </p>
                 ) : (
                   jobOutput.map((log, index) => (
@@ -1468,11 +1517,24 @@ export default function CodeUpgrades() {
                 )}
               </div>
             </ScrollArea>
+
+            {/* Status Information */}
+            {isRunningPreCheck && (
+              <Alert>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <AlertTitle>Pre-Check in Progress</AlertTitle>
+                <AlertDescription>
+                  Validation checks are running. This may take a few minutes depending on the device and checks.
+                </AlertDescription>
+              </Alert>
+            )}
           </div>
         </TabsContent>
 
-        {/* TAB 3: REVIEW (ENHANCED PRE-CHECK RESULTS) */}
-        <TabsContent value="review">
+        {/* ==================================================================
+            TAB 3: REVIEW (ENHANCED PRE-CHECK RESULTS)
+            ================================================================== */}
+        <TabsContent value={WORKFLOW_PHASES.REVIEW}>
           <div className="space-y-6 max-w-7xl">
             <EnhancedPreCheckResults preCheckSummary={preCheckSummary} />
 
@@ -1482,22 +1544,22 @@ export default function CodeUpgrades() {
                 <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
                   <div className="flex-1">
                     <h4 className="text-lg font-semibold mb-2">
-                      {preCheckSummary?.can_proceed ? 'Ready to Proceed' : 'Cannot Proceed'}
+                      {preCheckSummary?.can_proceed ? 'Ready to Execute Upgrade' : 'Cannot Proceed to Execution'}
                     </h4>
                     <p className="text-sm text-muted-foreground">
                       {preCheckSummary?.can_proceed
-                        ? 'All critical checks passed. You can proceed with the upgrade.'
+                        ? 'All critical checks passed. You can proceed with the upgrade execution.'
                         : 'Critical failures detected. Resolve issues before upgrading.'}
                     </p>
                   </div>
 
                   <div className="flex gap-3 w-full sm:w-auto">
                     <Button
-                      onClick={resetWorkflow}
+                      onClick={() => setActiveTab(WORKFLOW_PHASES.CONFIGURE)}
                       variant="outline"
                       size="lg"
                     >
-                      Cancel
+                      Back to Configure
                     </Button>
 
                     <Button
@@ -1506,8 +1568,8 @@ export default function CodeUpgrades() {
                       size="lg"
                       className="flex-1 sm:flex-initial"
                     >
-                      <PlayCircle className="h-4 w-4 mr-2" />
-                      Proceed with Upgrade
+                      <Rocket className="h-4 w-4 mr-2" />
+                      Execute Upgrade
                       <ArrowRight className="h-4 w-4 ml-2" />
                     </Button>
                   </div>
@@ -1517,8 +1579,75 @@ export default function CodeUpgrades() {
           </div>
         </TabsContent>
 
-        {/* TAB 4: RESULTS (FINAL OUTCOME) */}
-        <TabsContent value="results">
+        {/* ==================================================================
+            TAB 4: EXECUTE
+            ================================================================== */}
+        <TabsContent value={WORKFLOW_PHASES.EXECUTE}>
+          <div className="space-y-6 p-4 border rounded-lg max-w-6xl">
+            <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
+              <Rocket className="h-5 w-5 text-orange-600" />
+              Upgrade Execution Progress
+            </h2>
+
+            {/* Progress Bar */}
+            <EnhancedProgressBar
+              percentage={progress}
+              currentStep={latestStepMessageRef.current}
+              totalSteps={totalSteps}
+              completedSteps={completedSteps}
+              isRunning={isRunningUpgrade}
+              isComplete={isComplete}
+              hasError={hasError}
+              animated={isRunningUpgrade}
+              showStepCounter={true}
+              showPercentage={true}
+              compact={false}
+              variant={isComplete ? "success" : hasError ? "destructive" : "default"}
+            />
+
+            {/* Log Viewer */}
+            <ScrollArea className="h-96 bg-background/50 p-4 rounded-md border">
+              <div ref={scrollAreaRef} className="space-y-3">
+                {jobOutput.length === 0 ? (
+                  <p className="text-center text-muted-foreground pt-4">
+                    Waiting for upgrade execution to start...
+                  </p>
+                ) : (
+                  jobOutput.map((log, index) => (
+                    <EnhancedProgressStep
+                      key={`${log.timestamp}-${index}`}
+                      step={{
+                        message: log.message,
+                        level: log.level,
+                        timestamp: log.timestamp,
+                        type: log.event_type,
+                      }}
+                      isLatest={index === jobOutput.length - 1}
+                      compact={false}
+                      showTimestamp={true}
+                    />
+                  ))
+                )}
+              </div>
+            </ScrollArea>
+
+            {/* Status Information */}
+            {isRunningUpgrade && (
+              <Alert>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <AlertTitle>Upgrade in Progress</AlertTitle>
+                <AlertDescription>
+                  Upgrade execution is running. This may take several minutes. Do not interrupt the process.
+                </AlertDescription>
+              </Alert>
+            )}
+          </div>
+        </TabsContent>
+
+        {/* ==================================================================
+            TAB 5: RESULTS (FINAL OUTCOME)
+            ================================================================== */}
+        <TabsContent value={WORKFLOW_PHASES.RESULTS}>
           <div className="space-y-6 max-w-6xl">
             {/* Completion Status Card */}
             <Card className={`border-2 ${jobStatus === 'success' ? 'border-green-200 bg-green-50' :
@@ -1551,8 +1680,152 @@ export default function CodeUpgrades() {
               </CardContent>
             </Card>
 
-            {/* Additional results content remains the same as previous version */}
-            {/* ... (rest of the results tab content) ... */}
+            {/* Pre-Check Summary Reference */}
+            {preCheckSummary && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Shield className="h-5 w-5 text-blue-600" />
+                    Pre-Check Validation Summary
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                    <div>
+                      <span className="font-medium">Total Checks:</span>
+                      <p className="text-muted-foreground">{preCheckSummary.total_checks}</p>
+                    </div>
+                    <div>
+                      <span className="font-medium">Passed:</span>
+                      <p className="text-green-600 font-semibold">{preCheckSummary.passed}</p>
+                    </div>
+                    <div>
+                      <span className="font-medium">Warnings:</span>
+                      <p className="text-orange-600 font-semibold">{preCheckSummary.warnings}</p>
+                    </div>
+                    <div>
+                      <span className="font-medium">Critical:</span>
+                      <p className="text-red-600 font-semibold">{preCheckSummary.critical_failures}</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Configuration Details */}
+            {upgradeParams.image_filename && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <CheckCircle className="h-5 w-5 text-green-600" />
+                    Software Image Details
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
+                    <div>
+                      <span className="font-medium">Vendor:</span>
+                      <p className="text-muted-foreground">{upgradeParams.vendor || 'N/A'}</p>
+                    </div>
+                    <div>
+                      <span className="font-medium">Platform:</span>
+                      <p className="text-muted-foreground">{upgradeParams.platform || 'N/A'}</p>
+                    </div>
+                    <div>
+                      <span className="font-medium">Target Version:</span>
+                      <p className="text-muted-foreground">{upgradeParams.target_version || 'N/A'}</p>
+                    </div>
+                    <div>
+                      <span className="font-medium">Image File:</span>
+                      <p className="text-muted-foreground font-mono text-xs break-all">
+                        {upgradeParams.image_filename}
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Execution Statistics */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm">Execution Details</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Job ID:</span>
+                    <span className="font-mono text-xs">{upgradeJobId || jobId || 'N/A'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Progress:</span>
+                    <span className="font-semibold">{progress}%</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Steps Completed:</span>
+                    <span className="font-semibold">{completedSteps}/{totalSteps || 'Unknown'}</span>
+                  </div>
+                  {preCheckJobId && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Pre-Check ID:</span>
+                      <span className="font-mono text-xs">{preCheckJobId}</span>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm">Configuration</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Target Device:</span>
+                    <span className="font-medium truncate">
+                      {upgradeParams.hostname || upgradeParams.inventory_file || 'N/A'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Username:</span>
+                    <span className="font-medium">{upgradeParams.username}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Status:</span>
+                    <span className={`font-medium ${jobStatus === 'success' ? 'text-green-600' :
+                      jobStatus === 'failed' ? 'text-red-600' :
+                        'text-blue-600'
+                      }`}>
+                      {jobStatus.toUpperCase()}
+                    </span>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Final Action */}
+            <Card>
+              <CardContent className="pt-6">
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div className="flex-1">
+                    <h4 className="text-lg font-semibold mb-2">
+                      {jobStatus === 'success' ? 'Upgrade Complete' : 'Upgrade Failed'}
+                    </h4>
+                    <p className="text-sm text-muted-foreground">
+                      {jobStatus === 'success' 
+                        ? 'The upgrade has been completed successfully. You can start a new upgrade operation if needed.'
+                        : 'The upgrade failed. Review the logs and configuration before retrying.'}
+                    </p>
+                  </div>
+
+                  <Button
+                    onClick={resetWorkflow}
+                    size="lg"
+                  >
+                    Start New Upgrade
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </TabsContent>
       </Tabs>
