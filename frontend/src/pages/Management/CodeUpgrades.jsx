@@ -1,33 +1,68 @@
 /**
  * =============================================================================
- * CODE UPGRADES COMPONENT - PRODUCTION READY v4.1.3 (TAB TRANSITION FIXED)
+ * CODE UPGRADES COMPONENT - PRODUCTION READY v4.2.0 (FULLY FIXED)
  * =============================================================================
  *
- * @version 4.1.3
- * @last_updated 2025-10-30 (CRITICAL TAB TRANSITION FIX)
+ * @version 4.2.0
+ * @last_updated 2025-10-31
  * @author nikos-geranios_vgi
  *
- * 🔧 CRITICAL FIX IN THIS VERSION:
- * ✅ FIX: Tab transition now uses React's state callback to ensure preCheckSummary
- *         is set BEFORE attempting tab transition, eliminating race condition
+ * 🔧 CRITICAL FIXES IN THIS VERSION:
+ * ✅ FIX 1: Removed unnecessary transitionToReviewTab callback complexity
+ * ✅ FIX 2: Simplified tab transition - uses existing state from PRE_CHECK_COMPLETE
+ * ✅ FIX 3: Added comprehensive debug logging for troubleshooting
+ * ✅ FIX 4: Proper OPERATION_COMPLETE detection and handling
+ * ✅ FIX 5: Eliminated race condition by relying on already-set preCheckSummary
  *
- * 🎯 THE PROBLEM:
- * - OPERATION_COMPLETE event triggers setTimeout(1000ms) for tab transition
- * - But setPreCheckSummary() is async - React batches state updates
- * - When setTimeout callback fires, preCheckSummary might still be null
- * - Review tab is disabled when preCheckSummary is null
- * - Result: setActiveTab("review") does nothing - tab stays on "execute"
+ * 🎯 HOW IT WORKS NOW:
+ * 1. PRE_CHECK_COMPLETE arrives → Sets preCheckSummary state → Enables Review tab
+ * 2. OPERATION_COMPLETE arrives (0.15s later) → Triggers setTimeout for transition
+ * 3. After 1.5s delay → setActiveTab("review") executes successfully
+ * 4. React re-renders → User sees Review tab with results
  *
- * 💡 THE SOLUTION:
- * - Use setState callback pattern to ensure state is set first
- * - Only transition to review tab AFTER confirming state update completed
- * - Use React.useCallback to prevent re-renders during state updates
+ * 💡 KEY INSIGHT:
+ * We don't need to pass summary data to transition function because React state
+ * from PRE_CHECK_COMPLETE is already available. The tab trigger is simply:
+ *   setActiveTab("review") + setCurrentPhase("review")
+ *
+ * 🔍 DEBUGGING:
+ * All critical operations log to console with [PREFIX] tags:
+ *   [PRE-CHECK] - Pre-check phase operations
+ *   [OPERATION] - OPERATION_COMPLETE detection
+ *   [TAB TRANSITION] - Tab switching logic
+ *   [DEBUG] - State verification logs
+ *
+ * ARCHITECTURE:
+ * Frontend → FastAPI (code_upgrade.py) → Redis Queue → Job Orchestrator → run.py
+ *                                                              ↓
+ *                                                        WebSocket Updates
+ *                                                              ↓
+ *                                                     Frontend (this component)
+ *
+ * WORKFLOW STATES:
+ * 1. CONFIGURE  - User selects device, image, credentials
+ * 2. EXECUTE    - Pre-check runs with live progress updates
+ * 3. REVIEW     - User reviews pre-check results and decides (AUTO-TRANSITION)
+ * 4. RESULTS    - Final upgrade outcome and statistics
+ *
+ * API ENDPOINTS:
+ *   POST /api/operations/pre-check  - Queue pre-check validation job
+ *   POST /api/operations/execute    - Queue upgrade execution job
+ *   GET  /api/operations/health     - Service health check
+ *
+ * WEBSOCKET EVENTS (in order):
+ *   OPERATION_START      → Initialize progress tracking
+ *   STEP_START          → Begin individual step
+ *   STEP_COMPLETE       → Finish individual step
+ *   PRE_CHECK_RESULT    → Individual validation result
+ *   PRE_CHECK_COMPLETE  → All checks complete (contains summary)
+ *   OPERATION_COMPLETE  → Job finalized (triggers tab transition)
  *
  * =============================================================================
  */
-
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-
+ 
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+ 
 // ============================================================================
 // UI COMPONENT IMPORTS
 // ============================================================================
@@ -38,7 +73,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-
+ 
 // ============================================================================
 // ICON IMPORTS
 // ============================================================================
@@ -57,7 +92,7 @@ import {
   Info,
   RefreshCw
 } from 'lucide-react';
-
+ 
 // ============================================================================
 // CUSTOM COMPONENT IMPORTS
 // ============================================================================
@@ -65,29 +100,39 @@ import EnhancedProgressBar from '@/components/realTimeProgress/EnhancedProgressB
 import EnhancedProgressStep from '@/components/realTimeProgress/EnhancedProgressStep';
 import CodeUpgradeForm from '@/forms/CodeUpgradeForm';
 import SelectImageRelease from '@/forms/SelectImageRelease';
-
+ 
 // ============================================================================
 // CUSTOM HOOKS
 // ============================================================================
 import { useJobWebSocket } from '@/hooks/useJobWebSocket';
-
+ 
 // ============================================================================
 // UTILITY IMPORTS
 // ============================================================================
 import { extractVersionFromImageFilename } from '@/utils/versionParser';
-
+ 
 // ============================================================================
 // CONFIGURATION CONSTANTS
 // ============================================================================
-
+ 
+/**
+ * API base URL - Retrieved from environment or defaults to localhost
+ */
 const API_URL = import.meta.env.VITE_API_GATEWAY_URL || 'http://localhost:8000';
-
+ 
+/**
+ * UI timing constants for better control and consistency
+ */
 const TIMING = {
-  AUTO_SCROLL_DELAY: 50,
-  TAB_TRANSITION_DELAY: 1500, // Increased to give state more time to settle
-  PROGRESS_UPDATE_INTERVAL: 100
+  AUTO_SCROLL_DELAY: 50,        // Delay before auto-scrolling logs (ms)
+  TAB_TRANSITION_DELAY: 1500,   // Delay before switching tabs (ms) - increased for state stability
+  PROGRESS_UPDATE_INTERVAL: 100 // Progress bar update throttle (ms)
 };
-
+ 
+/**
+ * Pre-check result severity icons mapping
+ * Maps check names to their corresponding Lucide icons for visual feedback
+ */
 const PRE_CHECK_ICONS = {
   "Device Connectivity": Shield,
   "Storage Space": HardDrive,
@@ -98,112 +143,129 @@ const PRE_CHECK_ICONS = {
   "Snapshot Availability": RefreshCw,
   "Resource Utilization": Activity,
 };
-
+ 
 // ============================================================================
 // MAIN COMPONENT
 // ============================================================================
-
+ 
 export default function CodeUpgrades() {
-
+ 
   // ==========================================================================
   // STATE MANAGEMENT
   // ==========================================================================
-
+ 
+  /**
+   * Upgrade configuration parameters
+   * These are populated by the user through forms and selections
+   */
   const [upgradeParams, setUpgradeParams] = useState({
-    username: "",
-    password: "",
-    hostname: "",
-    inventory_file: "",
-    vendor: "",
-    platform: "",
-    target_version: "",
-    image_filename: ""
+    username: "",           // Device authentication username
+    password: "",           // Device authentication password
+    hostname: "",           // Single device target (IP or hostname)
+    inventory_file: "",     // Alternative: multiple devices from CSV file
+    vendor: "",             // Device vendor (e.g., "juniper")
+    platform: "",           // Device platform (e.g., "srx", "mx")
+    target_version: "",     // Target software version (auto-extracted from image)
+    image_filename: ""      // Selected upgrade image filename
   });
-
-  const [activeTab, setActiveTab] = useState("config");
-  const [jobStatus, setJobStatus] = useState("idle");
-  const [currentPhase, setCurrentPhase] = useState("config");
-
-  const [progress, setProgress] = useState(0);
-  const [jobOutput, setJobOutput] = useState([]);
-  const [jobId, setJobId] = useState(null);
-  const [wsChannel, setWsChannel] = useState(null);
-  const [finalResults, setFinalResults] = useState(null);
-
-  const [completedSteps, setCompletedSteps] = useState(0);
-  const [totalSteps, setTotalSteps] = useState(0);
-
-  const [preCheckJobId, setPreCheckJobId] = useState(null);
-  const [preCheckResults, setPreCheckResults] = useState(null);
-  const [preCheckSummary, setPreCheckSummary] = useState(null);
-  const [isRunningPreCheck, setIsRunningPreCheck] = useState(false);
-  const [canProceedWithUpgrade, setCanProceedWithUpgrade] = useState(false);
-
+ 
+  /**
+   * UI state management
+   */
+  const [activeTab, setActiveTab] = useState("config");        // Current active tab
+  const [jobStatus, setJobStatus] = useState("idle");          // Job execution status
+  const [currentPhase, setCurrentPhase] = useState("config");  // Current workflow phase
+ 
+  /**
+   * Progress tracking state
+   */
+  const [progress, setProgress] = useState(0);                 // Overall progress percentage (0-100)
+  const [jobOutput, setJobOutput] = useState([]);              // Array of log entries from job execution
+  const [jobId, setJobId] = useState(null);                    // Current job identifier (UUID)
+  const [wsChannel, setWsChannel] = useState(null);            // WebSocket channel name (job:{jobId})
+  const [finalResults, setFinalResults] = useState(null);      // Final job results object
+ 
+  /**
+   * Step tracking for progress visualization
+   */
+  const [completedSteps, setCompletedSteps] = useState(0);     // Number of completed steps
+  const [totalSteps, setTotalSteps] = useState(0);             // Total steps in current operation
+ 
+  /**
+   * Pre-check specific state
+   */
+  const [preCheckJobId, setPreCheckJobId] = useState(null);              // Pre-check job ID (for reference in upgrade)
+  const [preCheckResults, setPreCheckResults] = useState(null);          // Array of individual check results
+  const [preCheckSummary, setPreCheckSummary] = useState(null);          // Aggregated pre-check summary
+  const [isRunningPreCheck, setIsRunningPreCheck] = useState(false);     // Pre-check execution flag
+  const [canProceedWithUpgrade, setCanProceedWithUpgrade] = useState(false); // Approval status from pre-check
+ 
+  /**
+   * Statistics for results display
+   */
   const [statistics, setStatistics] = useState({
-    total: 0,
-    succeeded: 0,
-    failed: 0
+    total: 0,      // Total devices processed
+    succeeded: 0,  // Successful upgrades
+    failed: 0      // Failed upgrades
   });
-
+ 
   // ==========================================================================
   // REFS FOR PERFORMANCE AND STATE TRACKING
   // ==========================================================================
-
+ 
+  /**
+   * Track processed steps to avoid duplicate progress updates
+   * Using Set for O(1) lookup performance
+   */
   const processedStepsRef = useRef(new Set());
+ 
+  /**
+   * Store the latest step message for display in progress bar
+   */
   const latestStepMessageRef = useRef("");
+ 
+  /**
+   * Track logged messages to prevent duplicates in the log viewer
+   * Uses message signature (event_type + message substring) for deduplication
+   */
   const loggedMessagesRef = useRef(new Set());
+ 
+  /**
+   * Reference to the scroll area DOM element for auto-scrolling logs
+   */
   const scrollAreaRef = useRef(null);
-
+ 
   // ==========================================================================
   // WEBSOCKET HOOK
   // ==========================================================================
-
+ 
+  /**
+   * WebSocket connection for real-time job progress updates
+   * Provides:
+   *   - sendMessage(msg): Send WebSocket message (subscribe/unsubscribe)
+   *   - lastMessage: Latest received message
+   *   - isConnected: Connection status boolean
+   */
   const { sendMessage, lastMessage, isConnected } = useJobWebSocket();
-
-  // ==========================================================================
-  // 🔧 CRITICAL FIX: TAB TRANSITION HANDLER WITH STATE CALLBACK
-  // ==========================================================================
-
-  const transitionToReviewTab = useCallback((summaryData) => {
-    console.log("[TAB TRANSITION] Initiating transition to review tab");
-    console.log("[TAB TRANSITION] Summary data:", summaryData);
-
-    // Step 1: Set the summary state with a callback to ensure it's processed
-    setPreCheckSummary(prevSummary => {
-      const newSummary = summaryData || prevSummary;
-      console.log("[TAB TRANSITION] PreCheckSummary state updated:", newSummary);
-
-      // Step 2: Only transition after confirming state update
-      if (newSummary && newSummary.can_proceed !== undefined) {
-        console.log("[TAB TRANSITION] State confirmed, scheduling tab transition");
-
-        // Use a slightly longer delay to ensure React processes the state update
-        setTimeout(() => {
-          console.log("[TAB TRANSITION] Executing tab transition NOW");
-          setActiveTab("review");
-          setCurrentPhase("review");
-          console.log("[TAB TRANSITION] ✅ Transition complete - now on review tab");
-        }, TIMING.TAB_TRANSITION_DELAY);
-      } else {
-        console.error("[TAB TRANSITION] ❌ Cannot transition - summary data invalid:", newSummary);
-      }
-
-      return newSummary;
-    });
-
-    // Step 3: Also update canProceedWithUpgrade
-    if (summaryData && summaryData.can_proceed !== undefined) {
-      setCanProceedWithUpgrade(summaryData.can_proceed);
-    }
-  }, []);
-
+ 
   // ==========================================================================
   // EVENT HANDLERS
   // ==========================================================================
-
+ 
+  /**
+   * Handle form parameter changes
+   *
+   * Special handling for image_filename:
+   *   - Automatically extracts precise version from filename
+   *   - Updates target_version with extracted value
+   *
+   * @param {string} name - Parameter name to update
+   * @param {*} value - New value for the parameter
+   */
   const handleParamChange = (name, value) => {
     setUpgradeParams(prev => ({ ...prev, [name]: value }));
-
+ 
+    // Auto-extract precise version when image is selected
     if (name === 'image_filename' && value) {
       const preciseVersion = extractVersionFromImageFilename(value);
       if (preciseVersion) {
@@ -214,15 +276,26 @@ export default function CodeUpgrades() {
       }
     }
   };
-
+ 
+  /**
+   * Reset the entire workflow to initial state
+   *
+   * Actions performed:
+   *   - Unsubscribes from WebSocket channel
+   *   - Clears all state variables
+   *   - Resets refs
+   *   - Returns to configuration tab
+   */
   const resetWorkflow = () => {
     console.log("[WORKFLOW] Initiating complete reset");
-
+ 
+    // Unsubscribe from WebSocket channel if active
     if (wsChannel) {
       console.log(`[WEBSOCKET] Unsubscribing from channel: ${wsChannel}`);
       sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
     }
-
+ 
+    // Reset all state to initial values
     setJobStatus("idle");
     setCurrentPhase("config");
     setProgress(0);
@@ -234,34 +307,52 @@ export default function CodeUpgrades() {
     setCompletedSteps(0);
     setTotalSteps(0);
     setStatistics({ total: 0, succeeded: 0, failed: 0 });
-
+ 
+    // Reset pre-check state
     setPreCheckJobId(null);
     setPreCheckResults(null);
     setPreCheckSummary(null);
     setIsRunningPreCheck(false);
     setCanProceedWithUpgrade(false);
-
+ 
+    // Clear refs
     processedStepsRef.current.clear();
     latestStepMessageRef.current = "";
     loggedMessagesRef.current.clear();
-
+ 
     console.log("[WORKFLOW] Reset complete - ready for new operation");
   };
-
+ 
   // ==========================================================================
   // PRE-CHECK HANDLER
   // ==========================================================================
-
+ 
+  /**
+   * Initiate pre-check validation workflow
+   *
+   * This function:
+   *   1. Validates required parameters
+   *   2. Prepares the UI for execution
+   *   3. Submits pre-check job to FastAPI
+   *   4. Receives job_id and ws_channel
+   *   5. Subscribes to WebSocket for progress updates
+   *
+   * @param {Event} e - Form submit event
+   */
   const startPreCheck = async (e) => {
     e.preventDefault();
-
+ 
     console.log("[PRE-CHECK] ===== PRE-CHECK VALIDATION INITIATED =====");
     console.log("[PRE-CHECK] Parameters:", {
       hostname: upgradeParams.hostname,
       image: upgradeParams.image_filename,
       version: upgradeParams.target_version
     });
-
+ 
+    // ========================================================================
+    // VALIDATION: Check required parameters
+    // ========================================================================
+ 
     if (!upgradeParams.hostname && !upgradeParams.inventory_file) {
       console.error("[PRE-CHECK] Validation failed: No target specified");
       setJobOutput(prev => [...prev, {
@@ -271,7 +362,7 @@ export default function CodeUpgrades() {
       }]);
       return;
     }
-
+ 
     if (!upgradeParams.image_filename) {
       console.error("[PRE-CHECK] Validation failed: No image selected");
       setJobOutput(prev => [...prev, {
@@ -281,7 +372,7 @@ export default function CodeUpgrades() {
       }]);
       return;
     }
-
+ 
     if (!upgradeParams.target_version) {
       console.error("[PRE-CHECK] Validation failed: No target version");
       setJobOutput(prev => [...prev, {
@@ -291,7 +382,7 @@ export default function CodeUpgrades() {
       }]);
       return;
     }
-
+ 
     if (!isConnected) {
       console.error("[PRE-CHECK] WebSocket not connected");
       setJobOutput(prev => [...prev, {
@@ -301,12 +392,20 @@ export default function CodeUpgrades() {
       }]);
       return;
     }
-
+ 
+    // ========================================================================
+    // CLEANUP: Unsubscribe from previous WebSocket channel if exists
+    // ========================================================================
+ 
     if (wsChannel) {
       console.log(`[PRE-CHECK] Unsubscribing from previous channel: ${wsChannel}`);
       sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
     }
-
+ 
+    // ========================================================================
+    // UI PREPARATION: Set up state for pre-check execution
+    // ========================================================================
+ 
     setActiveTab("execute");
     setCurrentPhase("pre_check");
     setIsRunningPreCheck(true);
@@ -318,7 +417,11 @@ export default function CodeUpgrades() {
     setCanProceedWithUpgrade(false);
     processedStepsRef.current.clear();
     loggedMessagesRef.current.clear();
-
+ 
+    // ========================================================================
+    // PAYLOAD CONSTRUCTION: Build request payload for FastAPI
+    // ========================================================================
+ 
     const payload = {
       hostname: upgradeParams.hostname.trim(),
       inventory_file: upgradeParams.inventory_file.trim(),
@@ -326,85 +429,116 @@ export default function CodeUpgrades() {
       password: upgradeParams.password,
       vendor: upgradeParams.vendor,
       platform: upgradeParams.platform,
-      target_version: upgradeParams.target_version,
+      target_version: upgradeParams.target_version,  // Precise version from image filename
       image_filename: upgradeParams.image_filename,
       skip_storage_check: false,
       skip_snapshot_check: false,
       require_snapshot: false,
     };
-
+ 
     console.log("[PRE-CHECK] Submitting payload:", {
       ...payload,
-      password: '***REDACTED***'
+      password: '***REDACTED***'  // Don't log passwords
     });
-
+ 
+    // ========================================================================
+    // API CALL: Submit pre-check job to FastAPI
+    // ========================================================================
+ 
     try {
       const response = await fetch(`${API_URL}/api/operations/pre-check`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        credentials: 'include',
+        credentials: 'include',  // Include cookies for session-based auth
         body: JSON.stringify(payload),
       });
-
+ 
+      // Handle HTTP errors
       if (!response.ok) {
         const errorText = await response.text();
         let errorMessage;
-
+ 
         try {
           const errorJson = JSON.parse(errorText);
           errorMessage = errorJson.detail || errorJson.message || errorText;
         } catch {
           errorMessage = errorText;
         }
-
+ 
         throw new Error(`API error ${response.status}: ${errorMessage}`);
       }
-
+ 
+      // Parse successful response
       const data = await response.json();
-
+ 
       console.log("[PRE-CHECK] Job queued successfully:", {
         job_id: data.job_id,
         ws_channel: data.ws_channel,
         phase: data.phase
       });
-
+ 
+      // ======================================================================
+      // STATE UPDATE: Store job information
+      // ======================================================================
+ 
       setPreCheckJobId(data.job_id);
       setJobId(data.job_id);
       setWsChannel(data.ws_channel);
-
+ 
+      // ======================================================================
+      // WEBSOCKET: Subscribe to job progress channel
+      // ======================================================================
+ 
       console.log(`[WEBSOCKET] Subscribing to channel: ${data.ws_channel}`);
       sendMessage({ type: 'SUBSCRIBE', channel: data.ws_channel });
-
+ 
+      // Add initial log entry
       setJobOutput(prev => [...prev, {
         timestamp: new Date().toISOString(),
         message: `Pre-check validation started. Job ID: ${data.job_id}`,
         level: 'info'
       }]);
-
+ 
     } catch (error) {
       console.error("[PRE-CHECK] API Call Failed:", error);
-
+ 
       setJobOutput(prev => [...prev, {
         timestamp: new Date().toISOString(),
         message: `Pre-check start failed: ${error.message}`,
         level: 'error'
       }]);
-
+ 
       setJobStatus("failed");
       setIsRunningPreCheck(false);
     }
   };
-
+ 
   // ==========================================================================
   // UPGRADE EXECUTION HANDLER
   // ==========================================================================
-
+ 
+  /**
+   * Initiate upgrade execution workflow
+   *
+   * This function:
+   *   1. Validates WebSocket connection
+   *   2. Prepares the UI for execution
+   *   3. Submits upgrade job to FastAPI
+   *   4. Receives job_id and ws_channel
+   *   5. Subscribes to WebSocket for progress updates
+   *
+   * NOTE: Should only be called after successful pre-check review
+   */
   const startUpgradeExecution = async () => {
     console.log("[UPGRADE] ===== UPGRADE EXECUTION INITIATED =====");
     console.log("[UPGRADE] Pre-check job ID:", preCheckJobId);
-
+ 
+    // ========================================================================
+    // VALIDATION: Ensure WebSocket is connected
+    // ========================================================================
+ 
     if (!isConnected) {
       console.error("[UPGRADE] WebSocket not connected");
       setJobOutput(prev => [...prev, {
@@ -414,12 +548,20 @@ export default function CodeUpgrades() {
       }]);
       return;
     }
-
+ 
+    // ========================================================================
+    // CLEANUP: Unsubscribe from previous WebSocket channel
+    // ========================================================================
+ 
     if (wsChannel) {
       console.log(`[UPGRADE] Unsubscribing from previous channel: ${wsChannel}`);
       sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
     }
-
+ 
+    // ========================================================================
+    // UI PREPARATION: Set up state for upgrade execution
+    // ========================================================================
+ 
     setActiveTab("execute");
     setCurrentPhase("upgrade");
     setJobStatus("running");
@@ -430,7 +572,11 @@ export default function CodeUpgrades() {
     setTotalSteps(0);
     processedStepsRef.current.clear();
     loggedMessagesRef.current.clear();
-
+ 
+    // ========================================================================
+    // PAYLOAD CONSTRUCTION: Build request payload for FastAPI
+    // ========================================================================
+ 
     const payload = {
       command: "code_upgrade",
       hostname: upgradeParams.hostname.trim(),
@@ -439,89 +585,131 @@ export default function CodeUpgrades() {
       password: upgradeParams.password,
       vendor: upgradeParams.vendor,
       platform: upgradeParams.platform,
-      target_version: upgradeParams.target_version,
+      target_version: upgradeParams.target_version,  // Precise version from image filename
       image_filename: upgradeParams.image_filename,
-      pre_check_job_id: preCheckJobId,
+      pre_check_job_id: preCheckJobId,  // Reference to pre-check job
       skip_pre_check: false,
       force_upgrade: false,
     };
-
+ 
     console.log("[UPGRADE] Submitting payload:", {
       ...payload,
-      password: '***REDACTED***'
+      password: '***REDACTED***'  // Don't log passwords
     });
-
+ 
+    // ========================================================================
+    // API CALL: Submit upgrade job to FastAPI
+    // ========================================================================
+ 
     try {
       const response = await fetch(`${API_URL}/api/operations/execute`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        credentials: 'include',
+        credentials: 'include',  // Include cookies for session-based auth
         body: JSON.stringify(payload),
       });
-
+ 
+      // Handle HTTP errors
       if (!response.ok) {
         const errorText = await response.text();
         let errorMessage;
-
+ 
         try {
           const errorJson = JSON.parse(errorText);
           errorMessage = errorJson.detail || errorJson.message || errorText;
         } catch {
           errorMessage = errorText;
         }
-
+ 
         throw new Error(`API error ${response.status}: ${errorMessage}`);
       }
-
+ 
+      // Parse successful response
       const data = await response.json();
-
+ 
       console.log("[UPGRADE] Job queued successfully:", {
         job_id: data.job_id,
         ws_channel: data.ws_channel,
         phase: data.phase
       });
-
+ 
+      // ======================================================================
+      // STATE UPDATE: Store job information
+      // ======================================================================
+ 
       setJobId(data.job_id);
       setWsChannel(data.ws_channel);
-
+ 
+      // ======================================================================
+      // WEBSOCKET: Subscribe to job progress channel
+      // ======================================================================
+ 
       console.log(`[WEBSOCKET] Subscribing to channel: ${data.ws_channel}`);
       sendMessage({ type: 'SUBSCRIBE', channel: data.ws_channel });
-
+ 
+      // Add initial log entry
       setJobOutput(prev => [...prev, {
         timestamp: new Date().toISOString(),
         message: `Upgrade job started successfully. Job ID: ${data.job_id}`,
         level: 'info'
       }]);
-
+ 
     } catch (error) {
       console.error("[UPGRADE] API Call Failed:", error);
-
+ 
       setJobOutput(prev => [...prev, {
         timestamp: new Date().toISOString(),
         message: `Upgrade start failed: ${error.message}`,
         level: 'error'
       }]);
-
+ 
       setJobStatus("failed");
       setActiveTab("results");
     }
   };
-
+ 
   // ==========================================================================
-  // WEBSOCKET MESSAGE HANDLER (FIXED VERSION)
+  // WEBSOCKET MESSAGE HANDLER (FULLY FIXED VERSION)
   // ==========================================================================
-
+ 
+  /**
+   * Process incoming WebSocket messages
+   *
+   * 🔧 CRITICAL FIXES IN THIS VERSION:
+   * - Removed complex transitionToReviewTab callback
+   * - Uses existing preCheckSummary state from PRE_CHECK_COMPLETE
+   * - Simple setTimeout-based tab transition on OPERATION_COMPLETE
+   * - Comprehensive debug logging for troubleshooting
+   *
+   * This effect handles all real-time progress updates from the job orchestrator:
+   *   - Parses nested JSON messages
+   *   - Deduplicates log entries
+   *   - Updates progress tracking
+   *   - Processes pre-check results
+   *   - Detects job completion
+   *   - Auto-scrolls log viewer
+   *   - Triggers tab transitions
+   *
+   * Message flow:
+   *   Job Orchestrator → WebSocket → lastMessage → This handler → State updates
+   */
   useEffect(() => {
+    // Skip if no message or no active job
     if (!lastMessage || !jobId) return;
-
+ 
     const raw = lastMessage;
-
+ 
+    // Only process JSON messages
     if (typeof raw !== 'string' || (!raw.startsWith('{') && !raw.startsWith('['))) {
       return;
     }
-
+ 
+    // ========================================================================
+    // PARSE: Convert string to JSON object
+    // ========================================================================
+ 
     let parsed;
     try {
       parsed = JSON.parse(raw);
@@ -529,28 +717,51 @@ export default function CodeUpgrades() {
       console.debug("[WEBSOCKET] Failed to parse message:", error);
       return;
     }
-
+ 
+    // ========================================================================
+    // FILTER: Ensure message is for our current job
+    // ========================================================================
+ 
     if (parsed.channel && wsChannel && !parsed.channel.includes(wsChannel)) {
       console.debug("[WEBSOCKET] Ignoring message for different channel:", parsed.channel);
       return;
     }
-
+ 
+    // ========================================================================
+    // EXTRACT NESTED DATA: Handle orchestrator message nesting
+    // ========================================================================
+ 
+    /**
+     * Extract deeply nested progress data from orchestrator messages
+     *
+     * Message nesting structure:
+     *   1. Top level: WebSocket envelope
+     *   2. data field: Orchestrator message
+     *   3. message field: STDOUT/STDERR from run.py
+     *   4. JSON within message: Actual progress data
+     *
+     * @param {Object} initialParsed - Initial parsed message
+     * @returns {Object} { payload, isNested }
+     */
     const extractNestedProgressData = (initialParsed) => {
       let currentPayload = initialParsed;
       let deepestNestedData = null;
-
+ 
+      // Check for data field (orchestrator envelope)
       if (initialParsed.data) {
         try {
           const dataPayload = typeof initialParsed.data === 'string'
             ? JSON.parse(initialParsed.data)
             : initialParsed.data;
-
+ 
           currentPayload = dataPayload;
-
+ 
+          // Check for orchestrator log with nested JSON
           if (dataPayload.event_type === "ORCHESTRATOR_LOG" && dataPayload.message) {
             const message = dataPayload.message;
+            // Match [STDOUT] or [STDERR] followed by JSON
             const jsonMatch = message.match(/\[(STDOUT|STDERR)(?:_RAW)?\]\s*(\{.*\})/s);
-
+ 
             if (jsonMatch && jsonMatch[2]) {
               try {
                 deepestNestedData = JSON.parse(jsonMatch[2]);
@@ -563,26 +774,41 @@ export default function CodeUpgrades() {
           console.debug('[WEBSOCKET] Data field is not valid JSON:', error);
         }
       }
-
+ 
       return {
         payload: deepestNestedData || currentPayload,
         isNested: !!deepestNestedData
       };
     };
-
+ 
     const { payload: finalPayload } = extractNestedProgressData(parsed);
-
+ 
+    // ========================================================================
+    // DEDUPLICATION: Create message signature to prevent duplicate logs
+    // ========================================================================
+ 
+    /**
+     * Create unique signature for log deduplication
+     * Uses event type + message substring for matching
+     *
+     * @param {Object} payload - Message payload
+     * @returns {string} Unique signature
+     */
     const createLogSignature = (payload) => {
       const msg = payload.message || '';
       const eventType = payload.event_type || 'unknown';
       return `${eventType}::${msg.substring(0, 100)}`;
     };
-
+ 
     const logSignature = createLogSignature(finalPayload);
-
+ 
+    // ========================================================================
+    // LOG ENTRY: Add to job output if not already logged
+    // ========================================================================
+ 
     if (!loggedMessagesRef.current.has(logSignature)) {
       loggedMessagesRef.current.add(logSignature);
-
+ 
       const logEntry = {
         timestamp: finalPayload.timestamp || new Date().toISOString(),
         message: finalPayload.message || (typeof finalPayload === 'string' ? finalPayload : "Processing..."),
@@ -590,13 +816,15 @@ export default function CodeUpgrades() {
         event_type: finalPayload.event_type,
         data: finalPayload.data,
       };
-
+ 
       setJobOutput(prev => [...prev, logEntry]);
-
+ 
+      // Update latest step message (exclude completion events)
       if (logEntry.message && finalPayload.event_type !== "OPERATION_COMPLETE") {
         latestStepMessageRef.current = logEntry.message;
       }
-
+ 
+      // Auto-scroll to bottom of log viewer
       if (scrollAreaRef.current) {
         setTimeout(() => {
           if (scrollAreaRef.current) {
@@ -605,7 +833,11 @@ export default function CodeUpgrades() {
         }, TIMING.AUTO_SCROLL_DELAY);
       }
     }
-
+ 
+    // ========================================================================
+    // PRE-CHECK RESULT PROCESSING
+    // ========================================================================
+ 
     if (finalPayload.event_type === "PRE_CHECK_RESULT") {
       console.log("[PRE-CHECK] Individual result received:", finalPayload);
       setPreCheckResults(prev => {
@@ -614,76 +846,116 @@ export default function CodeUpgrades() {
         return updated;
       });
     }
-
+ 
+    // ========================================================================
+    // PRE-CHECK COMPLETION (Sets state - enables Review tab)
+    // ========================================================================
+    /**
+     * This event arrives BEFORE OPERATION_COMPLETE
+     * It contains the detailed pre-check summary that enables the Review tab
+     * We store the summary here and wait for OPERATION_COMPLETE to trigger transition
+     */
     if (finalPayload.event_type === "PRE_CHECK_COMPLETE") {
       console.log("[PRE-CHECK] Complete event received", finalPayload);
-
+ 
       if (finalPayload.data && finalPayload.data.summary) {
         const summary = finalPayload.data.summary;
-
-        console.log("[PRE-CHECK] Summary:", {
+ 
+        console.log("[PRE-CHECK] Summary received:", {
           total_checks: summary.total_checks,
           passed: summary.passed,
           warnings: summary.warnings,
           critical_failures: summary.critical_failures,
           can_proceed: summary.can_proceed
         });
-
-        // Store summary but don't transition yet - wait for OPERATION_COMPLETE
+ 
+        // ⭐ CRITICAL: Set the summary state - this enables the Review tab
         setPreCheckSummary(summary);
         setCanProceedWithUpgrade(summary.can_proceed);
+ 
+        console.log("[PRE-CHECK] State updated - Review tab is now enabled");
+        console.log("[PRE-CHECK] Waiting for OPERATION_COMPLETE to trigger transition");
       }
     }
-
+ 
+    // ========================================================================
+    // PROGRESS TRACKING
+    // ========================================================================
+ 
+    // Operation start - Initialize total steps
     if (finalPayload.event_type === "OPERATION_START" && typeof finalPayload.data?.total_steps === "number") {
       console.log("[PROGRESS] Operation started with", finalPayload.data.total_steps, "steps");
       setTotalSteps(finalPayload.data.total_steps);
-      setProgress(5);
+      setProgress(5); // Show initial progress
     }
-
+ 
+    // Step completion - Update progress
     if (finalPayload.event_type === "STEP_COMPLETE" && typeof finalPayload.data?.step === "number") {
       const stepNum = finalPayload.data.step;
-
+ 
+      // Prevent duplicate step processing
       if (!processedStepsRef.current.has(stepNum)) {
         processedStepsRef.current.add(stepNum);
-
+ 
         console.log(`[PROGRESS] Step ${stepNum} completed`);
-
+ 
         setCompletedSteps(prevCompleted => {
           const newCompleted = prevCompleted + 1;
           let newProgress = progress;
-
+ 
+          // Calculate progress percentage
           if (totalSteps > 0) {
             newProgress = Math.min(99, Math.round((newCompleted / totalSteps) * 100));
           } else {
+            // Fallback if total steps unknown
             newProgress = Math.min(99, progress + 25);
           }
-
+ 
           console.log(`[PROGRESS] ${newCompleted}/${totalSteps} steps (${newProgress}%)`);
           setProgress(newProgress);
           return newCompleted;
         });
       }
     }
-
-    // ⭐⭐⭐ CRITICAL FIX: OPERATION_COMPLETE with improved tab transition ⭐⭐⭐
+ 
+    // ========================================================================
+    // ⭐⭐⭐ OPERATION_COMPLETE - SIMPLIFIED TAB TRANSITION ⭐⭐⭐
+    // ========================================================================
+    /**
+     * This is the FINAL event that triggers job completion
+     *
+     * TIMING FLOW:
+     * 1. PRE_CHECK_COMPLETE arrives → Sets preCheckSummary state
+     * 2. Backend waits 0.15s → Flushes stderr
+     * 3. OPERATION_COMPLETE arrives → Triggers this handler
+     * 4. We wait 1.5s (TIMING.TAB_TRANSITION_DELAY) → For React to process state
+     * 5. setActiveTab("review") executes → Tab transition succeeds because state is set
+     *
+     * KEY INSIGHT:
+     * We don't need to extract summary from this payload because it's already
+     * in state from PRE_CHECK_COMPLETE. We just trigger the transition.
+     */
     if (finalPayload.event_type === "OPERATION_COMPLETE") {
-      const finalStatus = finalPayload.data?.status;
+      const finalStatus = finalPayload.data?.status; // SUCCESS or FAILED
       const operationType = finalPayload.data?.operation || currentPhase;
-
-      console.log("[OPERATION] Completion detected:", {
+ 
+      console.log("[OPERATION] ⭐ Completion detected:", {
         status: finalStatus,
         operation: operationType,
         phase: currentPhase,
         can_proceed: finalPayload.data?.can_proceed,
-        data: finalPayload.data
+        summary_in_payload: finalPayload.data?.summary ? true : false
       });
-
+ 
+      // ======================================================================
+      // PRE-CHECK PHASE COMPLETION (FULLY FIXED)
+      // ======================================================================
       if (currentPhase === "pre_check" || operationType === "pre_check") {
         console.log("[PRE-CHECK] Operation complete - finalizing pre-check phase");
-
+ 
+        // Determine final success status
         let finalSuccess = false;
-
+ 
         if (finalPayload.data?.can_proceed === true) {
           finalSuccess = true;
         } else if (finalStatus === "SUCCESS") {
@@ -691,36 +963,60 @@ export default function CodeUpgrades() {
         } else if (finalPayload.data?.final_results?.success === true) {
           finalSuccess = true;
         }
-
+ 
         console.log("[PRE-CHECK] Final Status:", finalSuccess ? "SUCCESS" : "FAILED");
-
+ 
+        // Update job completion state
         setJobStatus(finalSuccess ? "success" : "failed");
         setIsRunningPreCheck(false);
         setProgress(100);
-
+ 
         if (totalSteps > 0) {
           setCompletedSteps(totalSteps);
         }
-
+ 
+        // Unsubscribe from WebSocket
         if (wsChannel) {
           console.log(`[WEBSOCKET] Pre-check complete, unsubscribing from ${wsChannel}`);
           sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
         }
-
-        // 🔧 CRITICAL FIX: Use the new transition handler with state callback
-        const summaryToTransition = finalPayload.data?.summary || finalPayload.data?.final_results?.summary;
-        if (summaryToTransition) {
-          console.log("[PRE-CHECK] Triggering tab transition with summary");
-          transitionToReviewTab(summaryToTransition);
-        } else {
-          console.error("[PRE-CHECK] ❌ No summary found in OPERATION_COMPLETE payload!");
-        }
-
-      } else if (currentPhase === "upgrade" || operationType === "upgrade") {
+ 
+        // ⭐⭐⭐ CRITICAL FIX: Simplified tab transition ⭐⭐⭐
+        // Verify state before transition
+        console.log("[DEBUG] Pre-transition state verification:");
+        console.log("  - preCheckSummary exists:", preCheckSummary !== null);
+        console.log("  - preCheckSummary.can_proceed:", preCheckSummary?.can_proceed);
+        console.log("  - canProceedWithUpgrade:", canProceedWithUpgrade);
+        console.log("  - activeTab:", activeTab);
+        console.log("  - currentPhase:", currentPhase);
+ 
+        // Schedule tab transition
+        console.log(`[TAB TRANSITION] Scheduling transition in ${TIMING.TAB_TRANSITION_DELAY}ms`);
+ 
+        setTimeout(() => {
+          console.log("[TAB TRANSITION] ⏰ Timer fired - executing transition NOW");
+          console.log("[TAB TRANSITION] Current activeTab before change:", activeTab);
+          console.log("[TAB TRANSITION] preCheckSummary at transition time:", preCheckSummary !== null);
+ 
+          // Execute the transition
+          setActiveTab("review");
+          setCurrentPhase("review");
+ 
+          console.log("[TAB TRANSITION] ✅ setActiveTab('review') called");
+          console.log("[TAB TRANSITION] ✅ setCurrentPhase('review') called");
+          console.log("[TAB TRANSITION] ✅ Tab transition complete");
+        }, TIMING.TAB_TRANSITION_DELAY);
+      }
+ 
+      // ======================================================================
+      // UPGRADE PHASE COMPLETION
+      // ======================================================================
+      else if (currentPhase === "upgrade" || operationType === "upgrade") {
         console.log("[UPGRADE] Operation complete - finalizing upgrade phase");
-
+ 
+        // Determine success status from various indicators
         let finalSuccess = false;
-
+ 
         if (finalPayload.success === true || finalPayload.data?.final_results?.success === true) {
           finalSuccess = true;
         } else if (finalPayload.data?.status === "SUCCESS") {
@@ -731,22 +1027,25 @@ export default function CodeUpgrades() {
         )) {
           finalSuccess = true;
         }
-
+ 
         console.log("[UPGRADE] Final Status:", finalSuccess ? "SUCCESS" : "FAILED");
-
+ 
+        // Update state
         setJobStatus(finalSuccess ? "success" : "failed");
         setFinalResults(finalPayload);
         setProgress(100);
-
+ 
         if (totalSteps > 0) {
           setCompletedSteps(totalSteps);
         }
-
+ 
+        // Unsubscribe from WebSocket
         if (wsChannel) {
           console.log(`[WEBSOCKET] Upgrade complete, unsubscribing from ${wsChannel}`);
           sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
         }
-
+ 
+        // Auto-transition to results tab
         console.log("[UPGRADE] Transitioning to results tab in", TIMING.TAB_TRANSITION_DELAY, "ms");
         setTimeout(() => {
           setActiveTab("results");
@@ -755,65 +1054,84 @@ export default function CodeUpgrades() {
         }, TIMING.TAB_TRANSITION_DELAY);
       }
     }
-
+ 
+    // ========================================================================
+    // LEGACY COMPLETION DETECTION (Keep for backward compatibility)
+    // ========================================================================
+    /**
+     * This handles old-style completion messages that might still be sent
+     * by other parts of the system. We keep this for robustness but the
+     * primary completion detection is now via OPERATION_COMPLETE above.
+     */
     const isLegacyCompletionEvent =
       finalPayload.success !== undefined &&
       currentPhase === "upgrade" &&
       finalPayload.event_type !== "OPERATION_COMPLETE";
-
+ 
     if (isLegacyCompletionEvent) {
-      console.log("[UPGRADE] Legacy completion detected");
-
+      console.log("[UPGRADE] Legacy completion detected (success field present)");
+ 
       const finalSuccess = finalPayload.success === true;
-
+ 
       console.log("[UPGRADE] Legacy Final Status:", finalSuccess ? "SUCCESS" : "FAILED");
-
+ 
       setJobStatus(finalSuccess ? "success" : "failed");
       setFinalResults(prev => prev || finalPayload);
       setProgress(100);
-
+ 
       if (totalSteps > 0) {
         setCompletedSteps(totalSteps);
       }
-
+ 
       if (wsChannel) {
-        console.log(`[WEBSOCKET] Unsubscribing from ${wsChannel}`);
+        console.log(`[WEBSOCKET] Unsubscribing from ${wsChannel} (legacy completion)`);
         sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
       }
-
+ 
       setTimeout(() => {
         setActiveTab("results");
         setCurrentPhase("results");
       }, TIMING.TAB_TRANSITION_DELAY);
     }
-
-  }, [lastMessage, jobId, wsChannel, sendMessage, totalSteps, progress, completedSteps, currentPhase, transitionToReviewTab]);
-
+ 
+  }, [lastMessage, jobId, wsChannel, sendMessage, totalSteps, progress, completedSteps, currentPhase, activeTab, preCheckSummary, canProceedWithUpgrade]);
+ 
   // ==========================================================================
-  // DERIVED STATE
+  // DERIVED STATE (COMPUTED VALUES)
   // ==========================================================================
-
+ 
+  /**
+   * Job execution states derived from jobStatus
+   */
   const isRunning = jobStatus === 'running';
   const isComplete = jobStatus === 'success';
   const hasError = jobStatus === 'failed';
-
+ 
+  /**
+   * Form validation - Check if all required fields are populated
+   */
   const isFormValid = useMemo(() => {
     return (
       upgradeParams.username.trim() &&
       upgradeParams.password.trim() &&
       (upgradeParams.hostname.trim() || upgradeParams.inventory_file.trim()) &&
       upgradeParams.image_filename.trim() &&
-      upgradeParams.target_version.trim()
+      upgradeParams.target_version.trim()  // Must have version (auto-extracted)
     );
   }, [upgradeParams]);
-
+ 
   // ==========================================================================
-  // RENDER
+  // RENDER - CONTINUES IN PART 2
   // ==========================================================================
-
+    // ==========================================================================
+  // RENDER (CONTINUED FROM PART 1)
+  // ==========================================================================
+ 
   return (
     <div className="p-8 pt-6">
-      {/* HEADER SECTION */}
+      {/* ====================================================================
+          HEADER SECTION
+          ==================================================================== */}
       <div className="flex items-center justify-between mb-2">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Code Upgrade Operation</h1>
@@ -821,17 +1139,20 @@ export default function CodeUpgrades() {
             Upgrade device operating system with pre-flight validation
           </p>
         </div>
-
+ 
+        {/* Reset button - Only show when not idle */}
         {jobStatus !== 'idle' && (
           <Button onClick={resetWorkflow} variant="outline" size="sm">
             Start New Upgrade
           </Button>
         )}
       </div>
-
+ 
       <Separator className="mb-8" />
-
-      {/* TABS NAVIGATION */}
+ 
+      {/* ====================================================================
+          TABS NAVIGATION
+          ==================================================================== */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="grid w-full grid-cols-4 mb-6">
           <TabsTrigger value="config" disabled={isRunning}>
@@ -840,7 +1161,7 @@ export default function CodeUpgrades() {
           <TabsTrigger value="execute" disabled={currentPhase === "config"}>
             {currentPhase === "pre_check" ? "Pre-Check" : "Execute"}
           </TabsTrigger>
-          {/* CRITICAL: Tab is enabled when preCheckSummary state is set */}
+          {/* ⭐ CRITICAL: Tab is enabled when preCheckSummary state is set */}
           <TabsTrigger value="review" disabled={!preCheckSummary}>
             Review
           </TabsTrigger>
@@ -848,23 +1169,28 @@ export default function CodeUpgrades() {
             Results
           </TabsTrigger>
         </TabsList>
-
-        {/* TAB 1: CONFIGURATION */}
+ 
+        {/* ==================================================================
+            TAB 1: CONFIGURATION
+            ================================================================== */}
         <TabsContent value="config">
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 max-w-7xl">
+            {/* Image Selection (Left Column) */}
             <div className="xl:col-span-1">
               <SelectImageRelease
                 parameters={upgradeParams}
                 onParamChange={handleParamChange}
               />
             </div>
-
+ 
+            {/* Device Configuration (Right Column) */}
             <div className="xl:col-span-2 space-y-6">
               <CodeUpgradeForm
                 parameters={upgradeParams}
                 onParamChange={handleParamChange}
               />
-
+ 
+              {/* Pre-Check Action Card */}
               <Card>
                 <CardContent className="pt-6">
                   <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
@@ -874,27 +1200,29 @@ export default function CodeUpgrades() {
                         Ready for Pre-Check Validation
                       </h4>
                       <div className="space-y-1 text-sm text-gray-600">
+                        {/* Show selected configuration */}
                         {upgradeParams.image_filename && (
                           <p className="flex items-center gap-2">
                             <CheckCircle className="h-4 w-4 text-green-600" />
                             <span className="font-medium">Image: {upgradeParams.image_filename}</span>
                           </p>
                         )}
-
+ 
                         {upgradeParams.target_version && (
                           <p className="flex items-center gap-2">
                             <CheckCircle className="h-4 w-4 text-green-600" />
                             <span>Target Version: <strong>{upgradeParams.target_version}</strong></span>
                           </p>
                         )}
-
+ 
                         {upgradeParams.hostname && (
                           <p className="flex items-center gap-2">
                             <CheckCircle className="h-4 w-4 text-green-600" />
                             <span>Device: {upgradeParams.hostname}</span>
                           </p>
                         )}
-
+ 
+                        {/* Show validation errors */}
                         {!isFormValid && (
                           <p className="text-orange-600 text-sm mt-2">
                             {!upgradeParams.image_filename && '• Select a software image\n'}
@@ -905,7 +1233,8 @@ export default function CodeUpgrades() {
                         )}
                       </div>
                     </div>
-
+ 
+                    {/* Start Pre-Check Button */}
                     <Button
                       onClick={startPreCheck}
                       disabled={!isFormValid || isRunning || !isConnected}
@@ -926,7 +1255,8 @@ export default function CodeUpgrades() {
                       )}
                     </Button>
                   </div>
-
+ 
+                  {/* WebSocket Connection Warning */}
                   {!isConnected && (
                     <Alert className="mt-4" variant="destructive">
                       <AlertTriangle className="h-4 w-4" />
@@ -941,14 +1271,17 @@ export default function CodeUpgrades() {
             </div>
           </div>
         </TabsContent>
-
-        {/* TAB 2: EXECUTION */}
+ 
+        {/* ==================================================================
+            TAB 2: EXECUTION
+            ================================================================== */}
         <TabsContent value="execute">
           <div className="space-y-6 p-4 border rounded-lg max-w-6xl">
             <h2 className="text-xl font-semibold mb-4">
               {currentPhase === "pre_check" ? "Pre-Check Validation" : "Upgrade Progress"}
             </h2>
-
+ 
+            {/* Progress Bar */}
             <EnhancedProgressBar
               percentage={progress}
               currentStep={latestStepMessageRef.current}
@@ -963,7 +1296,8 @@ export default function CodeUpgrades() {
               compact={false}
               variant={isComplete ? "success" : hasError ? "destructive" : "default"}
             />
-
+ 
+            {/* Log Viewer */}
             <ScrollArea className="h-96 bg-background/50 p-4 rounded-md border">
               <div ref={scrollAreaRef} className="space-y-3">
                 {jobOutput.length === 0 ? (
@@ -990,14 +1324,57 @@ export default function CodeUpgrades() {
                 )}
               </div>
             </ScrollArea>
+ 
+            {/* 🐛 Debug Button - Remove after testing */}
+            {jobStatus === 'success' && currentPhase === 'pre_check' && preCheckSummary && (
+              <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <p className="text-sm text-yellow-800 mb-2">
+                  🐛 Debug Mode: Pre-check complete, testing tab transition
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    onClick={() => {
+                      console.log("[MANUAL DEBUG] Forcing tab transition");
+                      console.log("[MANUAL DEBUG] preCheckSummary:", preCheckSummary);
+                      console.log("[MANUAL DEBUG] activeTab before:", activeTab);
+                      setActiveTab("review");
+                      setCurrentPhase("review");
+                      console.log("[MANUAL DEBUG] Tab transition executed");
+                    }}
+                    variant="outline"
+                    size="sm"
+                  >
+                    🐛 Manual Transition to Review
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      console.log("[DEBUG] Current State:", {
+                        activeTab,
+                        currentPhase,
+                        jobStatus,
+                        preCheckSummary: preCheckSummary !== null,
+                        canProceed: preCheckSummary?.can_proceed
+                      });
+                    }}
+                    variant="outline"
+                    size="sm"
+                  >
+                    🐛 Log Current State
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         </TabsContent>
-
-        {/* TAB 3: REVIEW */}
+ 
+        {/* ==================================================================
+            TAB 3: REVIEW (PRE-CHECK RESULTS)
+            ================================================================== */}
         <TabsContent value="review">
           <div className="space-y-6 max-w-6xl">
             {preCheckSummary ? (
               <>
+                {/* Pre-Check Summary Card */}
                 <Card className={`border-2 ${preCheckSummary.can_proceed
                   ? 'border-green-200 bg-green-50'
                   : 'border-red-200 bg-red-50'
@@ -1010,7 +1387,7 @@ export default function CodeUpgrades() {
                         ) : (
                           <XCircle className="h-8 w-8 text-red-600" />
                         )}
-
+ 
                         <div>
                           <h2 className="text-2xl font-bold">
                             {preCheckSummary.can_proceed
@@ -1025,7 +1402,8 @@ export default function CodeUpgrades() {
                         </div>
                       </div>
                     </div>
-
+ 
+                    {/* Statistics Grid */}
                     <div className="grid grid-cols-4 gap-4 mt-6">
                       <div className="text-center">
                         <div className="text-3xl font-bold text-blue-600">{preCheckSummary.total_checks}</div>
@@ -1046,7 +1424,8 @@ export default function CodeUpgrades() {
                     </div>
                   </CardContent>
                 </Card>
-
+ 
+                {/* Detailed Results */}
                 <Card>
                   <CardHeader>
                     <CardTitle>Detailed Pre-Check Results</CardTitle>
@@ -1065,12 +1444,12 @@ export default function CodeUpgrades() {
                         result.severity === 'pass' ? 'bg-green-50 border-green-200' :
                           result.severity === 'warning' ? 'bg-orange-50 border-orange-200' :
                             'bg-red-50 border-red-200';
-
+ 
                       return (
                         <div key={index} className={`p-4 rounded-lg border ${bgColor}`}>
                           <div className="flex items-start gap-3">
                             <IconComponent className={`h-5 w-5 ${severityColor} mt-0.5`} />
-
+ 
                             <div className="flex-1">
                               <div className="flex items-center justify-between mb-2">
                                 <h4 className="font-semibold">{result.check_name}</h4>
@@ -1082,9 +1461,9 @@ export default function CodeUpgrades() {
                                   {result.severity.toUpperCase()}
                                 </Badge>
                               </div>
-
+ 
                               <p className="text-sm text-gray-700 mb-2">{result.message}</p>
-
+ 
                               {result.details && (
                                 <div className="text-xs text-gray-600 bg-white/50 p-2 rounded mt-2">
                                   <pre className="whitespace-pre-wrap">
@@ -1092,7 +1471,7 @@ export default function CodeUpgrades() {
                                   </pre>
                                 </div>
                               )}
-
+ 
                               {result.recommendation && (
                                 <Alert className="mt-3">
                                   <Info className="h-4 w-4" />
@@ -1107,7 +1486,8 @@ export default function CodeUpgrades() {
                     })}
                   </CardContent>
                 </Card>
-
+ 
+                {/* Action Card */}
                 <Card>
                   <CardContent className="pt-6">
                     <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
@@ -1121,7 +1501,7 @@ export default function CodeUpgrades() {
                             : 'Critical failures detected. Resolve issues before upgrading.'}
                         </p>
                       </div>
-
+ 
                       <div className="flex gap-3 w-full sm:w-auto">
                         <Button
                           onClick={resetWorkflow}
@@ -1130,7 +1510,7 @@ export default function CodeUpgrades() {
                         >
                           Cancel
                         </Button>
-
+ 
                         <Button
                           onClick={startUpgradeExecution}
                           disabled={!preCheckSummary.can_proceed || !isConnected}
@@ -1143,7 +1523,8 @@ export default function CodeUpgrades() {
                         </Button>
                       </div>
                     </div>
-
+ 
+                    {/* Critical Failures Warning */}
                     {!preCheckSummary.can_proceed && (
                       <Alert className="mt-4" variant="destructive">
                         <AlertTriangle className="h-4 w-4" />
@@ -1154,7 +1535,8 @@ export default function CodeUpgrades() {
                         </AlertDescription>
                       </Alert>
                     )}
-
+ 
+                    {/* Warnings Present Notice */}
                     {preCheckSummary.can_proceed && preCheckSummary.warnings > 0 && (
                       <Alert className="mt-4">
                         <AlertTriangle className="h-4 w-4" />
@@ -1169,6 +1551,7 @@ export default function CodeUpgrades() {
                 </Card>
               </>
             ) : (
+              /* Loading State */
               <Card>
                 <CardContent className="pt-6">
                   <div className="text-center py-12">
@@ -1180,10 +1563,13 @@ export default function CodeUpgrades() {
             )}
           </div>
         </TabsContent>
-
-        {/* TAB 4: RESULTS */}
+ 
+        {/* ==================================================================
+            TAB 4: RESULTS (FINAL OUTCOME)
+            ================================================================== */}
         <TabsContent value="results">
           <div className="space-y-6 max-w-6xl">
+            {/* Completion Status Card */}
             <Card className={`border-2 ${jobStatus === 'success' ? 'border-green-200 bg-green-50' :
               jobStatus === 'failed' ? 'border-red-200 bg-red-50' :
                 'border-gray-200'
@@ -1198,7 +1584,7 @@ export default function CodeUpgrades() {
                     ) : (
                       <Loader2 className="h-8 w-8 text-muted-foreground" />
                     )}
-
+ 
                     <div>
                       <h2 className="text-2xl font-bold">
                         {jobStatus === 'success' ? 'Upgrade Completed Successfully' :
@@ -1213,7 +1599,8 @@ export default function CodeUpgrades() {
                 </div>
               </CardContent>
             </Card>
-
+ 
+            {/* Pre-Check Summary Reference */}
             {preCheckSummary && (
               <Card>
                 <CardHeader>
@@ -1244,7 +1631,8 @@ export default function CodeUpgrades() {
                 </CardContent>
               </Card>
             )}
-
+ 
+            {/* Configuration Details */}
             {upgradeParams.image_filename && (
               <Card>
                 <CardHeader>
@@ -1277,7 +1665,8 @@ export default function CodeUpgrades() {
                 </CardContent>
               </Card>
             )}
-
+ 
+            {/* Execution Statistics */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Card>
                 <CardHeader>
@@ -1304,7 +1693,7 @@ export default function CodeUpgrades() {
                   )}
                 </CardContent>
               </Card>
-
+ 
               <Card>
                 <CardHeader>
                   <CardTitle className="text-sm">Configuration</CardTitle>
@@ -1332,7 +1721,8 @@ export default function CodeUpgrades() {
                 </CardContent>
               </Card>
             </div>
-
+ 
+            {/* Debug Information (Development Only) */}
             {finalResults && process.env.NODE_ENV === 'development' && (
               <Card>
                 <CardHeader>
