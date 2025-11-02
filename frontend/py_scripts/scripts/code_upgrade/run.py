@@ -1,18 +1,25 @@
 #!/usr/bin/env python3
 """
 ================================================================================
-SCRIPT:             Device Code Upgrade - MERGED VERSION (BEST OF BOTH)
+SCRIPT:             Device Code Upgrade - ENHANCED EVENT DELIVERY & ROBUST PRE-CHECKS
 FILENAME:           run.py
-VERSION:            16.0 (ROBUST PRE-CHECKS + CORRECT EVENT FLOW)
-LAST UPDATED:       2025-11-01
+VERSION:            16.0 (ROBUST EVENT DELIVERY + ENHANCED DEBUGGING)
+LAST UPDATED:       2025-11-02
 AUTHOR:             Network Automation Team
 ================================================================================
 
-🎯 COMBINES BEST FEATURES:
-    ✅ FROM SCRIPT 1: Correct event structure (uses "type" field)
-    ✅ FROM SCRIPT 2: Enhanced pre-check engine with robust file detection
-    ✅ FROM BOTH: Human-readable output and comprehensive validation
-    ✅ FIXED: WebSocket event compatibility with React frontend
+🎯 CRITICAL FIXES IN v16.0:
+    🔧 FIX 1: Enhanced event delivery with multiple flush strategies
+    🔧 FIX 2: Added comprehensive debug event flow tracking
+    🔧 FIX 3: Robust JSON serialization with fallbacks
+    🔧 FIX 4: Maintained all pre-check functionality
+    🔧 FIX 5: Improved event sequencing and timing
+
+🎯 EVENT DELIVERY IMPROVEMENTS:
+    📤 PRE_CHECK_COMPLETE event delivery with 3-stage flush
+    📤 Enhanced JSON structure for frontend compatibility
+    📤 Debug event flow tracking for troubleshooting
+    📤 Redundant event delivery for maximum reliability
 """
 
 import logging
@@ -62,6 +69,73 @@ DEFAULT_RETRY_ATTEMPTS = 3
 MINIMUM_STORAGE_FREE_PERCENT = 20
 STEPS_PER_DEVICE = 6
 
+# 🎯 ENHANCED EVENT DELIVERY CONSTANTS
+EVENT_DELIVERY_DELAY = 1.0  # Increased delay for better WebSocket delivery
+EVENT_FLUSH_DELAY = 0.5  # Additional flush delay
+EVENT_RETRY_COUNT = 2  # Number of retry attempts for critical events
+
+# ================================================================================
+# ENHANCED EVENT FLOW DEBUGGING
+# ================================================================================
+
+
+def debug_event_flow(event_type: str, data: Dict[str, Any], stage: str = "SENDING"):
+    """
+    🎯 ENHANCED: Comprehensive event flow debugging
+
+    Tracks event delivery through the entire pipeline for troubleshooting
+    """
+    debug_message = f"🔍 [EVENT_FLOW] {stage} {event_type}"
+
+    # Add critical data for key events
+    if event_type == "PRE_CHECK_COMPLETE":
+        if "pre_check_summary" in data:
+            summary = data["pre_check_summary"]
+            debug_message += f" | Checks: {summary.get('total_checks', 'N/A')}"
+            debug_message += f" | Can proceed: {summary.get('can_proceed', 'N/A')}"
+        else:
+            debug_message += " | ❌ MISSING PRE_CHECK_SUMMARY"
+
+    print(debug_message, file=sys.stderr, flush=True)
+
+    # Log detailed data for debugging
+    logger.debug(f"[EVENT_FLOW] {event_type} {stage} - Data keys: {list(data.keys())}")
+
+
+def safe_json_serialize(obj: Any) -> Any:
+    """
+    🎯 ENHANCED: Safe JSON serialization with comprehensive fallbacks
+
+    Handles non-serializable objects and provides clear error messages
+    """
+    if obj is None:
+        return None
+    elif isinstance(obj, (str, int, float, bool)):
+        return obj
+    elif isinstance(obj, dict):
+        return {k: safe_json_serialize(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [safe_json_serialize(item) for item in obj]
+    elif isinstance(obj, tuple):
+        return [safe_json_serialize(item) for item in obj]
+    elif isinstance(obj, Enum):
+        return obj.value
+    elif hasattr(obj, "__dict__"):
+        # Try to serialize objects using their __dict__
+        try:
+            return safe_json_serialize(obj.__dict__)
+        except Exception:
+            try:
+                return str(obj)
+            except Exception:
+                return "UNSERIALIZABLE_OBJECT"
+    else:
+        # Final fallback - convert to string
+        try:
+            return str(obj)
+        except Exception:
+            return "UNSERIALIZABLE_OBJECT"
+
 
 # ================================================================================
 # ENHANCED ENUM DEFINITIONS
@@ -70,6 +144,7 @@ class UpgradePhase(Enum):
     PENDING = "pending"
     PRE_CHECK = "pre_check"
     VERSION_ANALYSIS = "version_analysis"
+    USER_CONFIRMATION = "user_confirmation"
     CONNECTING = "connecting"
     VALIDATING = "validating"
     INSTALLING = "installing"
@@ -87,9 +162,14 @@ class PreCheckSeverity(Enum):
 
 
 class VersionAction(Enum):
-    UPGRADE = "upgrade"
-    DOWNGRADE = "downgrade"
-    MAINTAIN = "maintain"
+    MAJOR_UPGRADE = "major_upgrade"
+    MINOR_UPGRADE = "minor_upgrade"
+    SERVICE_UPGRADE = "service_upgrade"
+    MAJOR_DOWNGRADE = "major_downgrade"
+    MINOR_DOWNGRADE = "minor_downgrade"
+    SERVICE_DOWNGRADE = "service_downgrade"
+    SAME_VERSION = "same_version"
+    CROSS_BRANCH = "cross_branch"
     UNKNOWN = "unknown"
 
 
@@ -111,7 +191,7 @@ class PreCheckResult:
             "severity": self.severity.value,
             "passed": self.passed,
             "message": self.message,
-            "details": self.details,
+            "details": safe_json_serialize(self.details),
             "recommendation": self.recommendation,
         }
 
@@ -167,7 +247,7 @@ class DeviceStatus:
     target_version: str
     phase: UpgradePhase = UpgradePhase.PENDING
     message: str = "Initializing upgrade process"
-    initial_version: Optional[str] = None
+    current_version: Optional[str] = None
     final_version: Optional[str] = None
     version_action: VersionAction = VersionAction.UNKNOWN
     error: Optional[str] = None
@@ -181,7 +261,9 @@ class DeviceStatus:
     def update_phase(self, phase: UpgradePhase, message: str = ""):
         self.phase = phase
         self.message = message or phase.value.replace("_", " ").title()
-        logger.info(f"[{self.hostname}] STATUS: {self.phase.name} - {self.message}")
+        logger.info(
+            f"[{self.hostname}] PHASE: {self.phase.value.upper()} - {self.message}"
+        )
 
     def add_warning(self, warning: str):
         self.warnings.append(warning)
@@ -196,21 +278,191 @@ class DeviceStatus:
 
 
 # ================================================================================
-# PROGRESS REPORTING - CORRECTED VERSION (USES "type" FIELD)
+# HUMAN READABLE OUTPUT FORMATTER (FROM ENHANCED VERSION)
+# ================================================================================
+class HumanReadableFormatter:
+    """Creates beautiful human-readable output for manual debugging"""
+
+    @staticmethod
+    def print_banner(title: str, width: int = 80):
+        print(f"\n{'=' * width}")
+        print(f"🎯 {title.upper()}")
+        print(f"{'=' * width}")
+
+    @staticmethod
+    def print_check_results_table(pre_check_summary: PreCheckSummary):
+        print(f"\n📊 PRE-CHECK RESULTS SUMMARY")
+        print(f"{'─' * 80}")
+
+        stats_line = f"✅ Passed: {pre_check_summary.passed} | "
+        stats_line += f"⚠️  Warnings: {pre_check_summary.warnings} | "
+        stats_line += f"❌ Critical: {pre_check_summary.critical_failures} | "
+        stats_line += f"📋 Total: {pre_check_summary.total_checks}"
+        print(stats_line)
+        print(f"{'─' * 80}")
+
+        print(f"\n{'CHECK NAME':<25} {'STATUS':<12} {'SEVERITY':<10} {'MESSAGE'}")
+        print(f"{'─' * 25} {'─' * 12} {'─' * 10} {'─' * 40}")
+
+        for result in pre_check_summary.results:
+            status_icon = "✅" if result.passed else "❌"
+            status_text = "PASS" if result.passed else "FAIL"
+
+            severity_icon = {
+                PreCheckSeverity.PASS: "🟢",
+                PreCheckSeverity.WARNING: "🟡",
+                PreCheckSeverity.CRITICAL: "🔴",
+            }.get(result.severity, "⚪")
+
+            severity_text = result.severity.value.upper()
+
+            message = result.message
+            if len(message) > 40:
+                message = message[:37] + "..."
+
+            print(
+                f"{result.check_name:<25} {status_icon} {status_text:<8} {severity_icon} {severity_text:<6} {message}"
+            )
+
+        print(f"{'─' * 80}")
+
+        if pre_check_summary.can_proceed:
+            print(f"\n🎉 OVERALL STATUS: ✅ UPGRADE CAN PROCEED")
+        else:
+            print(
+                f"\n🚫 OVERALL STATUS: ❌ UPGRADE BLOCKED - Critical failures detected"
+            )
+
+    @staticmethod
+    def print_detailed_check_results(pre_check_summary: PreCheckSummary):
+        print(f"\n📋 DETAILED CHECK RESULTS")
+        print(f"{'─' * 80}")
+
+        for i, result in enumerate(pre_check_summary.results, 1):
+            status_icon = "✅" if result.passed else "❌"
+            severity_icon = {
+                PreCheckSeverity.PASS: "🟢",
+                PreCheckSeverity.WARNING: "🟡",
+                PreCheckSeverity.CRITICAL: "🔴",
+            }.get(result.severity, "⚪")
+
+            print(f"\n{i}. {severity_icon} {result.check_name} {status_icon}")
+            print(f"   Message: {result.message}")
+
+            if result.details:
+                print(
+                    f"   Details: {json.dumps(result.details, indent=2).replace(chr(10), chr(10) + '   ')}"
+                )
+
+            if result.recommendation:
+                print(f"   💡 Recommendation: {result.recommendation}")
+
+        print(f"{'─' * 80}")
+
+    @staticmethod
+    def print_upgrade_recommendation(pre_check_summary: PreCheckSummary):
+        print(f"\n🎯 UPGRADE RECOMMENDATION")
+        print(f"{'─' * 80}")
+
+        if not pre_check_summary.can_proceed:
+            print("🚫 UPGRADE BLOCKED")
+            print("\nCritical failures detected that must be resolved before upgrade:")
+            for result in pre_check_summary.results:
+                if not result.passed and result.severity == PreCheckSeverity.CRITICAL:
+                    print(f"  • {result.check_name}: {result.message}")
+                    if result.recommendation:
+                        print(f"    💡 {result.recommendation}")
+        else:
+            print("✅ PRE-CHECKS PASSED - Ready for upgrade")
+
+        print(f"{'─' * 80}")
+
+
+# ================================================================================
+# ENHANCED PROGRESS REPORTING - ROBUST EVENT DELIVERY
 # ================================================================================
 def send_progress(event_type: str, data: Dict[str, Any], message: str = ""):
     """
-    🎯 CRITICAL FIX: Uses "type" field for React frontend compatibility
-    This matches the working script that successfully transitions tabs
+    🎯 ENHANCED: Send structured progress updates via stderr with robust delivery
+
+    Features:
+    - Safe JSON serialization with fallbacks
+    - Comprehensive event flow debugging
+    - Multiple flush strategies for reliability
+    - Retry mechanism for critical events
     """
+    # Create event with safe serialization
     event = {
-        "type": event_type,  # 🎯 KEY FIX: Uses "type" not "event_type"
+        "event_type": event_type,  # 🎯 CHANGED: "type" → "event_type"
         "timestamp": time.time(),
         "message": message,
-        "data": data,
+        "data": safe_json_serialize(data),
     }
-    print(json.dumps(event), file=sys.stderr, flush=True)
-    logger.debug(f"📤 SENT EVENT: {event_type} - {message}")
+
+    # 🎯 DEBUG: Track event flow
+    debug_event_flow(event_type, data, "SENDING")
+
+    # 🎯 ENHANCED: Multiple delivery attempts for critical events
+    max_attempts = (
+        EVENT_RETRY_COUNT
+        if event_type in ["PRE_CHECK_COMPLETE", "OPERATION_COMPLETE"]
+        else 1
+    )
+
+    for attempt in range(max_attempts):
+        try:
+            # Serialize with error handling
+            event_json = json.dumps(event, ensure_ascii=False)
+
+            # Write with explicit flush
+            print(event_json, file=sys.stderr, flush=True)
+
+            # Additional system-level flush
+            try:
+                sys.stderr.flush()
+            except Exception:
+                pass
+
+            if attempt > 0:
+                logger.info(
+                    f"📤 [{event_type}] Retry {attempt + 1}/{max_attempts} successful"
+                )
+            else:
+                logger.debug(f"📤 SENT EVENT: {event_type} - {message}")
+
+            # Success - break retry loop
+            break
+
+        except Exception as e:
+            logger.error(
+                f"❌ [{event_type}] Failed to send event (attempt {attempt + 1}): {e}"
+            )
+
+            if attempt == max_attempts - 1:  # Last attempt failed
+                logger.critical(f"💥 [{event_type}] ALL DELIVERY ATTEMPTS FAILED!")
+
+                # Emergency fallback - send simplified event
+                try:
+                    emergency_event = {
+                        "event_type": event_type,
+                        "timestamp": time.time(),
+                        "message": f"EMERGENCY: {message}",
+                        "error": f"Original delivery failed: {str(e)}",
+                        "data": {"success": False, "emergency": True},
+                    }
+                    print(json.dumps(emergency_event), file=sys.stderr, flush=True)
+                    try:
+                        sys.stderr.flush()
+                    except Exception:
+                        pass
+                except Exception:
+                    logger.critical(
+                        f"💥 [{event_type}] EMERGENCY DELIVERY ALSO FAILED!"
+                    )
+
+            # Wait before retry
+            if attempt < max_attempts - 1:
+                time.sleep(0.2)
 
 
 def send_device_progress(
@@ -220,14 +472,14 @@ def send_device_progress(
     message: str = "",
     extra_data: Optional[Dict[str, Any]] = None,
 ):
-    """Send device-specific progress update"""
+    """Send device-specific progress update with enhanced delivery"""
     data = {
         "device": device_status.hostname,
         "phase": device_status.phase.value,
         "step": step,
         "total_steps": total_steps,
         "message": message or device_status.message,
-        "initial_version": device_status.initial_version,
+        "initial_version": device_status.current_version,
         "target_version": device_status.target_version,
         "version_action": device_status.version_action.value,
         "success": device_status.success,
@@ -242,10 +494,16 @@ def send_device_progress(
 
 def send_pre_check_results(device_status: DeviceStatus):
     """
-    🎯 CRITICAL FIX: Send PRE_CHECK_COMPLETE event with correct field name
+    🎯 ENHANCED: Robust PRE_CHECK_COMPLETE event delivery with multiple safeguards
+
+    Delivery Strategy:
+    1. Primary event with full data
+    2. Multiple flush operations
+    3. Redundant ORCHESTRATOR_LOG fallback
+    4. Comprehensive debugging
     """
     if not device_status.pre_check_summary:
-        logger.error(f"[{device_status.hostname}] No pre-check results to send")
+        logger.error(f"[{device_status.hostname}] ❌ No pre-check results to send")
         return
 
     summary = device_status.pre_check_summary.to_dict()
@@ -259,23 +517,62 @@ def send_pre_check_results(device_status: DeviceStatus):
         "critical_failures": summary["critical_failures"],
     }
 
-    # 🎯 CRITICAL: Send PRE_CHECK_COMPLETE event for frontend
+    # 🎯 STAGE 1: Send primary PRE_CHECK_COMPLETE event
+    logger.info(
+        f"[{device_status.hostname}] 🎯 STAGE 1: Sending PRE_CHECK_COMPLETE event"
+    )
     send_progress("PRE_CHECK_COMPLETE", data, "Pre-check validation completed")
-    logger.info(f"[{device_status.hostname}] ✅ PRE_CHECK_COMPLETE sent to frontend")
 
-    # Allow time for the event to be processed
-    time.sleep(0.1)
+    # 🎯 STAGE 2: Force flush and delay for event delivery reliability
+    logger.info(
+        f"[{device_status.hostname}] 🎯 STAGE 2: Flushing and delaying for delivery"
+    )
+    for i in range(3):  # Triple flush for reliability
+        try:
+            sys.stderr.flush()
+        except Exception:
+            pass
+        time.sleep(EVENT_FLUSH_DELAY / 3)
+
+    # 🎯 STAGE 3: Send redundant ORCHESTRATOR_LOG for frontend fallback handling
+    logger.info(
+        f"[{device_status.hostname}] 🎯 STAGE 3: Sending redundant ORCHESTRATOR_LOG"
+    )
+    send_progress(
+        "ORCHESTRATOR_LOG",
+        {
+            "message": f"PRE_CHECK_COMPLETE: Validation completed - {summary['total_checks']} checks, {summary['can_proceed']} can proceed",
+            "level": "info",
+            "pre_check_summary_available": True,
+            "total_checks": summary["total_checks"],
+            "can_proceed": summary["can_proceed"],
+        },
+        "Pre-check completion logged with summary",
+    )
+
+    # 🎯 FINAL FLUSH: Ensure all messages are delivered
+    logger.info(f"[{device_status.hostname}] 🎯 FINAL: Ensuring event delivery")
+    try:
+        sys.stderr.flush()
+    except Exception:
+        pass
+    time.sleep(EVENT_DELIVERY_DELAY)
+
+    logger.info(
+        f"[{device_status.hostname}] ✅ PRE_CHECK_COMPLETE events delivered successfully - "
+        f"{summary['total_checks']} checks, can_proceed: {summary['can_proceed']}"
+    )
 
 
 def send_operation_complete(
     device_status: DeviceStatus, success: bool, message: str = ""
 ):
-    """Send operation completion event"""
+    """Send operation completion event with enhanced reliability"""
     data = {
         "device": device_status.hostname,
         "success": success,
         "message": message or device_status.message,
-        "initial_version": device_status.initial_version,
+        "initial_version": device_status.current_version,
         "final_version": device_status.final_version,
         "version_action": device_status.version_action.value,
         "warnings": device_status.warnings,
@@ -285,14 +582,29 @@ def send_operation_complete(
     if device_status.pre_check_summary:
         data["pre_check_summary"] = device_status.pre_check_summary.to_dict()
 
+    logger.info(f"[{device_status.hostname}] 🎯 Sending OPERATION_COMPLETE event")
     send_progress("OPERATION_COMPLETE", data, message)
+
+    # 🎯 ENHANCED: Ensure event delivery before proceeding
+    try:
+        sys.stderr.flush()
+    except Exception:
+        pass
+    time.sleep(EVENT_DELIVERY_DELAY)
+
     logger.info(
-        f"[{device_status.hostname}] ✅ OPERATION_COMPLETE sent: success={success}"
+        f"[{device_status.hostname}] ✅ OPERATION_COMPLETE delivered: success={success}"
     )
 
 
 # ================================================================================
-# ENHANCED PRE-CHECK ENGINE (FROM SCRIPT 2 - ROBUST VERSION)
+# REST OF THE FILE: enhanced pre-check engine, version analysis, device upgrader, etc.
+# (These implementations are kept from the previous v15.1 code but are preserved/kept)
+# ================================================================================
+
+
+# ================================================================================
+# ENHANCED PRE-CHECK ENGINE (FROM ENHANCED VERSION)
 # ================================================================================
 class EnhancedPreCheckEngine:
     """Enhanced pre-check engine with multiple fallback methods for maximum compatibility"""
@@ -374,17 +686,21 @@ class EnhancedPreCheckEngine:
 
             # Parse the XML response more carefully
             available_files = []
-            file_elems = response.findall(".//file") or response.findall(
-                ".//file-information"
-            )
+
+            # Look for file elements in different possible locations
+            file_elems = response.findall(".//file")
+            if not file_elems:
+                file_elems = response.findall(".//file-information")
 
             for file_elem in file_elems:
+                # Try different possible element names for filename
                 filename = (
                     file_elem.findtext("name")
                     or file_elem.findtext("file-name")
                     or file_elem.findtext("filename")
                     or ""
                 ).strip()
+
                 if filename:
                     available_files.append(filename)
                     if filename == os.path.basename(self.image_filename):
@@ -417,12 +733,16 @@ class EnhancedPreCheckEngine:
             all_files_output = self.device.cli("file list /var/tmp/", warning=False)
 
             if all_files_output:
+                # Parse the output line by line
                 for line in all_files_output.split("\n"):
                     line = line.strip()
+                    # Look for our filename in the output
                     if self.image_filename in line:
+                        # Try to extract file size if available
                         file_size = "unknown"
                         if " " in line:
                             parts = line.split()
+                            # Size might be in different positions depending on output format
                             for part in parts:
                                 if (
                                     part.isdigit() and len(part) > 5
@@ -447,6 +767,7 @@ class EnhancedPreCheckEngine:
             logger.warning(f"[{self.hostname}] Directory listing failed: {e}")
 
         # All methods failed - image not found according to our checks
+        # Get available files for the error message
         available_files = self._get_available_files_comprehensive()
         similar_images = self._find_similar_images(available_files)
 
@@ -455,7 +776,11 @@ class EnhancedPreCheckEngine:
             "expected_file": self.image_filename,
             "available_files": available_files,
             "similar_images": similar_images,
-            "methods_tried": ["cli_command", "file_list_rpc", "directory_listing"],
+            "methods_tried": [
+                "cli_command",
+                "file_list_rpc",
+                "directory_listing",
+            ],
         }
 
         recommendation = f"Verify {self.image_filename} exists in /var/tmp/ on device"
@@ -487,6 +812,7 @@ class EnhancedPreCheckEngine:
                         and not line.startswith("/")
                         and not line.startswith("total")
                     ):
+                        # Extract filename (last part of the line)
                         filename = line.split()[-1] if " " in line else line
                         if (
                             filename
@@ -523,15 +849,21 @@ class EnhancedPreCheckEngine:
         target_parts = set(target_base.replace(".tgz", "").split("-"))
 
         similar = []
+
         for file in available_files:
             file_lower = file.lower()
             if any(ext in file_lower for ext in [".tgz", ".tar.gz", ".pkg"]):
                 file_parts = set(file_lower.replace(".tgz", "").split("-"))
+
+                # Calculate similarity score
                 common_parts = target_parts & file_parts
                 score = len(common_parts)
+
+                # Consider similar if good match
                 if score >= 2:  # At least 2 common parts
                     similar.append((file, score))
 
+        # Sort by similarity score and return filenames only
         return [
             file for file, score in sorted(similar, key=lambda x: x[1], reverse=True)
         ]
@@ -771,10 +1103,12 @@ class EnhancedPreCheckEngine:
 
 
 # ================================================================================
-# VERSION ANALYSIS (FROM SCRIPT 1 - SIMPLER VERSION)
+# VERSION ANALYSIS (FROM ORIGINAL)
 # ================================================================================
 def parse_junos_version(version_string: str) -> Tuple[int, ...]:
-    """Parse JunOS version string into comparable tuple"""
+    """
+    Parse JunOS version string into comparable tuple
+    """
     try:
         # Extract base version (before any -S suffix)
         base_version = version_string.split("-")[0]
@@ -816,30 +1150,32 @@ def parse_junos_version(version_string: str) -> Tuple[int, ...]:
 
 
 def compare_versions(current: str, target: str) -> VersionAction:
-    """Compare current and target versions to determine action type"""
+    """
+    Compare current and target versions to determine action type
+    """
     try:
         current_parts = parse_junos_version(current)
         target_parts = parse_junos_version(target)
 
         if current_parts == target_parts:
-            return VersionAction.MAINTAIN
+            return VersionAction.SAME_VERSION
 
         return (
-            VersionAction.UPGRADE
+            VersionAction.MAJOR_UPGRADE
             if target_parts > current_parts
-            else VersionAction.DOWNGRADE
+            else VersionAction.MAJOR_DOWNGRADE
         )
 
     except Exception as e:
-        logger.warning(f"Version comparison failed: {e}, defaulting to UPGRADE")
-        return VersionAction.UPGRADE
+        logger.warning(f"Version comparison failed: {e}, defaulting to UNKNOWN")
+        return VersionAction.UNKNOWN
 
 
 # ================================================================================
-# DEVICE UPGRADER - MERGED VERSION
+# DEVICE UPGRADER - ENHANCED VERSION WITH FIXED EVENT FLOW
 # ================================================================================
 class DeviceUpgrader:
-    """Handle device upgrade operations with enhanced pre-checks and correct event flow"""
+    """Handle device upgrade operations with enhanced pre-checks and fixed event flow"""
 
     def __init__(
         self,
@@ -866,6 +1202,7 @@ class DeviceUpgrader:
         self.device = None
         self.sw = None
         self.status = DeviceStatus(hostname, target_version)
+        self.formatter = HumanReadableFormatter()
 
     @contextmanager
     def device_session(self):
@@ -896,7 +1233,9 @@ class DeviceUpgrader:
             raise
 
     def run_pre_checks(self, current_version: str) -> bool:
-        """Execute enhanced pre-upgrade validation checks"""
+        """
+        🎯 ENHANCED: Execute enhanced pre-upgrade validation checks with reliable event delivery
+        """
         if self.skip_pre_check:
             logger.info(f"[{self.hostname}] ⏭️ Pre-check skipped by request")
             return True
@@ -904,7 +1243,7 @@ class DeviceUpgrader:
         self.status.update_phase(UpgradePhase.PRE_CHECK, "Running enhanced pre-checks")
         send_device_progress(self.status, 1, 2, "Running enhanced pre-checks")
 
-        # Use enhanced pre-check engine from script 2
+        # Use enhanced pre-check engine
         checker = EnhancedPreCheckEngine(
             self.device, self.hostname, self.image_filename
         )
@@ -919,7 +1258,7 @@ class DeviceUpgrader:
                 "version_action": version_action.value,
             }
 
-            if version_action == VersionAction.MAINTAIN:
+            if version_action == VersionAction.SAME_VERSION:
                 pre_check_summary.results.append(
                     PreCheckResult(
                         "Version Compatibility",
@@ -930,7 +1269,7 @@ class DeviceUpgrader:
                         "No version change required",
                     )
                 )
-            elif version_action == VersionAction.DOWNGRADE:
+            elif "downgrade" in version_action.value:
                 pre_check_summary.results.append(
                     PreCheckResult(
                         "Version Compatibility",
@@ -956,13 +1295,20 @@ class DeviceUpgrader:
 
         self.status.pre_check_summary = pre_check_summary
 
-        # 🎯 CRITICAL: Send PRE_CHECK_COMPLETE event to frontend
+        # Print human-readable output for manual execution
+        self.formatter.print_banner("PRE-CHECK COMPLETED")
+        self.formatter.print_check_results_table(pre_check_summary)
+        self.formatter.print_detailed_check_results(pre_check_summary)
+        self.formatter.print_upgrade_recommendation(pre_check_summary)
+
+        # 🎯 ENHANCED: Send PRE_CHECK_COMPLETE event to frontend with reliable delivery
         send_pre_check_results(self.status)
 
         if not pre_check_summary.can_proceed:
             if self.force_upgrade:
                 logger.warning(
-                    f"[{self.hostname}] ⚠️ Critical pre-check failures detected, but proceeding due to force_upgrade=True"
+                    f"[{self.hostname}] ⚠️ Critical pre-check failures detected, "
+                    "but proceeding due to force_upgrade=True"
                 )
                 return True
             else:
@@ -974,7 +1320,7 @@ class DeviceUpgrader:
         logger.info(f"[{self.hostname}] ✅ All pre-checks passed or acceptable")
         return True
 
-    def execute_upgrade(self) -> bool:
+    def execute_upgrade_workflow(self) -> bool:
         """Execute complete upgrade workflow"""
         self.status.start_time = time.time()
         logger.info(f"[{self.hostname}] 🚀 Starting upgrade process")
@@ -988,7 +1334,7 @@ class DeviceUpgrader:
                 send_device_progress(self.status, 1, STEPS_PER_DEVICE, "Connecting")
 
                 current_version = self.get_current_version()
-                self.status.initial_version = current_version
+                self.status.current_version = current_version
 
                 # Step 2: Run enhanced pre-checks (this sends PRE_CHECK_COMPLETE)
                 if not self.run_pre_checks(current_version):
@@ -1019,8 +1365,10 @@ class DeviceUpgrader:
                 self.status.final_version = self.target_version
 
                 logger.info(
-                    f"[{self.hostname}] ✅ Upgrade completed successfully in {self.status.get_duration():.1f} seconds"
+                    f"[{self.hostname}] ✅ Upgrade completed successfully in "
+                    f"{self.status.get_duration():.1f} seconds"
                 )
+
                 send_operation_complete(
                     self.status, True, "Upgrade completed successfully"
                 )
@@ -1039,7 +1387,7 @@ class DeviceUpgrader:
 
 
 # ================================================================================
-# PRE-CHECK ONLY WORKFLOW - MERGED VERSION
+# PRE-CHECK ONLY WORKFLOW - ENHANCED VERSION WITH RELIABLE EVENT DELIVERY
 # ================================================================================
 def execute_pre_check_only(
     hostname: str,
@@ -1050,7 +1398,9 @@ def execute_pre_check_only(
     vendor: str = "juniper",
     platform: str = "srx",
 ) -> bool:
-    """Execute pre-check phase only with proper event flow"""
+    """
+    🎯 ENHANCED: Execute pre-check phase only with robust event flow and delivery
+    """
     logger.info(f"[{hostname}] 🔍 Starting pre-check only workflow")
 
     upgrader = DeviceUpgrader(
@@ -1074,22 +1424,39 @@ def execute_pre_check_only(
             upgrader.status.update_phase(
                 UpgradePhase.CONNECTING, "Connecting to device"
             )
-            send_device_progress(upgrader.status, 1, 2, "Connecting to device")
+            send_device_progress(upgrader.status, 1, 3, "Connecting to device")
 
             current_version = upgrader.get_current_version()
-            upgrader.status.initial_version = current_version
+            upgrader.status.current_version = current_version
 
             # Run pre-checks (this sends PRE_CHECK_COMPLETE)
             upgrader.status.update_phase(
                 UpgradePhase.PRE_CHECK, "Running enhanced pre-checks"
             )
-            send_device_progress(upgrader.status, 2, 2, "Running enhanced pre-checks")
+            send_device_progress(upgrader.status, 2, 3, "Running enhanced pre-checks")
 
             success = upgrader.run_pre_checks(current_version)
+
+            # 🎯 ENHANCED: Send completion progress
+            upgrader.status.update_phase(
+                UpgradePhase.COMPLETED, "Pre-check validation completed"
+            )
+            send_device_progress(
+                upgrader.status, 3, 3, "Pre-check validation completed"
+            )
 
             # Complete the operation
             upgrader.status.end_time = time.time()
             upgrader.status.success = success
+
+            # 🎯 ENHANCED: Comprehensive event delivery assurance
+            logger.info(f"[{hostname}] 🕒 Ensuring event delivery before completion")
+            for i in range(3):
+                try:
+                    sys.stderr.flush()
+                except Exception:
+                    pass
+                time.sleep(0.3)
 
             # Send operation complete
             send_operation_complete(
@@ -1100,24 +1467,42 @@ def execute_pre_check_only(
                 else "Pre-check completed with warnings",
             )
 
-            logger.info(f"[{hostname}] ✅ Pre-check only workflow completed")
+            # 🎯 FINAL FLUSH: Maximum reliability
+            try:
+                sys.stderr.flush()
+            except Exception:
+                pass
+            time.sleep(0.5)
+
+            logger.info(
+                f"[{hostname}] ✅ Pre-check only workflow completed successfully"
+            )
             return success
 
     except Exception as e:
         logger.error(f"[{hostname}] ❌ Pre-check only workflow failed: {str(e)}")
         upgrader.status.end_time = time.time()
         upgrader.status.success = False
+
+        # 🎯 ENHANCED: Send failure event with comprehensive flushing
         send_operation_complete(upgrader.status, False, f"Pre-check failed: {str(e)}")
+        for i in range(3):
+            try:
+                sys.stderr.flush()
+            except Exception:
+                pass
+            time.sleep(0.2)
+
         return False
 
 
 # ================================================================================
-# MAIN EXECUTION - MERGED VERSION
+# MAIN EXECUTION - ENHANCED VERSION
 # ================================================================================
 def main():
     """Main execution function"""
     parser = argparse.ArgumentParser(
-        description="Device Code Upgrade - Merged Version (Best of Both Scripts)",
+        description="Device Code Upgrade - Enhanced Pre-Checks with Robust Event Delivery",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 EXAMPLES:
@@ -1195,7 +1580,7 @@ EXAMPLES:
         # Single device operation
         if args.hostname:
             if args.phase == "pre_check":
-                # Use enhanced pre-check only workflow
+                # 🎯 Use enhanced pre-check only workflow
                 success = execute_pre_check_only(
                     hostname=args.hostname,
                     username=args.username,
@@ -1219,7 +1604,7 @@ EXAMPLES:
                     skip_pre_check=args.skip_pre_check,
                     force_upgrade=args.force,
                 )
-                success = upgrader.execute_upgrade()
+                success = upgrader.execute_upgrade_workflow()
                 sys.exit(0 if success else 1)
 
         # Multiple devices (inventory file) - simplified for now
@@ -1249,7 +1634,7 @@ EXAMPLES:
                     skip_pre_check=args.skip_pre_check,
                     force_upgrade=args.force,
                 )
-                success = upgrader.execute_upgrade()
+                success = upgrader.execute_upgrade_workflow()
                 sys.exit(0 if success else 1)
 
     except KeyboardInterrupt:
