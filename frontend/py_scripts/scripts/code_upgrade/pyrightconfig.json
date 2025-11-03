@@ -1,0 +1,23 @@
+{
+    "executionEnvironments": [
+        {
+            "root": ".",
+            "pythonVersion": "3.12",
+            "pythonPlatform": "Linux",
+            "venvPath": ".",
+            "venv": ".venv_pyright"
+        }
+    ],
+    // Includes both primary Python codebases
+    "include": [
+        "app_gateway",
+        "frontend/py_scripts"
+    ],
+    "exclude": [
+        "**/__pycache__",
+        "**/*.pyc",
+        ".venv_pyright"
+    ],
+    "typeCheckingMode": "basic",
+    "reportMissingTypeStubs": false
+}
