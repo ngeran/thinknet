@@ -1,10 +1,25 @@
 """
-Core module for Juniper device upgrade automation.
+Core package for Juniper upgrade automation system.
 
-Contains base classes, exceptions, constants, and data structures
-used throughout the upgrade process.
+Contains fundamental data structures, constants, enumerations, and exceptions
+used throughout the upgrade automation framework.
 """
 
+from .dataclasses import (
+    DeviceStatus,
+    UpgradeResult,
+    PreCheckResult,
+    UpgradeStep,
+    EventData,
+)
+from .enums import (
+    UpgradePhase,
+    CheckSeverity,  # Fixed: Changed from PreCheckSeverity to CheckSeverity
+    VersionAction,
+    OperationStatus,
+    PlatformType,
+    VendorType,
+)
 from .exceptions import (
     UpgradeError,
     PreCheckFailure,
@@ -13,26 +28,30 @@ from .exceptions import (
     ValidationError,
     RollbackError,
 )
-
-from .enums import UpgradePhase, PreCheckSeverity, VersionAction, RollbackStrategy
-
-from .dataclasses import PreCheckResult, PreCheckSummary, UpgradeResult, DeviceStatus
-
 from .constants import (
-    DEFAULT_CONNECTION_TIMEOUT,
+    DEFAULT_CONNECT_TIMEOUT,
     DEFAULT_OPERATION_TIMEOUT,
-    DEFAULT_REBOOT_TIMEOUT,
-    MINIMUM_STORAGE_FREE_PERCENT,
-    MINIMUM_STORAGE_FREE_MB,
-    STORAGE_SAFETY_MULTIPLIER,
+    MAX_REBOOT_WAIT_TIME,
+    POLLING_INTERVAL,
     STEPS_PER_DEVICE,
-    MAX_TEMPERATURE_CELSIUS,
-    MIN_POWER_SUPPLY_COUNT,
-    MIN_FAN_COUNT,
-    MAX_ACTIVE_SESSIONS_WARNING,
+    STORAGE_WARNING_THRESHOLD,
+    STORAGE_CRITICAL_THRESHOLD,
 )
 
 __all__ = [
+    # Data classes
+    "DeviceStatus",
+    "UpgradeResult",
+    "PreCheckResult",
+    "UpgradeStep",
+    "EventData",
+    # Enums
+    "UpgradePhase",
+    "CheckSeverity",  # Fixed
+    "VersionAction",
+    "OperationStatus",
+    "PlatformType",
+    "VendorType",
     # Exceptions
     "UpgradeError",
     "PreCheckFailure",
@@ -40,26 +59,12 @@ __all__ = [
     "RebootTimeoutError",
     "ValidationError",
     "RollbackError",
-    # Enums
-    "UpgradePhase",
-    "PreCheckSeverity",
-    "VersionAction",
-    "RollbackStrategy",
-    # Data classes
-    "PreCheckResult",
-    "PreCheckSummary",
-    "UpgradeResult",
-    "DeviceStatus",
     # Constants
-    "DEFAULT_CONNECTION_TIMEOUT",
+    "DEFAULT_CONNECT_TIMEOUT",
     "DEFAULT_OPERATION_TIMEOUT",
-    "DEFAULT_REBOOT_TIMEOUT",
-    "MINIMUM_STORAGE_FREE_PERCENT",
-    "MINIMUM_STORAGE_FREE_MB",
-    "STORAGE_SAFETY_MULTIPLIER",
+    "MAX_REBOOT_WAIT_TIME",
+    "POLLING_INTERVAL",
     "STEPS_PER_DEVICE",
-    "MAX_TEMPERATURE_CELSIUS",
-    "MIN_POWER_SUPPLY_COUNT",
-    "MIN_FAN_COUNT",
-    "MAX_ACTIVE_SESSIONS_WARNING",
+    "STORAGE_WARNING_THRESHOLD",
+    "STORAGE_CRITICAL_THRESHOLD",
 ]

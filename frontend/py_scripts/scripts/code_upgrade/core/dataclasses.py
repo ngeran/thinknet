@@ -1,142 +1,68 @@
 """
-Data structure definitions for state tracking.
+Data classes for upgrade automation system.
 
-Core data classes for representing pre-check results, upgrade summaries,
-device status, and operational state tracking.
+Defines structured data containers for upgrade state, results, and events
+with type hints and validation for robust data handling.
 """
 
-import time
-from typing import List, Optional, Tuple, Dict, Any
 from dataclasses import dataclass, field
+from typing import List, Dict, Any, Optional
+from datetime import datetime
 
-from .enums import PreCheckSeverity, VersionAction, UpgradePhase
+from .enums import (
+    CheckSeverity,
+    VersionAction,
+    UpgradePhase,
+)  # Fixed: Changed PreCheckSeverity to CheckSeverity
+
+
+@dataclass
+class UpgradeStep:
+    """Represents an individual step in the upgrade process."""
+
+    step: str
+    status: str
+    message: str
+    duration: float = 0.0
+    timestamp: float = 0.0
 
 
 @dataclass
 class PreCheckResult:
-    """
-    Represents the result of a single pre-upgrade validation check.
-
-    Attributes:
-        check_name: Human-readable name of the check
-        severity: Severity level (PASS, WARNING, CRITICAL, INFO)
-        passed: Boolean indicating if check passed
-        message: Detailed message about check result
-        details: Optional dictionary with additional check details
-        recommendation: Optional remediation guidance
-    """
+    """Results from a single pre-upgrade validation check."""
 
     check_name: str
-    severity: PreCheckSeverity
+    severity: CheckSeverity  # Fixed: Changed from PreCheckSeverity to CheckSeverity
     passed: bool
     message: str
-    details: Optional[Dict[str, Any]] = None
+    details: Dict[str, Any] = field(default_factory=dict)
     recommendation: Optional[str] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to JSON-serializable dictionary"""
-        return {
-            "check_name": self.check_name,
-            "severity": self.severity.value,
-            "passed": self.passed,
-            "message": self.message,
-            "details": self._safe_serialize(self.details),
-            "recommendation": self.recommendation,
-        }
-
-    @staticmethod
-    def _safe_serialize(obj: Any) -> Any:
-        """Helper for safe serialization"""
-        if obj is None:
-            return None
-        elif isinstance(obj, dict):
-            return {k: PreCheckResult._safe_serialize(v) for k, v in obj.items()}
-        elif isinstance(obj, (list, tuple)):
-            return [PreCheckResult._safe_serialize(item) for item in obj]
-        elif isinstance(obj, (str, int, float, bool)):
-            return obj
-        else:
-            return str(obj)
 
 
 @dataclass
 class PreCheckSummary:
-    """
-    Aggregated summary of all pre-upgrade validation checks.
+    """Summary of all pre-upgrade validation checks."""
 
-    Provides statistical analysis and overall upgrade readiness determination.
-    """
-
+    total_checks: int = 0
+    passed: int = 0
+    warnings: int = 0
+    critical_failures: int = 0
+    can_proceed: bool = False
     results: List[PreCheckResult] = field(default_factory=list)
-    timestamp: str = field(
-        default_factory=lambda: time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
-    )
-
-    @property
-    def total_checks(self) -> int:
-        """Total number of checks performed"""
-        return len(self.results)
-
-    @property
-    def passed(self) -> int:
-        """Number of checks that passed"""
-        return sum(1 for r in self.results if r.passed)
-
-    @property
-    def warnings(self) -> int:
-        """Number of warning-level checks"""
-        return sum(1 for r in self.results if r.severity == PreCheckSeverity.WARNING)
-
-    @property
-    def critical_failures(self) -> int:
-        """Number of critical failures"""
-        return sum(
-            1
-            for r in self.results
-            if not r.passed and r.severity == PreCheckSeverity.CRITICAL
-        )
-
-    @property
-    def can_proceed(self) -> bool:
-        """Determine if upgrade can proceed based on critical failures"""
-        return self.critical_failures == 0
-
-    def get_failed_checks(self) -> List[PreCheckResult]:
-        """Return list of failed checks"""
-        return [r for r in self.results if not r.passed]
-
-    def get_recommendations(self) -> List[str]:
-        """Return all remediation recommendations"""
-        return [r.recommendation for r in self.results if r.recommendation]
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to JSON-serializable dictionary"""
-        return {
-            "total_checks": self.total_checks,
-            "passed": self.passed,
-            "warnings": self.warnings,
-            "critical_failures": self.critical_failures,
-            "can_proceed": self.can_proceed,
-            "results": [r.to_dict() for r in self.results],
-            "timestamp": self.timestamp,
-        }
+    timestamp: str = ""
 
 
 @dataclass
 class UpgradeResult:
-    """
-    Comprehensive result tracking for upgrade operation.
+    """Comprehensive results of an upgrade operation."""
 
-    Captures timing, version changes, errors, warnings, and detailed step execution.
-    """
-
-    success: bool
-    start_time: float
-    end_time: float
-    initial_version: str
-    final_version: Optional[str] = None
-    version_action: VersionAction = VersionAction.UNKNOWN
+    success: bool = False
+    start_time: float = 0.0
+    end_time: float = 0.0
     upgrade_duration: float = 0.0
+    initial_version: Optional[str] = None
+    final_version: Optional[str] = None
+    version_action: Optional[VersionAction] = None
     reboot_required: bool = False
     reboot_performed: bool = False
     reboot_wait_time: float = 0.0
@@ -144,95 +70,89 @@ class UpgradeResult:
     rollback_reason: Optional[str] = None
     warnings: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
-    upgrade_steps: List[Dict[str, Any]] = field(default_factory=list)
+    upgrade_steps: List[UpgradeStep] = field(default_factory=list)
+    pre_check_summary: Optional[PreCheckSummary] = None
 
-    def add_step(
-        self, step_name: str, status: str, message: str, duration: float = 0.0
-    ):
-        """Add a step to upgrade execution tracking"""
-        self.upgrade_steps.append(
-            {
-                "step": step_name,
-                "status": status,
-                "message": message,
-                "duration": duration,
-                "timestamp": time.time(),
-            }
-        )
-
-    def calculate_duration(self) -> float:
-        """Calculate total upgrade duration"""
+    def calculate_duration(self):
+        """Calculate total upgrade duration."""
         if self.start_time and self.end_time:
             self.upgrade_duration = self.end_time - self.start_time
-        return self.upgrade_duration
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to JSON-serializable dictionary"""
-        return {
-            "success": self.success,
-            "initial_version": self.initial_version,
-            "final_version": self.final_version,
-            "version_action": self.version_action.value,
-            "upgrade_duration": self.calculate_duration(),
-            "reboot_required": self.reboot_required,
-            "reboot_performed": self.reboot_performed,
-            "reboot_wait_time": self.reboot_wait_time,
-            "rollback_performed": self.rollback_performed,
-            "rollback_reason": self.rollback_reason,
-            "warnings": self.warnings,
-            "errors": self.errors,
-            "upgrade_steps": self.upgrade_steps,
-        }
+    def add_step(self, step: str, status: str, message: str):
+        """Add a step to the upgrade process."""
+        self.upgrade_steps.append(
+            UpgradeStep(
+                step=step,
+                status=status,
+                message=message,
+                timestamp=datetime.now().timestamp(),
+            )
+        )
 
 
 @dataclass
 class DeviceStatus:
-    """
-    Central state tracking for device upgrade process.
-
-    Maintains current phase, version info, errors, warnings, and aggregated results.
-    """
+    """Current status and state of a device during upgrade."""
 
     hostname: str
     target_version: str
-    phase: UpgradePhase = UpgradePhase.PENDING
-    message: str = "Initializing upgrade process"
     current_version: Optional[str] = None
-    final_version: Optional[str] = None
-    version_action: VersionAction = VersionAction.UNKNOWN
-    error: Optional[str] = None
-    error_type: Optional[str] = None
-    success: bool = False
+    version_action: Optional[VersionAction] = None
+    phase: UpgradePhase = UpgradePhase.CONNECTING
+    phase_message: str = ""
     start_time: Optional[float] = None
     end_time: Optional[float] = None
+    error: Optional[str] = None
+    error_type: Optional[str] = None
     warnings: List[str] = field(default_factory=list)
     pre_check_summary: Optional[PreCheckSummary] = None
     upgrade_result: Optional[UpgradeResult] = None
-    backup_created: bool = False
-    backup_path: Optional[str] = None
 
     def update_phase(self, phase: UpgradePhase, message: str = ""):
-        """Update current upgrade phase with optional message"""
+        """Update the current upgrade phase."""
         self.phase = phase
-        self.message = message or phase.value.replace("_", " ").title()
+        self.phase_message = message
 
     def add_warning(self, warning: str):
-        """Add a warning message to tracking"""
+        """Add a warning message."""
         self.warnings.append(warning)
 
-    def get_duration(self) -> float:
-        """Calculate elapsed time since upgrade start"""
-        if self.start_time and self.end_time:
-            return self.end_time - self.start_time
-        elif self.start_time:
-            return time.time() - self.start_time
-        return 0.0
-
     def set_upgrade_result(self, upgrade_result: UpgradeResult):
-        """Assign upgrade result and propagate key fields"""
+        """Set the final upgrade result."""
         self.upgrade_result = upgrade_result
-        self.final_version = upgrade_result.final_version
-        self.success = upgrade_result.success
-        if upgrade_result.errors:
-            self.error = "; ".join(upgrade_result.errors)
-        self.warnings.extend(upgrade_result.warnings)
+        self.end_time = upgrade_result.end_time
+
+
+@dataclass
+class EventData:
+    """Data structure for upgrade events and progress updates."""
+
+    event_type: str
+    timestamp: float
+    message: str
+    data: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ConnectionParams:
+    """Parameters for device connection and authentication."""
+
+    hostname: str
+    username: str
+    password: str
+    port: int = 22
+    timeout: int = 30
+    vendor: str = "juniper"
+
+
+@dataclass
+class UpgradeParams:
+    """Parameters for upgrade operation."""
+
+    target_version: str
+    image_filename: str
+    platform: str = "srx"
+    skip_pre_check: bool = False
+    force_upgrade: bool = False
+    reboot: bool = True
+    validate: bool = True

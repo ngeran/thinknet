@@ -1,46 +1,91 @@
 """
-Configuration constants and operational parameters.
+Application-wide constants and configuration parameters.
 
-Centralized configuration values for timeouts, thresholds, and
-operational parameters used throughout the upgrade process.
+Centralized configuration for timeouts, retries, and operational parameters
+to ensure consistency across the upgrade automation system.
 """
 
-# Connection & Operation Timeouts
-DEFAULT_CONNECTION_TIMEOUT = 30
-DEFAULT_OPERATION_TIMEOUT = 1800
-DEFAULT_REBOOT_TIMEOUT = 900
-DEFAULT_RETRY_ATTEMPTS = 3
+import os
+from typing import Final
 
-# Storage & Resource Thresholds
-MINIMUM_STORAGE_FREE_PERCENT = 20
-MINIMUM_STORAGE_FREE_MB = 512
-STORAGE_SAFETY_MULTIPLIER = 2.2  # Need 2.2x image size for safe install
+# ==============================================================================
+# NETWORK AND CONNECTION CONSTANTS
+# ==============================================================================
 
-# Progress Tracking
-STEPS_PER_DEVICE = 12  # Number of steps in upgrade process
+# Connection timeouts
+DEFAULT_CONNECT_TIMEOUT: Final[int] = 30  # seconds
+DEFAULT_OPERATION_TIMEOUT: Final[int] = 300  # seconds (5 minutes)
+SSH_CONNECTION_TIMEOUT: Final[int] = 30  # seconds
 
-# Reboot & Recovery Parameters
-INITIAL_REBOOT_WAIT = 60
-POLLING_INTERVAL = 30
-MAX_REBOOT_WAIT_TIME = 1200
-ADAPTIVE_POLLING_THRESHOLD = 300  # Switch to faster polling after 5 minutes
+# Reboot and recovery timeouts - INCREASED FOR SRX DEVICES
+MAX_REBOOT_WAIT_TIME: Final[int] = 900  # 15 minutes (increased from 10)
+RECOVERY_STABILIZATION_TIME: Final[int] = 30  # seconds after NETCONF is available
+POLLING_INTERVAL: Final[int] = 30  # seconds between reachability checks
+ADAPTIVE_POLLING_THRESHOLD: Final[int] = 300  # 5 minutes - switch to faster polling
 
-# Event Delivery Optimization
-EVENT_DELIVERY_DELAY = 1.0
-EVENT_FLUSH_DELAY = 0.5
-EVENT_RETRY_COUNT = 2
+# ==============================================================================
+# UPGRADE PROCESS CONSTANTS
+# ==============================================================================
 
-# Hardware Health Thresholds
-MAX_TEMPERATURE_CELSIUS = 70
-MIN_POWER_SUPPLY_COUNT = 1
-MIN_FAN_COUNT = 1
+# Progress tracking
+STEPS_PER_DEVICE: Final[int] = 12
+PROGRESS_UPDATE_INTERVAL: Final[int] = 5  # seconds
 
-# Routing Protocol Thresholds
-MIN_BGP_PEER_UPTIME = 300  # 5 minutes
-MIN_OSPF_NEIGHBOR_COUNT = 0  # Warning if no neighbors
+# Validation thresholds
+STORAGE_WARNING_THRESHOLD: Final[int] = 85  # percentage
+STORAGE_CRITICAL_THRESHOLD: Final[int] = 95  # percentage
+MINIMUM_STORAGE_MB: Final[int] = 500  # MB
 
-# Active Session Thresholds
-MAX_ACTIVE_SESSIONS_WARNING = 3  # Warn if more than 3 concurrent users
+# Hardware health thresholds
+MINIMUM_POWER_SUPPLIES: Final[int] = 1
+MINIMUM_FANS: Final[int] = 1
+MAX_TEMPERATURE_WARNING: Final[int] = 70  # degrees Celsius
+MAX_TEMPERATURE_CRITICAL: Final[int] = 85  # degrees Celsius
 
-# Version Patterns
-JUNOS_VERSION_PATTERN = r"(\d+)\.(\d+)([RrXx]?)(\d*)(?:-S(\d+))?(?:\.(\d+))?"
+# ==============================================================================
+# FILE AND PATH CONSTANTS
+# ==============================================================================
+
+# Default image locations
+DEFAULT_IMAGE_PATH: Final[str] = "/var/tmp/"
+BACKUP_IMAGE_PATH: Final[str] = "/var/tmp/backup/"
+
+# Logging configuration
+LOG_FORMAT: Final[str] = (
+    "%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s"
+)
+LOG_DATE_FORMAT: Final[str] = "%Y-%m-%d %H:%M:%S"
+
+# ==============================================================================
+# RETRY AND RESILIENCE CONSTANTS
+# ==============================================================================
+
+MAX_RETRY_ATTEMPTS: Final[int] = 3
+RETRY_BACKOFF_FACTOR: Final[float] = 2.0  # Exponential backoff
+INITIAL_RETRY_DELAY: Final[int] = 5  # seconds
+
+# ==============================================================================
+# EVENT AND NOTIFICATION CONSTANTS
+# ==============================================================================
+
+EVENT_RETRY_COUNT: Final[int] = 3
+EVENT_RETRY_DELAY: Final[int] = 2  # seconds
+EVENT_TIMEOUT: Final[int] = 10  # seconds
+
+# Webhook endpoints (if configured)
+DEFAULT_WEBHOOK_URL: Final[str] = os.getenv("UPGRADE_WEBHOOK_URL", "")
+STATUS_UPDATE_INTERVAL: Final[int] = 60  # seconds for status reports
+
+# ==============================================================================
+# VERSION AND COMPATIBILITY CONSTANTS
+# ==============================================================================
+
+SUPPORTED_PLATFORMS: Final[list] = ["srx", "mx", "ex", "qfx", "ptx"]
+SUPPORTED_VENDORS: Final[list] = ["juniper"]
+
+# Major version upgrade paths
+MAJOR_UPGRADE_PATHS: Final[dict] = {
+    "24.4": ["25.1", "25.2", "25.3"],
+    "25.1": ["25.2", "25.3"],
+    "25.2": ["25.3"],
+}

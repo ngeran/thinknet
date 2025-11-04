@@ -1,32 +1,28 @@
 """
-Comprehensive pre-upgrade validation engine.
+Pre-upgrade validation engine for comprehensive device health checks.
 
-Performs extensive checks before upgrade including:
-- Image file availability and size validation
-- Storage space with actual size calculations
-- Hardware health (temperature, power, fans)
-- Routing protocol stability (BGP, OSPF)
-- System alarms and chassis status
-- Active user sessions
-- Configuration commit status
-- Backup validation
+Performs safety checks including storage, hardware health, protocol stability,
+and configuration validation before proceeding with upgrades or downgrades.
+Supports both Juniper SRX and other platform families with platform-specific
+validation rules.
 """
 
-import re
 import logging
-from typing import List
+import re
+from typing import List, Dict, Any, Tuple, Optional
 
-from jnpr.junos import Device
+from jnpr.junos.exception import RpcError
 
 from core.dataclasses import PreCheckResult, PreCheckSummary
-from core.enums import PreCheckSeverity
+from core.enums import CheckSeverity  # Fixed: Changed PreCheckSeverity to CheckSeverity
 from core.constants import (
-    MINIMUM_STORAGE_FREE_PERCENT,
-    MINIMUM_STORAGE_FREE_MB,
-    MAX_TEMPERATURE_CELSIUS,
-    MIN_POWER_SUPPLY_COUNT,
-    MIN_FAN_COUNT,
-    MAX_ACTIVE_SESSIONS_WARNING,
+    STORAGE_WARNING_THRESHOLD,
+    STORAGE_CRITICAL_THRESHOLD,
+    MINIMUM_STORAGE_MB,
+    MINIMUM_POWER_SUPPLIES,
+    MINIMUM_FANS,
+    MAX_TEMPERATURE_WARNING,
+    MAX_TEMPERATURE_CRITICAL,
 )
 
 logger = logging.getLogger(__name__)
@@ -34,431 +30,450 @@ logger = logging.getLogger(__name__)
 
 class EnhancedPreCheckEngine:
     """
-    Comprehensive pre-upgrade validation engine.
+    Comprehensive pre-upgrade validation with platform-aware checks.
 
-    Performs 10+ intelligent checks covering storage, hardware, routing,
-    configuration, and operational state validation.
+    Executes a suite of validation checks to ensure device readiness for
+    upgrade operations, including hardware health, storage capacity,
+    protocol stability, and configuration compatibility.
     """
 
-    def __init__(self, device: Device, hostname: str, image_filename: str):
+    def __init__(self, device, hostname: str, image_filename: str):
         """
-        Initialize pre-check engine.
+        Initialize pre-check engine with device context.
 
         Args:
-            device: Connected PyEZ Device instance
+            device: PyEZ device instance
             hostname: Device hostname for logging
-            image_filename: Target upgrade image filename
+            image_filename: Target image filename for validation
         """
         self.device = device
         self.hostname = hostname
         self.image_filename = image_filename
-        self.image_path = f"/var/tmp/{image_filename}"
-
-    def _check_image_availability_and_size(self) -> PreCheckResult:
-        """Check 1: Image File Availability & Size Validation"""
-        try:
-            cli_output = self.device.cli(
-                f"file list detail /var/tmp/{self.image_filename}", warning=False
-            )
-
-            if not cli_output or "No such file or directory" in cli_output:
-                return PreCheckResult(
-                    "Image File Availability",
-                    PreCheckSeverity.CRITICAL,
-                    False,
-                    f"Image file not found: {self.image_path}",
-                    {"expected_file": self.image_filename},
-                    f"Upload {self.image_filename} to /var/tmp/ on device before upgrade",
-                )
-
-            # Extract file size from output
-            image_size_mb = 0
-            try:
-                size_match = re.search(
-                    r"(\d+)\s+\w+\s+\d+\s+\d+:\d+:\d+\s+"
-                    + re.escape(self.image_filename),
-                    cli_output,
-                )
-                if size_match:
-                    image_size_bytes = int(size_match.group(1))
-                    image_size_mb = image_size_bytes / (1024 * 1024)
-            except Exception as e:
-                logger.debug(f"Could not parse image size: {e}")
-
-            details = {
-                "image_path": self.image_path,
-                "image_size_mb": round(image_size_mb, 2)
-                if image_size_mb > 0
-                else "unknown",
-                "method": "cli_file_list",
-            }
-
-            return PreCheckResult(
-                "Image File Availability",
-                PreCheckSeverity.PASS,
-                True,
-                f"Image file verified: {self.image_filename}"
-                + (f" ({image_size_mb:.1f} MB)" if image_size_mb > 0 else ""),
-                details,
-            )
-
-        except Exception as e:
-            logger.warning(f"[{self.hostname}] Image availability check failed: {e}")
-            return PreCheckResult(
-                "Image File Availability",
-                PreCheckSeverity.CRITICAL,
-                False,
-                f"Unable to verify image file: {str(e)}",
-                {"error": str(e)},
-                "Verify device connectivity and file system accessibility",
-            )
-
-    def _check_storage_space_detailed(self) -> PreCheckResult:
-        """Check 2: Storage Space - Enhanced with Actual Size Validation"""
-        try:
-            response = self.device.rpc.get_system_storage()
-            filesystems = response.findall(".//filesystem")
-
-            storage_details = []
-            critical_issues = []
-            warnings = []
-
-            for fs in filesystems:
-                fs_name = fs.findtext("filesystem-name", "unknown")
-                total_blocks = fs.findtext("total-blocks", "0")
-                used_percent_text = fs.findtext("used-percent", "0").strip("%")
-                available_blocks = fs.findtext("available-blocks", "0")
-
-                try:
-                    used_percent = int(used_percent_text)
-                    free_percent = 100 - used_percent
-
-                    # Calculate available space in MB
-                    avail_mb = int(available_blocks) / 1024  # Assuming blocks are in KB
-
-                    fs_info = {
-                        "filesystem": fs_name,
-                        "used_percent": used_percent,
-                        "free_percent": free_percent,
-                        "available_mb": round(avail_mb, 2),
-                    }
-                    storage_details.append(fs_info)
-
-                    # Check /var filesystem specifically (where /var/tmp resides)
-                    if "/var" in fs_name or fs_name == "/":
-                        # Check percentage
-                        if free_percent < MINIMUM_STORAGE_FREE_PERCENT:
-                            critical_issues.append(
-                                f"{fs_name}: Only {free_percent}% free (minimum {MINIMUM_STORAGE_FREE_PERCENT}% required)"
-                            )
-
-                        # Check absolute space
-                        if avail_mb < MINIMUM_STORAGE_FREE_MB:
-                            critical_issues.append(
-                                f"{fs_name}: Only {avail_mb:.1f} MB available (minimum {MINIMUM_STORAGE_FREE_MB} MB required)"
-                            )
-
-                        # Estimate required space (2.2x safety factor)
-                        if avail_mb < 1000:  # Less than 1GB available
-                            warnings.append(
-                                f"{fs_name}: Low available space ({avail_mb:.1f} MB). Verify sufficient space for image."
-                            )
-
-                except ValueError:
-                    continue
-
-            if critical_issues:
-                return PreCheckResult(
-                    "Storage Space",
-                    PreCheckSeverity.CRITICAL,
-                    False,
-                    f"Insufficient storage space: {'; '.join(critical_issues)}",
-                    {"filesystems": storage_details},
-                    "Free up storage space by removing old files or images from /var/tmp/",
-                )
-
-            if warnings:
-                return PreCheckResult(
-                    "Storage Space",
-                    PreCheckSeverity.WARNING,
-                    True,
-                    f"Storage warnings: {'; '.join(warnings)}",
-                    {"filesystems": storage_details},
-                    "Monitor storage during upgrade process",
-                )
-
-            return PreCheckResult(
-                "Storage Space",
-                PreCheckSeverity.PASS,
-                True,
-                f"Sufficient storage space available",
-                {"filesystems": storage_details},
-            )
-
-        except Exception as e:
-            return PreCheckResult(
-                "Storage Space",
-                PreCheckSeverity.WARNING,
-                False,
-                f"Storage check failed: {str(e)}",
-                {"error": str(e)},
-                "Manually verify storage space with 'show system storage'",
-            )
-
-    def _check_hardware_health(self) -> PreCheckResult:
-        """Check 3: Hardware Health - Temperature, Power, Fans"""
-        try:
-            response = self.device.rpc.get_environment_information()
-
-            hardware_issues = []
-            warnings = []
-            hardware_details = {}
-
-            # Check temperatures
-            temp_items = response.findall(".//temperature")
-            max_temp = 0
-            temp_count = 0
-
-            for temp in temp_items:
-                temp_name = temp.get("name", "unknown")
-                temp_celsius_text = (
-                    temp.findtext("temperature", "0").replace("C", "").strip()
-                )
-
-                try:
-                    temp_celsius = int(temp_celsius_text)
-                    temp_count += 1
-                    max_temp = max(max_temp, temp_celsius)
-
-                    if temp_celsius > MAX_TEMPERATURE_CELSIUS:
-                        hardware_issues.append(
-                            f"High temperature detected: {temp_name} = {temp_celsius}°C (max: {MAX_TEMPERATURE_CELSIUS}°C)"
-                        )
-                    elif temp_celsius > (MAX_TEMPERATURE_CELSIUS - 10):
-                        warnings.append(
-                            f"Elevated temperature: {temp_name} = {temp_celsius}°C"
-                        )
-                except ValueError:
-                    continue
-
-            hardware_details["max_temperature_c"] = (
-                max_temp if temp_count > 0 else "N/A"
-            )
-            hardware_details["temperature_sensors"] = temp_count
-
-            # Check power supplies
-            power_items = response.findall(".//power-supply")
-            power_ok_count = 0
-            power_total_count = 0
-
-            for power in power_items:
-                power_total_count += 1
-                status = power.findtext("status", "").lower()
-                if "ok" in status or "online" in status:
-                    power_ok_count += 1
-                else:
-                    hardware_issues.append(
-                        f"Power supply issue: {power.get('name', 'unknown')} status = {status}"
-                    )
-
-            hardware_details["power_supplies_ok"] = power_ok_count
-            hardware_details["power_supplies_total"] = power_total_count
-
-            if power_ok_count < MIN_POWER_SUPPLY_COUNT:
-                hardware_issues.append(
-                    f"Insufficient operational power supplies: {power_ok_count} (minimum: {MIN_POWER_SUPPLY_COUNT})"
-                )
-
-            # Check fans
-            fan_items = response.findall(".//fan")
-            fan_ok_count = 0
-            fan_total_count = 0
-
-            for fan in fan_items:
-                fan_total_count += 1
-                status = fan.findtext("status", "").lower()
-                if "ok" in status or "running" in status:
-                    fan_ok_count += 1
-                else:
-                    hardware_issues.append(
-                        f"Fan issue: {fan.get('name', 'unknown')} status = {status}"
-                    )
-
-            hardware_details["fans_ok"] = fan_ok_count
-            hardware_details["fans_total"] = fan_total_count
-
-            if fan_ok_count < MIN_FAN_COUNT:
-                hardware_issues.append(
-                    f"Insufficient operational fans: {fan_ok_count} (minimum: {MIN_FAN_COUNT})"
-                )
-
-            # Determine result
-            if hardware_issues:
-                return PreCheckResult(
-                    "Hardware Health",
-                    PreCheckSeverity.CRITICAL,
-                    False,
-                    f"Hardware health issues detected: {'; '.join(hardware_issues[:2])}",
-                    hardware_details,
-                    "Resolve hardware issues before proceeding with upgrade",
-                )
-
-            if warnings:
-                return PreCheckResult(
-                    "Hardware Health",
-                    PreCheckSeverity.WARNING,
-                    True,
-                    f"Hardware warnings: {'; '.join(warnings[:2])}",
-                    hardware_details,
-                    "Monitor hardware status during upgrade",
-                )
-
-            return PreCheckResult(
-                "Hardware Health",
-                PreCheckSeverity.PASS,
-                True,
-                f"Hardware health OK (Temp: {max_temp}°C, PS: {power_ok_count}/{power_total_count}, Fans: {fan_ok_count}/{fan_total_count})",
-                hardware_details,
-            )
-
-        except Exception as e:
-            logger.debug(f"[{self.hostname}] Hardware health check error: {e}")
-            return PreCheckResult(
-                "Hardware Health",
-                PreCheckSeverity.WARNING,
-                True,
-                f"Hardware health check unavailable (platform may not support)",
-                {"error": str(e)},
-                "Manually verify hardware status if possible",
-            )
-
-    def _check_bgp_stability(self) -> PreCheckResult:
-        """Check 4: Routing Protocol Stability - BGP Peers"""
-        try:
-            response = self.device.rpc.get_bgp_summary_information()
-            peers = response.findall(".//bgp-peer")
-
-            if not peers:
-                return PreCheckResult(
-                    "BGP Protocol Stability",
-                    PreCheckSeverity.INFO,
-                    True,
-                    "No BGP peers configured on device",
-                    {"peer_count": 0},
-                )
-
-            peer_count = 0
-            established_count = 0
-            unstable_peers = []
-            bgp_details = {"peers": []}
-
-            for peer in peers:
-                peer_count += 1
-                peer_address = peer.findtext("peer-address", "unknown")
-                peer_state = peer.findtext("peer-state", "unknown")
-
-                peer_info = {"address": peer_address, "state": peer_state}
-                bgp_details["peers"].append(peer_info)
-
-                if peer_state.lower() == "established":
-                    established_count += 1
-                else:
-                    unstable_peers.append(f"{peer_address} ({peer_state})")
-
-            bgp_details["total_peers"] = peer_count
-            bgp_details["established_peers"] = established_count
-
-            if unstable_peers:
-                return PreCheckResult(
-                    "BGP Protocol Stability",
-                    PreCheckSeverity.WARNING,
-                    True,
-                    f"Some BGP peers not established: {', '.join(unstable_peers[:3])}",
-                    bgp_details,
-                    "Verify BGP peer status before upgrade to minimize routing impact",
-                )
-
-            return PreCheckResult(
-                "BGP Protocol Stability",
-                PreCheckSeverity.PASS,
-                True,
-                f"All BGP peers stable ({established_count}/{peer_count} established)",
-                bgp_details,
-            )
-
-        except Exception as e:
-            logger.debug(f"[{self.hostname}] BGP stability check error: {e}")
-            return PreCheckResult(
-                "BGP Protocol Stability",
-                PreCheckSeverity.INFO,
-                True,
-                f"BGP check unavailable (may not be configured): {str(e)[:50]}",
-                {"error": str(e)},
-            )
-
-    # Additional check methods would continue here...
-    # _check_ospf_stability, _check_system_alarms, _check_configuration_committed,
-    # _check_active_sessions, _check_backup_availability, _check_chassis_status
 
     def run_all_checks(self) -> PreCheckSummary:
         """
-        Execute all pre-upgrade validation checks.
+        Execute complete suite of pre-upgrade validation checks.
 
-        Runs all defined checks and aggregates results into a summary.
-        Continues checking even if individual checks fail to provide
-        complete validation picture.
+        Runs all available checks in sequence and compiles comprehensive
+        results summary with pass/fail status and detailed recommendations.
 
         Returns:
-            PreCheckSummary with all check results
+            PreCheckSummary with all check results and overall status
         """
-        summary = PreCheckSummary()
+        logger.info(f"[{self.hostname}] 🔍 Running comprehensive pre-upgrade checks")
 
-        # Define all checks to run (simplified for example)
         checks = [
-            self._check_image_availability_and_size,
-            self._check_storage_space_detailed,
-            self._check_hardware_health,
-            self._check_bgp_stability,
-            # Add other checks here...
+            self.check_image_availability,
+            self.check_storage_space,
+            self.check_hardware_health,
+            self.check_bgp_stability,
         ]
 
-        logger.info(f"[{self.hostname}] 🔍 Running {len(checks)} pre-upgrade checks...")
+        results = []
+        passed = 0
+        warnings = 0
+        critical_failures = 0
 
         for check_func in checks:
             try:
-                logger.debug(f"[{self.hostname}] Executing: {check_func.__name__}")
                 result = check_func()
-                summary.results.append(result)
+                results.append(result)
 
-                status_icon = "✅" if result.passed else "❌"
-                logger.info(
-                    f"[{self.hostname}] {status_icon} {result.check_name}: "
-                    f"{result.severity.value.upper()} - {result.message[:60]}"
-                )
+                if result.passed:
+                    passed += 1
+                else:
+                    if result.severity == CheckSeverity.CRITICAL:  # Fixed
+                        critical_failures += 1
+                    elif result.severity == CheckSeverity.WARNING:  # Fixed
+                        warnings += 1
 
             except Exception as e:
                 logger.error(
-                    f"[{self.hostname}] ❌ Check {check_func.__name__} failed with exception: {e}"
+                    f"[{self.hostname}] ❌ Check {check_func.__name__} failed: {e}"
                 )
-                check_name = (
-                    check_func.__name__.replace("_check_", "").replace("_", " ").title()
+                # Create a failed result for errored checks
+                failed_result = PreCheckResult(
+                    check_name=check_func.__name__.replace("check_", "")
+                    .replace("_", " ")
+                    .title(),
+                    severity=CheckSeverity.CRITICAL,  # Fixed
+                    passed=False,
+                    message=f"Check execution failed: {str(e)}",
+                    details={"error": str(e)},
+                    recommendation="Review device connectivity and retry",
                 )
-                summary.results.append(
-                    PreCheckResult(
-                        check_name,
-                        PreCheckSeverity.CRITICAL,
-                        False,
-                        f"Check execution failed: {str(e)[:100]}",
-                        {"error": str(e)},
-                        "Investigate device connectivity or permissions",
-                    )
-                )
+                results.append(failed_result)
+                critical_failures += 1
+
+        # Determine if upgrade can proceed
+        can_proceed = critical_failures == 0
+
+        summary = PreCheckSummary(
+            total_checks=len(checks),
+            passed=passed,
+            warnings=warnings,
+            critical_failures=critical_failures,
+            can_proceed=can_proceed,
+            results=results,
+            timestamp=self._get_current_timestamp(),
+        )
 
         logger.info(
-            f"[{self.hostname}] 📊 Pre-check summary: "
-            f"{summary.passed}/{summary.total_checks} passed, "
-            f"{summary.warnings} warnings, "
-            f"{summary.critical_failures} critical failures"
+            f"[{self.hostname}] 📊 Pre-check summary: {passed}/{len(checks)} passed, "
+            f"{warnings} warnings, {critical_failures} critical failures"
         )
 
         return summary
+
+    def check_image_availability(self) -> PreCheckResult:
+        """
+        Verify target software image exists on device storage.
+
+        Validates that the specified image file is present in /var/tmp/
+        and accessible for installation operations.
+
+        Returns:
+            PreCheckResult with image availability status
+        """
+        try:
+            # Use CLI command to check file existence with details
+            response = self.device.rpc.file_list(
+                detail=True, path=f"/var/tmp/{self.image_filename}"
+            )
+            file_exists = (
+                response is not None and len(response.xpath(".//file-information")) > 0
+            )
+
+            if file_exists:
+                return PreCheckResult(
+                    check_name="Image File Availability",
+                    severity=CheckSeverity.PASS,  # Fixed
+                    passed=True,
+                    message=f"Image file verified: {self.image_filename}",
+                    details={
+                        "image_path": f"/var/tmp/{self.image_filename}",
+                        "image_size_mb": "unknown",  # Could be extracted from response
+                        "method": "cli_file_list",
+                    },
+                )
+            else:
+                return PreCheckResult(
+                    check_name="Image File Availability",
+                    severity=CheckSeverity.CRITICAL,  # Fixed
+                    passed=False,
+                    message=f"Image file not found: {self.image_filename}",
+                    details={
+                        "image_path": f"/var/tmp/{self.image_filename}",
+                        "method": "cli_file_list",
+                    },
+                    recommendation="Upload image file to /var/tmp/ on device",
+                )
+
+        except RpcError as e:
+            return PreCheckResult(
+                check_name="Image File Availability",
+                severity=CheckSeverity.CRITICAL,  # Fixed
+                passed=False,
+                message=f"Failed to check image file: {str(e)}",
+                details={"error": str(e)},
+                recommendation="Verify device accessibility and file permissions",
+            )
+
+    def check_storage_space(self) -> PreCheckResult:
+        """
+        Validate sufficient storage space for upgrade operation.
+
+        Checks available space in critical filesystems to ensure adequate
+        storage for software installation and temporary files.
+
+        Returns:
+            PreCheckResult with storage space assessment
+        """
+        try:
+            response = self.device.rpc.get_system_storage()
+            filesystems = response.xpath(".//filesystem")
+
+            storage_details = []
+            has_critical_space = True
+            has_warning_space = False
+
+            for fs in filesystems:
+                filesystem_name = fs.findtext("filesystem-name", "unknown")
+                used_percent_text = fs.findtext("used-percent", "0")
+                available_percent_text = fs.findtext("available-percent", "100")
+
+                try:
+                    used_percent = int(used_percent_text.strip("%"))
+                    available_percent = int(available_percent_text.strip("%"))
+                except (ValueError, AttributeError):
+                    used_percent = 0
+                    available_percent = 100
+
+                # Calculate available space in MB (approximate)
+                total_blocks = int(fs.findtext("total-blocks", "0"))
+                block_size = int(fs.findtext("block-size", "1024"))
+                available_mb = (
+                    (total_blocks * block_size)
+                    / (1024 * 1024)
+                    * (available_percent / 100)
+                )
+
+                storage_details.append(
+                    {
+                        "filesystem": filesystem_name,
+                        "used_percent": used_percent,
+                        "free_percent": available_percent,
+                        "available_mb": round(available_mb, 2),
+                    }
+                )
+
+                # Check critical threshold
+                if used_percent >= STORAGE_CRITICAL_THRESHOLD:
+                    has_critical_space = False
+                # Check warning threshold
+                elif used_percent >= STORAGE_WARNING_THRESHOLD:
+                    has_warning_space = True
+
+            if not has_critical_space:
+                return PreCheckResult(
+                    check_name="Storage Space",
+                    severity=CheckSeverity.CRITICAL,  # Fixed
+                    passed=False,
+                    message="Insufficient storage space for upgrade",
+                    details={"filesystems": storage_details},
+                    recommendation="Clean up storage space before proceeding",
+                )
+            elif has_warning_space:
+                return PreCheckResult(
+                    check_name="Storage Space",
+                    severity=CheckSeverity.WARNING,  # Fixed
+                    passed=True,
+                    message="Storage space is limited but sufficient",
+                    details={"filesystems": storage_details},
+                    recommendation="Consider cleaning up storage space",
+                )
+            else:
+                return PreCheckResult(
+                    check_name="Storage Space",
+                    severity=CheckSeverity.PASS,  # Fixed
+                    passed=True,
+                    message="Sufficient storage space available",
+                    details={"filesystems": storage_details},
+                )
+
+        except RpcError as e:
+            return PreCheckResult(
+                check_name="Storage Space",
+                severity=CheckSeverity.CRITICAL,  # Fixed
+                passed=False,
+                message=f"Failed to check storage space: {str(e)}",
+                details={"error": str(e)},
+                recommendation="Verify system storage accessibility",
+            )
+
+    def check_hardware_health(self) -> PreCheckResult:
+        """
+        Assess hardware component health and operational status.
+
+        Validates power supplies, fan trays, temperature sensors, and
+        other critical hardware components to ensure stable operation
+        during upgrade process.
+
+        Returns:
+            PreCheckResult with hardware health assessment
+        """
+        try:
+            response = self.device.rpc.get_environment_information()
+            components = response.xpath(".//environment-component")
+
+            power_supplies_ok = 0
+            power_supplies_total = 0
+            fans_ok = 0
+            fans_total = 0
+            max_temperature = 0
+            temperature_sensors = 0
+
+            for component in components:
+                name = component.findtext("name", "")
+                status = component.findtext("status", "")
+                temperature_element = component.find(".//temperature")
+
+                # Count power supplies
+                if "power" in name.lower() or "psu" in name.lower():
+                    power_supplies_total += 1
+                    if status.lower() == "ok":
+                        power_supplies_ok += 1
+
+                # Count fans
+                elif "fan" in name.lower():
+                    fans_total += 1
+                    if status.lower() == "ok":
+                        fans_ok += 1
+
+                # Track temperatures
+                if temperature_element is not None:
+                    temperature_sensors += 1
+                    try:
+                        temp_value = int(temperature_element.text)
+                        if temp_value > max_temperature:
+                            max_temperature = temp_value
+                    except (ValueError, TypeError):
+                        pass
+
+            issues = []
+            # Check power supply redundancy
+            if power_supplies_ok < MINIMUM_POWER_SUPPLIES:
+                issues.append(
+                    f"Insufficient operational power supplies: {power_supplies_ok} (minimum: {MINIMUM_POWER_SUPPLIES})"
+                )
+
+            # Check fan redundancy
+            if fans_ok < MINIMUM_FANS:
+                issues.append(
+                    f"Insufficient operational fans: {fans_ok} (minimum: {MINIMUM_FANS})"
+                )
+
+            # Check temperature thresholds
+            if max_temperature > MAX_TEMPERATURE_CRITICAL:
+                issues.append(f"Critical temperature detected: {max_temperature}°C")
+            elif max_temperature > MAX_TEMPERATURE_WARNING:
+                issues.append(f"High temperature warning: {max_temperature}°C")
+
+            if issues:
+                return PreCheckResult(
+                    check_name="Hardware Health",
+                    severity=CheckSeverity.CRITICAL,  # Fixed
+                    passed=False,
+                    message=f"Hardware health issues detected: {'; '.join(issues)}",
+                    details={
+                        "max_temperature_c": max_temperature,
+                        "temperature_sensors": temperature_sensors,
+                        "power_supplies_ok": power_supplies_ok,
+                        "power_supplies_total": power_supplies_total,
+                        "fans_ok": fans_ok,
+                        "fans_total": fans_total,
+                    },
+                    recommendation="Resolve hardware issues before proceeding with upgrade",
+                )
+            else:
+                return PreCheckResult(
+                    check_name="Hardware Health",
+                    severity=CheckSeverity.PASS,  # Fixed
+                    passed=True,
+                    message="Hardware health is good",
+                    details={
+                        "max_temperature_c": max_temperature,
+                        "temperature_sensors": temperature_sensors,
+                        "power_supplies_ok": power_supplies_ok,
+                        "power_supplies_total": power_supplies_total,
+                        "fans_ok": fans_ok,
+                        "fans_total": fans_total,
+                    },
+                )
+
+        except RpcError as e:
+            return PreCheckResult(
+                check_name="Hardware Health",
+                severity=CheckSeverity.CRITICAL,  # Fixed
+                passed=False,
+                message=f"Failed to check hardware health: {str(e)}",
+                details={"error": str(e)},
+                recommendation="Verify environmental monitoring accessibility",
+            )
+
+    def check_bgp_stability(self) -> PreCheckResult:
+        """
+        Validate BGP protocol stability and peer relationships.
+
+        Checks BGP peer status to ensure stable routing protocol operation
+        during upgrade process, minimizing network disruption.
+
+        Returns:
+            PreCheckResult with BGP stability assessment
+        """
+        try:
+            response = self.device.rpc.get_bgp_summary_information()
+            peers = response.xpath(".//bgp-peer")
+
+            total_peers = 0
+            established_peers = 0
+            peer_details = []
+
+            for peer in peers:
+                total_peers += 1
+                peer_state = peer.findtext("peer-state", "")
+                peer_address = peer.findtext("peer-address", "unknown")
+
+                peer_details.append({"address": peer_address, "state": peer_state})
+
+                if peer_state.lower() == "established":
+                    established_peers += 1
+
+            if total_peers == 0:
+                return PreCheckResult(
+                    check_name="BGP Protocol Stability",
+                    severity=CheckSeverity.PASS,  # Fixed
+                    passed=True,
+                    message="No BGP peers configured",
+                    details={
+                        "peers": peer_details,
+                        "total_peers": total_peers,
+                        "established_peers": established_peers,
+                    },
+                )
+            elif established_peers == total_peers:
+                return PreCheckResult(
+                    check_name="BGP Protocol Stability",
+                    severity=CheckSeverity.PASS,  # Fixed
+                    passed=True,
+                    message=f"All BGP peers stable ({established_peers}/{total_peers} established)",
+                    details={
+                        "peers": peer_details,
+                        "total_peers": total_peers,
+                        "established_peers": established_peers,
+                    },
+                )
+            else:
+                return PreCheckResult(
+                    check_name="BGP Protocol Stability",
+                    severity=CheckSeverity.WARNING,  # Fixed
+                    passed=True,  # Still pass but with warning
+                    message=f"BGP peers not fully established ({established_peers}/{total_peers} established)",
+                    details={
+                        "peers": peer_details,
+                        "total_peers": total_peers,
+                        "established_peers": established_peers,
+                    },
+                    recommendation="Verify BGP peer relationships before upgrade",
+                )
+
+        except RpcError as e:
+            # BGP might not be configured, which is acceptable
+            if "bgp is not running" in str(e).lower():
+                return PreCheckResult(
+                    check_name="BGP Protocol Stability",
+                    severity=CheckSeverity.PASS,  # Fixed
+                    passed=True,
+                    message="BGP not configured on device",
+                    details={"bgp_status": "not_configured"},
+                )
+            else:
+                return PreCheckResult(
+                    check_name="BGP Protocol Stability",
+                    severity=CheckSeverity.WARNING,  # Fixed
+                    passed=True,  # Pass with warning for BGP check failures
+                    message=f"BGP status check failed: {str(e)}",
+                    details={"error": str(e)},
+                    recommendation="Verify BGP configuration and retry",
+                )
+
+    def _get_current_timestamp(self) -> str:
+        """
+        Generate ISO format timestamp for check results.
+
+        Returns:
+            ISO formatted timestamp string
+        """
+        from datetime import datetime
+
+        return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")

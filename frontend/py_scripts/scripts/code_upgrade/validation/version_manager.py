@@ -1,139 +1,209 @@
 """
-Version management and comparison utilities.
+Version comparison and compatibility validation.
 
-Provides Junos version string parsing and intelligent version comparison
-logic for determining upgrade/downgrade actions and risk assessment.
+Handles version string parsing, comparison, and upgrade/downgrade path validation
+with comprehensive risk assessment for both upgrade and downgrade scenarios.
 """
 
 import re
 import logging
-from typing import Tuple
+from typing import Tuple, Optional
+from enum import Enum
 
 from core.enums import VersionAction
 
 logger = logging.getLogger(__name__)
 
 
-def parse_junos_version(version_string: str) -> Tuple[int, ...]:
-    """
-    Parse Junos version string into comparable tuple.
+class VersionChangeRisk(Enum):
+    """Risk levels for version changes."""
 
-    Handles various Junos version formats including:
-    - 21.4R3.15
-    - 20.4R3-S1.4
-    - 19.4R1
-    - 21.1X46-D10.2
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+def parse_version(version_str: str) -> Tuple[int, int, str, str, str]:
+    """
+    Parse Junos version string into comparable components.
+
+    Supports formats like:
+    - 24.4R2-S1.7
+    - 25.2R1-S1.4
+    - 21.4R3
+    - 20.2R3-S2
 
     Args:
-        version_string: Junos version string
+        version_str: Junos version string
 
     Returns:
-        Tuple of (major, minor, release_flag, build, service, patch)
+        Tuple of (major, minor, release_type, build, service_release)
     """
-    try:
-        # Remove common suffixes and extract base version
-        base_version = version_string.split("-")[0]
+    # Basic cleanup
+    version_str = version_str.strip()
 
-        # Handle service pack notation (e.g., 20.4R3-S1)
-        service_pack = 0
-        patch_level = 0
-        if "-S" in version_string:
-            parts = version_string.split("-S")
-            base_version = parts[0]
-            if len(parts) > 1:
-                sp_parts = parts[1].split(".")
-                service_pack = int(sp_parts[0]) if sp_parts[0].isdigit() else 0
-                patch_level = (
-                    int(sp_parts[1])
-                    if len(sp_parts) > 1 and sp_parts[1].isdigit()
-                    else 0
-                )
+    # Match patterns like: 24.4R2-S1.7, 25.2R1-S1.4, etc.
+    pattern = r"(\d+)\.(\d+)([R])(\d+)(?:-S(\d+)\.(\d+))?"
+    match = re.match(pattern, version_str)
 
-        # Handle X-series special versions (e.g., 21.1X46-D10)
-        if "X" in base_version:
-            match = re.match(r"(\d+)\.(\d+)X(\d+)", base_version)
-            if match:
-                major = int(match.group(1))
-                minor = int(match.group(2))
-                x_version = int(match.group(3))
-                return (major, minor, 1, 0, x_version, 0)
+    if not match:
+        logger.warning(f"Could not parse version string: {version_str}")
+        return (0, 0, "R", "0", "0")  # Default fallback
 
-        # Standard version format
-        match = re.match(r"(\d+)\.(\d+)([Rr]?)(\d*)", base_version)
-        if not match:
-            raise ValueError(f"Unsupported version format: {version_string}")
+    major = int(match.group(1))
+    minor = int(match.group(2))
+    release_type = match.group(3)  # R
+    build = match.group(4)  # R1, R2, etc.
 
-        major = int(match.group(1))
-        minor = int(match.group(2))
-        release_code = 1 if match.group(3).upper() == "R" else 0
-        build = int(match.group(4)) if match.group(4) else 0
+    # Handle service release (S1.4, S1.7, etc.)
+    service_release = "0"
+    service_build = "0"
+    if match.group(5) and match.group(6):
+        service_release = match.group(5)
+        service_build = match.group(6)
 
-        return (major, minor, release_code, build, service_pack, patch_level)
-
-    except Exception as e:
-        logger.error(f"Version parsing error for '{version_string}': {e}")
-        return (0, 0, 0, 0, 0, 0)
+    return (major, minor, release_type, build, f"{service_release}.{service_build}")
 
 
-def compare_versions(current: str, target: str) -> VersionAction:
+def compare_versions(current_version: str, target_version: str) -> VersionAction:
     """
     Compare current and target versions to determine upgrade action.
 
+    Now supports both upgrades and downgrades with proper detection.
+
     Args:
-        current: Current device version string
-        target: Target version string for upgrade
+        current_version: Current device version
+        target_version: Target version for upgrade/downgrade
 
     Returns:
-        VersionAction enum indicating type of version change
+        VersionAction indicating the type of version change
     """
     try:
-        current_parts = parse_junos_version(current)
-        target_parts = parse_junos_version(target)
-
-        if current_parts == target_parts:
+        if current_version == target_version:
             return VersionAction.SAME_VERSION
 
-        # Compare major version
-        if target_parts[0] > current_parts[0]:
-            return VersionAction.MAJOR_UPGRADE
-        elif target_parts[0] < current_parts[0]:
+        current = parse_version(current_version)
+        target = parse_version(target_version)
+
+        # Compare major versions
+        if current[0] > target[0]:
             return VersionAction.MAJOR_DOWNGRADE
+        elif current[0] < target[0]:
+            return VersionAction.MAJOR_UPGRADE
 
-        # Compare minor version
-        if target_parts[1] > current_parts[1]:
-            return VersionAction.MINOR_UPGRADE
-        elif target_parts[1] < current_parts[1]:
+        # Same major version, compare minor versions
+        if current[1] > target[1]:
             return VersionAction.MINOR_DOWNGRADE
-
-        # Same major.minor, compare remaining components
-        if target_parts > current_parts:
+        elif current[1] < target[1]:
             return VersionAction.MINOR_UPGRADE
-        elif target_parts < current_parts:
-            return VersionAction.MINOR_DOWNGRADE
 
-        return VersionAction.UNKNOWN
+        # Same major.minor, compare build numbers
+        if current[3] > target[3]:
+            return VersionAction.BUILD_DOWNGRADE
+        elif current[3] < target[3]:
+            return VersionAction.BUILD_UPGRADE
+
+        # Same build, compare service releases
+        if current[4] > target[4]:
+            return VersionAction.SERVICE_DOWNGRADE
+        elif current[4] < target[4]:
+            return VersionAction.SERVICE_UPGRADE
+
+        # If we get here, versions are the same
+        return VersionAction.SAME_VERSION
 
     except Exception as e:
-        logger.warning(f"Version comparison failed: {e}, defaulting to UNKNOWN")
+        logger.error(f"Version comparison failed: {e}")
         return VersionAction.UNKNOWN
 
 
-def get_version_change_risk(version_action: VersionAction) -> str:
+def get_version_change_risk(version_action: VersionAction) -> VersionChangeRisk:
     """
-    Assess risk level of version change operation.
+    Determine risk level for different version change types.
+
+    Includes risk assessment for both upgrades and downgrades.
 
     Args:
         version_action: Type of version change
 
     Returns:
-        Risk level string (LOW, MEDIUM, HIGH, NONE, UNKNOWN)
+        VersionChangeRisk indicating the risk level
     """
     risk_mapping = {
-        VersionAction.SAME_VERSION: "NONE",
-        VersionAction.MINOR_UPGRADE: "LOW",
-        VersionAction.MINOR_DOWNGRADE: "MEDIUM",
-        VersionAction.MAJOR_UPGRADE: "MEDIUM",
-        VersionAction.MAJOR_DOWNGRADE: "HIGH",
-        VersionAction.UNKNOWN: "UNKNOWN",
+        VersionAction.SAME_VERSION: VersionChangeRisk.LOW,
+        VersionAction.SERVICE_UPGRADE: VersionChangeRisk.LOW,
+        VersionAction.SERVICE_DOWNGRADE: VersionChangeRisk.LOW,
+        VersionAction.BUILD_UPGRADE: VersionChangeRisk.LOW,
+        VersionAction.BUILD_DOWNGRADE: VersionChangeRisk.MEDIUM,
+        VersionAction.MINOR_UPGRADE: VersionChangeRisk.MEDIUM,
+        VersionAction.MINOR_DOWNGRADE: VersionChangeRisk.HIGH,
+        VersionAction.MAJOR_UPGRADE: VersionChangeRisk.HIGH,
+        VersionAction.MAJOR_DOWNGRADE: VersionChangeRisk.CRITICAL,
+        VersionAction.UNKNOWN: VersionChangeRisk.HIGH,
     }
-    return risk_mapping.get(version_action, "UNKNOWN")
+
+    return risk_mapping.get(version_action, VersionChangeRisk.HIGH)
+
+
+def is_downgrade_supported(
+    current_version: str, target_version: str
+) -> Tuple[bool, str]:
+    """
+    Check if downgrade is supported and safe.
+
+    Validates downgrade paths and provides reasoning.
+
+    Args:
+        current_version: Current device version
+        target_version: Target downgrade version
+
+    Returns:
+        Tuple of (is_supported: bool, reason: str)
+    """
+    version_action = compare_versions(current_version, target_version)
+
+    # All downgrades are potentially risky but technically possible
+    if version_action in [
+        VersionAction.MAJOR_DOWNGRADE,
+        VersionAction.MINOR_DOWNGRADE,
+        VersionAction.BUILD_DOWNGRADE,
+        VersionAction.SERVICE_DOWNGRADE,
+    ]:
+        risk = get_version_change_risk(version_action)
+
+        if risk == VersionChangeRisk.CRITICAL:
+            return (
+                False,
+                f"Major version downgrades are high risk and require manual intervention",
+            )
+        elif risk == VersionChangeRisk.HIGH:
+            return (
+                True,
+                f"Minor version downgrade - high risk but supported with force flag",
+            )
+        else:
+            return True, f"Downgrade supported but verify configuration compatibility"
+
+    return True, "Version change is not a downgrade"
+
+
+def validate_downgrade_compatibility(
+    current_version: str, target_version: str
+) -> Tuple[bool, str]:
+    """
+    Validate configuration and feature compatibility for downgrades.
+
+    Args:
+        current_version: Current device version
+        target_version: Target downgrade version
+
+    Returns:
+        Tuple of (is_compatible: bool, warning: str)
+    """
+    # Add specific downgrade compatibility checks here
+    # For now, return True with a warning
+    return (
+        True,
+        "⚠️  Downgrade: Verify configuration compatibility and backup config before proceeding",
+    )

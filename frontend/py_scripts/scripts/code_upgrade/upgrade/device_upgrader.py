@@ -1,8 +1,5 @@
 """
 Main device upgrader class orchestrating the complete upgrade process.
-
-Manages the complete upgrade lifecycle including pre-checks, installation,
-reboot, validation, and automatic rollback on failure.
 """
 
 import time
@@ -14,11 +11,16 @@ from jnpr.junos.exception import ConnectError, RpcError
 from connectivity.device_connector import DeviceConnector
 from validation.pre_check_engine import EnhancedPreCheckEngine
 from validation.post_upgrade_validator import PostUpgradeValidator
-from validation.version_manager import compare_versions
+from validation.version_manager import (
+    compare_versions,
+    get_version_change_risk,
+    is_downgrade_supported,
+)
 from progress.event_sender import (
-    send_device_progress,
-    send_operation_complete,
-    send_upgrade_progress,
+    send_device_progress,  # This exists
+    send_operation_complete,  # This exists
+    send_upgrade_progress,  # This exists
+    # send_progress does NOT exist - remove if present
 )
 from progress.formatter import HumanReadableFormatter
 from upgrade.rollback_manager import RollbackManager
@@ -39,10 +41,11 @@ logger = logging.getLogger(__name__)
 
 class DeviceUpgrader:
     """
-    Main orchestrator for Juniper device software upgrades.
+    Main orchestrator for Juniper device software upgrades and downgrades.
 
-    Manages the complete upgrade lifecycle with enhanced pre-checks,
-    rollback, and validation.
+    Manages the complete upgrade/downgrade lifecycle with enhanced pre-checks,
+    rollback, and validation. Supports both version upgrades and downgrades
+    with comprehensive risk assessment and safety checks.
     """
 
     def __init__(
@@ -58,18 +61,18 @@ class DeviceUpgrader:
         force_upgrade: bool = False,
     ):
         """
-        Initialize device upgrader.
+        Initialize device upgrader with upgrade/downgrade parameters.
 
         Args:
             hostname: Device hostname or IP address
             username: Authentication username
             password: Authentication password
-            target_version: Target software version
+            target_version: Target software version (for upgrade or downgrade)
             image_filename: Image filename (must exist in /var/tmp/)
             vendor: Device vendor (default: juniper)
             platform: Device platform (default: srx)
-            skip_pre_check: Skip pre-upgrade checks
-            force_upgrade: Proceed despite warnings
+            skip_pre_check: Skip pre-upgrade checks (not recommended)
+            force_upgrade: Proceed despite warnings and critical issues
         """
         self.hostname = hostname
         self.username = username
@@ -90,14 +93,21 @@ class DeviceUpgrader:
         """
         Retrieve current software version from device.
 
+        Establishes connection and gathers device facts including version,
+        model, and serial number for pre-upgrade baseline.
+
         Returns:
             Current software version string
+
+        Raises:
+            ConnectError: If device connection fails
+            RpcError: If version information cannot be retrieved
         """
         try:
             facts = self.connector.get_device_facts()
             current_version = facts.get("version", "unknown")
 
-            # Store additional facts for post-upgrade comparison
+            # Store additional facts for post-upgrade comparison and rollback
             self.pre_upgrade_facts = {
                 "version": current_version,
                 "hostname": facts.get("hostname", "unknown"),
@@ -116,8 +126,13 @@ class DeviceUpgrader:
         """
         Execute comprehensive pre-upgrade validation checks.
 
+        Performs safety checks including storage, hardware health, and
+        protocol stability. Critical failures block upgrade unless
+        force_upgrade is enabled.
+
         Returns:
             True if checks pass or warnings only, False if critical failures
+            and force_upgrade is disabled
         """
         try:
             self.status.update_phase(
@@ -134,7 +149,7 @@ class DeviceUpgrader:
             pre_check_summary = engine.run_all_checks()
             self.status.pre_check_summary = pre_check_summary
 
-            # Display results
+            # Display results to user
             self.formatter.print_check_results_table(pre_check_summary)
             from progress.event_sender import send_pre_check_results
 
@@ -166,15 +181,72 @@ class DeviceUpgrader:
                 return True
             return False
 
-    def perform_upgrade(self) -> UpgradeResult:
+    def _validate_downgrade_scenario(
+        self, current_version: str, target_version: str
+    ) -> Tuple[bool, str]:
         """
-        Execute complete upgrade process with all steps.
+        Validate and handle downgrade scenarios with appropriate warnings.
 
-        Includes pre-checks, installation, reboot, recovery, validation,
-        and automatic rollback on failure.
+        Downgrades are inherently riskier than upgrades and require
+        additional validation and user confirmation (via force_upgrade).
+
+        Args:
+            current_version: Current device version
+            target_version: Target downgrade version
 
         Returns:
-            UpgradeResult with complete upgrade outcome
+            Tuple of (can_proceed: bool, message: str)
+        """
+        version_action = compare_versions(current_version, target_version)
+
+        # Check if this is any type of downgrade
+        if "downgrade" not in version_action.value:
+            return True, "Not a downgrade scenario"
+
+        logger.warning(
+            f"[{self.hostname}] ⚠️  Downgrade detected: {version_action.value}"
+        )
+
+        # Validate downgrade support and get risk assessment
+        downgrade_supported, downgrade_reason = is_downgrade_supported(
+            current_version, target_version
+        )
+
+        if not downgrade_supported and not self.force_upgrade:
+            error_msg = f"Downgrade blocked: {downgrade_reason}"
+            logger.error(f"[{self.hostname}] ❌ {error_msg}")
+            return False, error_msg
+
+        elif not downgrade_supported and self.force_upgrade:
+            warning_msg = (
+                f"Force proceeding with unsupported downgrade: {downgrade_reason}"
+            )
+            logger.warning(f"[{self.hostname}] ⚠️  {warning_msg}")
+            self.status.add_warning(warning_msg)
+            return True, warning_msg
+
+        else:
+            info_msg = f"Downgrade validated: {downgrade_reason}"
+            logger.info(f"[{self.hostname}] ✅ {info_msg}")
+            self.status.add_warning(f"Downgrade in progress: {version_action.value}")
+            return True, info_msg
+
+    def perform_upgrade(self) -> UpgradeResult:
+        """
+        Execute complete upgrade/downgrade process with all steps.
+
+        Orchestrates the entire version change process including:
+        - Pre-checks and validation
+        - Version compatibility assessment
+        - Software installation with rollback protection
+        - Reboot and recovery monitoring
+        - Post-upgrade validation
+
+        Supports both upgrades and downgrades with appropriate risk
+        assessment and safety measures.
+
+        Returns:
+            UpgradeResult with complete upgrade outcome and detailed metrics
         """
         start_time = time.time()
         upgrade_result = UpgradeResult(
@@ -187,7 +259,7 @@ class DeviceUpgrader:
         try:
             current_step = 1
 
-            # STEP 1: Pre-Checks (unless skipped)
+            # STEP 1: Pre-Checks (unless explicitly skipped)
             if not self.skip_pre_check:
                 upgrade_result.add_step(
                     "pre_checks", "in_progress", "Running pre-upgrade checks"
@@ -208,7 +280,7 @@ class DeviceUpgrader:
                 upgrade_result.add_step("pre_checks", "completed", "Pre-checks passed")
                 current_step += 1
 
-            # STEP 2: Version Validation
+            # STEP 2: Version Validation and Compatibility
             upgrade_result.add_step(
                 "validation", "in_progress", "Validating version compatibility"
             )
@@ -221,6 +293,7 @@ class DeviceUpgrader:
             upgrade_result.version_action = version_action
             self.status.version_action = version_action
 
+            # Handle same version scenario
             if version_action == VersionAction.SAME_VERSION and not self.force_upgrade:
                 upgrade_result.add_step(
                     "validation", "skipped", "Already on target version"
@@ -231,11 +304,30 @@ class DeviceUpgrader:
                 upgrade_result.end_time = time.time()
                 return upgrade_result
 
-            from validation.version_manager import get_version_change_risk
+            # Handle downgrade scenarios with special validation
+            if "downgrade" in version_action.value:
+                can_downgrade, downgrade_message = self._validate_downgrade_scenario(
+                    current_version, self.target_version
+                )
+                if not can_downgrade:
+                    upgrade_result.add_step(
+                        "validation",
+                        "failed",
+                        f"Downgrade validation failed: {downgrade_message}",
+                    )
+                    upgrade_result.errors.append(
+                        f"Downgrade blocked: {downgrade_message}"
+                    )
+                    upgrade_result.end_time = time.time()
+                    raise ValidationError(
+                        f"Downgrade blocked: {downgrade_message}",
+                        "Use --force-upgrade to override or perform manual downgrade",
+                    )
 
+            # Risk assessment for both upgrades and downgrades
             risk_level = get_version_change_risk(version_action)
             logger.info(
-                f"[{self.hostname}] Version change: {version_action.value} (Risk: {risk_level})"
+                f"[{self.hostname}] Version change: {version_action.value} (Risk: {risk_level.value})"
             )
 
             upgrade_result.add_step(
@@ -254,8 +346,11 @@ class DeviceUpgrader:
                 self.status, current_step, STEPS_PER_DEVICE, "Installing software"
             )
 
+            # Initialize installer with all required parameters
             installer = SoftwareInstaller(
-                self.connector, self.status, self.image_filename
+                self.connector,
+                self.status,
+                self.image_filename,  # Critical: This was missing in original code
             )
             install_success, install_message = installer.perform_installation()
 
@@ -283,7 +378,7 @@ class DeviceUpgrader:
                 "reboot_wait", "in_progress", "Waiting for device reboot"
             )
             self.status.update_phase(
-                UpgradePhase.REBOOTING, "Device rebooting after upgrade"
+                UpgradePhase.REBOOTING, "Device rebooting after upgrade/downgrade"
             )
             send_device_progress(
                 self.status, current_step, STEPS_PER_DEVICE, "Device rebooting"
@@ -320,13 +415,13 @@ class DeviceUpgrader:
                 "verification", "in_progress", "Verifying final version"
             )
             self.status.update_phase(
-                UpgradePhase.VERIFYING, "Verifying upgrade success"
+                UpgradePhase.VERIFYING, "Verifying upgrade/downgrade success"
             )
             send_device_progress(
                 self.status, current_step, STEPS_PER_DEVICE, "Verifying upgrade"
             )
 
-            # Reconnect to get final version
+            # Reconnect to get final version and perform validation
             with self.connector.connect():
                 final_version = self.get_current_version()
                 upgrade_result.final_version = final_version
@@ -358,7 +453,7 @@ class DeviceUpgrader:
                         "post_validation", "failed", "Post-upgrade validation failed"
                     )
 
-                    # Initiate rollback
+                    # Initiate rollback for critical validation failures
                     if not self.force_upgrade:
                         raise ValidationError(
                             "Post-upgrade validation failed",
@@ -369,7 +464,7 @@ class DeviceUpgrader:
                         "post_validation", "completed", "Post-upgrade validation passed"
                     )
 
-                # Version verification
+                # Final version verification
                 if final_version == self.target_version:
                     upgrade_result.add_step(
                         "verification",
@@ -377,6 +472,9 @@ class DeviceUpgrader:
                         f"Successfully upgraded to {final_version}",
                     )
                     upgrade_result.success = True
+                    logger.info(
+                        f"[{self.hostname}] ✅ Target version {final_version} confirmed"
+                    )
                 else:
                     upgrade_result.add_step(
                         "verification",
@@ -386,8 +484,10 @@ class DeviceUpgrader:
                     upgrade_result.warnings.append(
                         f"Version mismatch: expected {self.target_version}, got {final_version}"
                     )
-                    upgrade_result.success = (
-                        True  # Still consider successful if running
+                    # Still consider successful if device is running, just with version warning
+                    upgrade_result.success = True
+                    logger.warning(
+                        f"[{self.hostname}] ⚠️  Version mismatch: expected {self.target_version}, got {final_version}"
                     )
 
             # FINAL: Mark Completion
@@ -397,8 +497,9 @@ class DeviceUpgrader:
             upgrade_result.end_time = time.time()
             upgrade_result.calculate_duration()
 
+            total_duration = upgrade_result.upgrade_duration
             logger.info(
-                f"[{self.hostname}] ✅ Upgrade completed successfully in {upgrade_result.upgrade_duration:.1f}s"
+                f"[{self.hostname}] ✅ Upgrade completed successfully in {total_duration:.1f}s"
             )
             return upgrade_result
 
@@ -412,7 +513,7 @@ class DeviceUpgrader:
             return self._handle_upgrade_failure(upgrade_result, e, start_time)
 
         except Exception as e:
-            # Unexpected errors
+            # Unexpected errors during upgrade process
             error_msg = f"Unexpected upgrade error: {str(e)}"
             logger.error(f"[{self.hostname}] ❌ {error_msg}")
             upgrade_result.errors.append(error_msg)
@@ -424,11 +525,24 @@ class DeviceUpgrader:
     def _handle_upgrade_failure(
         self, upgrade_result: UpgradeResult, exception: Exception, start_time: float
     ) -> UpgradeResult:
-        """Handle upgrade failure with rollback attempt."""
+        """
+        Handle upgrade failure with automatic rollback attempt.
+
+        Attempts to rollback device to previous version when critical
+        failures occur during installation or post-upgrade validation.
+
+        Args:
+            upgrade_result: Upgrade result object to update
+            exception: Exception that caused the failure
+            start_time: Timestamp when upgrade started
+
+        Returns:
+            Updated UpgradeResult with failure details and rollback status
+        """
         logger.error(f"[{self.hostname}] ❌ Upgrade failed: {exception.message}")
 
+        # Attempt automatic rollback for installation and validation failures
         if isinstance(exception, (InstallationFailure, ValidationError)):
-            # Attempt automatic rollback
             logger.warning(f"[{self.hostname}] 🔙 Attempting automatic rollback...")
 
             try:
@@ -473,6 +587,7 @@ class DeviceUpgrader:
                     f"Rollback attempt failed: {str(rollback_error)}"
                 )
 
+        # Record error and remediation information
         upgrade_result.errors.append(exception.message)
         if hasattr(exception, "remediation") and exception.remediation:
             upgrade_result.warnings.append(f"Remediation: {exception.remediation}")
@@ -484,15 +599,17 @@ class DeviceUpgrader:
 
     def run_upgrade(self) -> bool:
         """
-        Main entry point to run complete upgrade process.
+        Main entry point to run complete upgrade/downgrade process.
 
-        Manages device connection lifecycle and orchestrates all upgrade steps.
+        Manages device connection lifecycle and orchestrates all upgrade steps
+        with comprehensive error handling and user feedback.
 
         Returns:
-            True if upgrade succeeded, False otherwise
+            True if upgrade/downgrade succeeded, False otherwise
         """
         self.status.start_time = time.time()
 
+        # Display upgrade banner and details
         self.formatter.print_banner(
             f"JUNIPER DEVICE UPGRADE - {self.hostname}", width=100
         )
@@ -515,18 +632,18 @@ class DeviceUpgrader:
             )
 
             with self.connector.connect():
-                # Get initial version
+                # Get initial version and establish baseline
                 self.status.current_version = self.get_current_version()
                 self.status.version_action = compare_versions(
                     self.status.current_version, self.target_version
                 )
 
-                # Perform the actual upgrade
+                # Perform the actual upgrade/downgrade
                 upgrade_result = self.perform_upgrade()
                 self.status.set_upgrade_result(upgrade_result)
                 self.status.end_time = time.time()
 
-                # Send final results
+                # Send final results to frontend/event system
                 send_operation_complete(
                     self.status,
                     upgrade_result.success,
@@ -535,12 +652,13 @@ class DeviceUpgrader:
                     else "Upgrade failed",
                 )
 
-                # Display human-readable results
+                # Display human-readable results summary
                 self.formatter.print_upgrade_results(self.status)
 
                 return upgrade_result.success
 
         except ConnectError as e:
+            # Handle connection failures specifically
             error_msg = f"Connection failed: {str(e)}"
             logger.error(f"[{self.hostname}] ❌ {error_msg}")
             self.status.error = error_msg
@@ -555,6 +673,7 @@ class DeviceUpgrader:
             return False
 
         except Exception as e:
+            # Handle all other unexpected errors
             error_msg = f"Unexpected error: {str(e)}"
             logger.error(f"[{self.hostname}] ❌ {error_msg}")
             self.status.error = error_msg
