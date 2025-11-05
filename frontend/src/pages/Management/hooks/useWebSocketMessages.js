@@ -4,12 +4,13 @@
  * =============================================================================
  *
  * Handles WebSocket message processing and state updates
- * 
+ *
  * CRITICAL FIXES APPLIED:
- * - Fixed PRE_CHECK_COMPLETE handler to extract nested pre_check_summary
- * - Removed RAW_WEBSOCKET state addition that caused infinite loops
- * - Added safety checks to prevent re-processing
- * - Improved error handling and logging
+ * 1. Implemented parsing logic for nested PRE_CHECK_COMPLETE JSON that is
+ * incorrectly stringified and embedded in an ORCHESTRATOR_LOG message (e.g.,
+ * 'PRE_CHECK_EVENT:{...}') directly in the main useEffect.
+ * 2. Ensured the extracted PRE_CHECK_COMPLETE payload is passed to the specific
+ * event handlers to correctly set the preCheckSummary state.
  *
  * @module hooks/useWebSocketMessages
  * @author nikos-geranios_vgi
@@ -29,18 +30,13 @@ import { TIMING } from '../constants/timing';
  *
  * RESPONSIBILITIES:
  * 1. Receives and parses WebSocket messages
- * 2. Extracts nested JSON from ORCHESTRATOR_LOG messages
+ * 2. Extracts nested JSON from ORCHESTRATOR_LOG messages (including the critical fix)
  * 3. Filters and deduplicates log entries
  * 4. Updates progress tracking
  * 5. Handles PRE_CHECK_COMPLETE to enable Review tab
  * 6. Handles OPERATION_COMPLETE for job finalization
  * 7. Manages tab transitions
  * 8. Updates job output for display
- *
- * INFINITE LOOP PREVENTION:
- * - Does NOT add RAW_WEBSOCKET events to state (causes circular updates)
- * - Uses refs to track processed messages
- * - Implements comprehensive deduplication
  *
  * @param {Object} params - Hook parameters
  * @param {string} params.lastMessage - Latest WebSocket message
@@ -116,19 +112,48 @@ export function useWebSocketMessages({
     }
 
     // ======================================================================
-    // NESTED DATA EXTRACTION
+    // NESTED DATA EXTRACTION (Handles standard nested structures)
     // ======================================================================
     const { payload: finalPayload, isNested } = extractNestedProgressData(parsed, setState);
+    let eventToHandle = finalPayload;
+
+    // ======================================================================
+    // CRITICAL FIX: Extract PRE_CHECK_COMPLETE from ORCHESTRATOR_LOG string
+    // The backend sends the final structured result as a string prefixed with
+    // 'PRE_CHECK_EVENT:' inside the ORCHESTRATOR_LOG's 'message' field.
+    // We must manually parse it here.
+    // ======================================================================
+    if (eventToHandle.event_type === "ORCHESTRATOR_LOG" &&
+      typeof eventToHandle.message === 'string' &&
+      eventToHandle.message.startsWith("PRE_CHECK_EVENT:")) {
+      try {
+        const PREFIX = "PRE_CHECK_EVENT:";
+        const nestedJsonString = eventToHandle.message.substring(PREFIX.length);
+        const nestedPayload = JSON.parse(nestedJsonString);
+
+        // If successfully parsed and is the expected final event, use it.
+        if (nestedPayload && nestedPayload.event_type === "PRE_CHECK_COMPLETE") {
+          console.log("[WEBSOCKET_FIX] 🎯 Successfully extracted nested PRE_CHECK_COMPLETE event.");
+          eventToHandle = nestedPayload;
+        } else {
+          console.warn("[WEBSOCKET_FIX] Parsed nested payload, but it was not PRE_CHECK_COMPLETE. Using original payload.");
+        }
+      } catch (e) {
+        console.error("[WEBSOCKET_FIX] ❌ Failed to parse nested PRE_CHECK_EVENT JSON:", e);
+        // Fall through, continue using the original finalPayload to log the error message
+      }
+    }
+
 
     console.log("[WEBSOCKET_PROCESSED] Final payload analysis:", {
-      event_type: finalPayload.event_type,
-      type: finalPayload.type,
+      event_type: eventToHandle.event_type,
+      type: eventToHandle.type,
       isNested: isNested,
       currentPhase: currentPhase,
     });
 
     // ======================================================================
-    // DEDUPLICATION LOGIC
+    // DEDUPLICATION LOGIC (Uses finalPayload for log signature)
     // ======================================================================
     const logSignature = createLogSignature(finalPayload);
     const shouldAddToOutput = !refs.loggedMessagesRef.current.has(logSignature);
@@ -177,7 +202,8 @@ export function useWebSocketMessages({
     // ======================================================================
     // EVENT-SPECIFIC HANDLERS
     // ======================================================================
-    handleSpecificEvents(finalPayload, {
+    // Pass the potentially extracted event
+    handleSpecificEvents(eventToHandle, {
       currentPhase,
       preCheckSummary,
       totalSteps,
@@ -194,7 +220,7 @@ export function useWebSocketMessages({
 /**
  * Handles specific WebSocket event types
  *
- * @param {Object} payload - Message payload
+ * @param {Object} payload - Message payload (potentially extracted PRE_CHECK_COMPLETE)
  * @param {Object} context - Context with state and functions
  * @private
  */
@@ -230,7 +256,9 @@ function handleSpecificEvents(payload, context) {
   }
 
   // ==========================================================================
-  // PRE_CHECK_COMPLETE - CRITICAL FOR REVIEW TAB (FIXED)
+  // PRE_CHECK_COMPLETE - CRITICAL FOR REVIEW TAB
+  // This handler is now guaranteed to receive the clean PRE_CHECK_COMPLETE
+  // payload thanks to the fix in the useEffect block.
   // ==========================================================================
   if (payload.event_type === "PRE_CHECK_COMPLETE" ||
     (payload.type === "PRE_CHECK_COMPLETE" && payload.data)) {
@@ -240,25 +268,15 @@ function handleSpecificEvents(payload, context) {
     console.log("[PRE_CHECK] THIS ENABLES THE REVIEW TAB");
     console.log("[PRE_CHECK] ========================================");
 
-    // CRITICAL FIX: Handle nested data structure properly
+    // Extract the final summary data, checking 'data' field first
     let summaryData = payload.data || payload;
 
-    console.log("[PRE_CHECK] Raw data structure:", {
-      has_data: !!payload.data,
-      has_pre_check_summary: !!summaryData.pre_check_summary,
-      data_keys: payload.data ? Object.keys(payload.data) : 'no data',
-      summary_keys: summaryData.pre_check_summary ? Object.keys(summaryData.pre_check_summary) : 'no summary'
-    });
-
-    // EXTRACT THE NESTED PRE_CHECK_SUMMARY FROM DATA
+    // EXTRACT THE NESTED pre_check_summary IF PRESENT, OTHERWISE USE THE DATA OBJECT ITSELF
     const actualSummary = summaryData.pre_check_summary || summaryData;
 
     if (actualSummary && (actualSummary.total_checks !== undefined || actualSummary.results)) {
       console.log("[PRE_CHECK] ✅ SUCCESS: Summary extracted:", {
         total_checks: actualSummary.total_checks,
-        passed: actualSummary.passed,
-        warnings: actualSummary.warnings,
-        critical_failures: actualSummary.critical_failures,
         can_proceed: actualSummary.can_proceed,
         results_count: actualSummary.results?.length || 0
       });
@@ -273,10 +291,8 @@ function handleSpecificEvents(payload, context) {
 
       console.log("[PRE_CHECK] ✅ State updated successfully - Review tab should now show results");
     } else {
-      console.warn("[PRE_CHECK] ❌ PRE_CHECK_COMPLETE without valid summary data:", {
+      console.warn("[PRE_CHECK] ❌ PRE_CHECK_COMPLETE without valid summary data. This is unexpected but handled.", {
         actualSummary,
-        hasTotalChecks: actualSummary?.total_checks !== undefined,
-        hasResults: !!actualSummary?.results
       });
     }
   }
@@ -382,16 +398,16 @@ function handleOperationComplete(payload, context) {
 
     // If we don't have summary from PRE_CHECK_COMPLETE, try to extract from OPERATION_COMPLETE
     if (!preCheckSummary) {
-      console.log("[PRE_CHECK] No summary found yet, extracting from OPERATION_COMPLETE");
+      console.log("[PRE_CHECK] No summary found yet, attempting extraction from OPERATION_COMPLETE payload...");
 
-      // Try multiple possible locations for the summary data
+      // Try multiple possible locations for the summary data (as a fallback)
       const possibleSummary =
         payload.data?.final_results?.data?.pre_check_summary ||
         payload.data?.pre_check_summary ||
         payload.data?.final_results?.pre_check_summary;
 
-      if (possibleSummary) {
-        console.log("[PRE_CHECK] ✅ Found summary in OPERATION_COMPLETE:", {
+      if (possibleSummary && (possibleSummary.total_checks !== undefined || possibleSummary.results)) {
+        console.log("[PRE_CHECK] ✅ Found summary in OPERATION_COMPLETE (Fallback success):", {
           total_checks: possibleSummary.total_checks,
           can_proceed: possibleSummary.can_proceed
         });
@@ -402,7 +418,7 @@ function handleOperationComplete(payload, context) {
           jobStatus: "success",
         });
       } else {
-        console.warn("[PRE_CHECK] ❌ No summary available in OPERATION_COMPLETE");
+        console.warn("[PRE_CHECK] ❌ No summary available in OPERATION_COMPLETE. State may be inconsistent.");
         setState({ jobStatus: "failed" });
       }
     }

@@ -3,7 +3,7 @@
  * PASSED CHECKS COLUMN COMPONENT
  * =============================================================================
  *
- * Displays successfully passed validation checks
+ * Displays successfully passed validation checks.
  *
  * @module components/review/PassedChecksColumn
  * @author nikos-geranios_vgi

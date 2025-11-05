@@ -3,7 +3,7 @@
  * CRITICAL ISSUES COLUMN COMPONENT
  * =============================================================================
  *
- * Displays critical validation failures that block upgrade
+ * Displays critical validation failures that block upgrade.
  *
  * @module components/review/CriticalIssuesColumn
  * @author nikos-geranios_vgi

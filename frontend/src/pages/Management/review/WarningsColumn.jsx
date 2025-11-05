@@ -3,7 +3,7 @@
  * WARNINGS COLUMN COMPONENT
  * =============================================================================
  *
- * Displays warning-level validation issues
+ * Displays warning-level validation issues.
  *
  * @module components/review/WarningsColumn
  * @author nikos-geranios_vgi

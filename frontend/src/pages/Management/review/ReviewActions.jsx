@@ -3,23 +3,23 @@
  * REVIEW ACTIONS COMPONENT
  * =============================================================================
  *
- * Action buttons and alerts for review tab
+ * Action buttons and alerts for review tab.
  *
  * @module components/review/ReviewActions
  * @author nikos-geranios_vgi
  * @date 2025-11-05
  */
- 
+
 import React from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { PlayCircle, ArrowRight, AlertTriangle } from 'lucide-react';
- 
+
 /**
  * Review Actions Component
  *
- * Provides proceed/cancel buttons and contextual alerts based on pre-check results
+ * Provides proceed/cancel buttons and contextual alerts based on pre-check results.
  *
  * @param {Object} props
  * @param {Object} props.summary - Pre-check summary
@@ -39,7 +39,7 @@ export default function ReviewActions({
     <Card>
       <CardContent className="pt-6">
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
- 
+
           {/* Decision message */}
           <div className="flex-1">
             <h4 className="text-lg font-semibold mb-2">
@@ -51,7 +51,7 @@ export default function ReviewActions({
                 : 'Critical failures detected. Resolve issues before upgrading.'}
             </p>
           </div>
- 
+
           {/* Action buttons */}
           <div className="flex gap-3 w-full sm:w-auto">
             <Button
@@ -61,7 +61,7 @@ export default function ReviewActions({
             >
               Cancel
             </Button>
- 
+
             <Button
               onClick={onProceed}
               disabled={!summary.can_proceed || !isConnected}
@@ -74,7 +74,7 @@ export default function ReviewActions({
             </Button>
           </div>
         </div>
- 
+
         {/* Alert: Cannot proceed (critical failures) */}
         {!summary.can_proceed && (
           <Alert className="mt-4" variant="destructive">
@@ -86,7 +86,7 @@ export default function ReviewActions({
             </AlertDescription>
           </Alert>
         )}
- 
+
         {/* Alert: Can proceed but has warnings */}
         {summary.can_proceed && summary.warnings > 0 && (
           <Alert className="mt-4">
