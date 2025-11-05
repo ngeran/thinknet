@@ -9,13 +9,13 @@
  * @author nikos-geranios_vgi
  * @date 2025-11-05
  */
- 
+
 import React from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { AlertTriangle, CheckCircle } from 'lucide-react';
-import { PRE_CHECK_ICONS } from '../../constants/icons';
- 
+import { PRE_CHECK_ICONS } from '../constants/icons';
+
 /**
  * Warnings Column Component
  *
@@ -47,7 +47,7 @@ export default function WarningsColumn({ warningChecks }) {
             : 'No warnings detected'}
         </CardDescription>
       </CardHeader>
- 
+
       <CardContent className="space-y-3">
         {warningChecks.length > 0 ? (
           warningChecks.map((result, index) => {

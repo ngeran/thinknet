@@ -9,7 +9,7 @@
  * @author nikos-geranios_vgi
  * @date 2025-11-05
  */
- 
+
 import React from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -17,8 +17,8 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Loader2, CheckCircle, XCircle, Terminal } from 'lucide-react';
 import EnhancedProgressBar from '@/components/realTimeProgress/EnhancedProgressBar';
-import { shouldFilterMessage } from '../../utils/messageFiltering';
- 
+import { shouldFilterMessage } from '../utils/messageFiltering';
+
 /**
  * Execution Tab Component
  *
@@ -58,7 +58,7 @@ export default function ExecutionTab({
 }) {
   return (
     <div className="space-y-6 max-w-6xl">
- 
+
       {/* ====================================================================
           OPERATION STATUS HEADER
           ==================================================================== */}
@@ -71,18 +71,18 @@ export default function ExecutionTab({
                 {isRunning && <Loader2 className="h-5 w-5 animate-spin text-blue-600" />}
                 {isComplete && <CheckCircle className="h-5 w-5 text-green-600" />}
                 {hasError && <XCircle className="h-5 w-5 text-red-600" />}
- 
+
                 {/* Dynamic title based on phase */}
                 {currentPhase === "pre_check" ? "Pre-Check Validation" : "Upgrade Execution"}
               </CardTitle>
- 
+
               <CardDescription>
                 {isRunning && "Processing validation checks..."}
                 {isComplete && "All checks completed successfully"}
                 {hasError && "Validation encountered errors"}
               </CardDescription>
             </div>
- 
+
             {/* Step counter badge */}
             {totalSteps > 0 && (
               <Badge variant="outline" className="text-sm px-3 py-1">
@@ -92,7 +92,7 @@ export default function ExecutionTab({
           </div>
         </CardHeader>
       </Card>
- 
+
       {/* ====================================================================
           ENHANCED PROGRESS BAR
           ==================================================================== */}
@@ -114,7 +114,7 @@ export default function ExecutionTab({
           />
         </CardContent>
       </Card>
- 
+
       {/* ====================================================================
           VALIDATION STEPS LOG
           ==================================================================== */}
@@ -127,7 +127,7 @@ export default function ExecutionTab({
                 Real-time progress of pre-check validation
               </CardDescription>
             </div>
- 
+
             {/* Technical details toggle */}
             <Button
               variant="outline"
@@ -140,11 +140,11 @@ export default function ExecutionTab({
             </Button>
           </div>
         </CardHeader>
- 
+
         <CardContent>
           <ScrollArea className="h-96">
             <div ref={scrollAreaRef} className="space-y-2 pr-4">
- 
+
               {/* Empty state - waiting for messages */}
               {jobOutput.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
@@ -165,13 +165,13 @@ export default function ExecutionTab({
                     // Determine step status
                     let stepStatus = 'COMPLETE';
                     const isLast = index === filteredArray.length - 1;
- 
+
                     if (isRunning && isLast) {
                       stepStatus = 'IN_PROGRESS';
                     } else if (log.level === 'error' || log.message?.includes('failed')) {
                       stepStatus = 'FAILED';
                     }
- 
+
                     return (
                       <div
                         key={`${log.timestamp}-${index}`}
@@ -187,24 +187,23 @@ export default function ExecutionTab({
                         {stepStatus === 'FAILED' && (
                           <XCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
                         )}
- 
+
                         {/* Message content */}
                         <div className="flex-1 min-w-0">
-                          <div className={`text-sm ${
-                            stepStatus === 'COMPLETE' ? 'text-gray-700' :
-                            stepStatus === 'IN_PROGRESS' ? 'text-black font-medium' :
-                            'text-red-600 font-medium'
-                          }`}>
+                          <div className={`text-sm ${stepStatus === 'COMPLETE' ? 'text-gray-700' :
+                              stepStatus === 'IN_PROGRESS' ? 'text-black font-medium' :
+                                'text-red-600 font-medium'
+                            }`}>
                             {log.message}
                           </div>
- 
+
                           {/* Timestamp */}
                           {(stepStatus === 'COMPLETE' || showTechnicalDetails) && (
                             <div className="text-xs text-gray-400 mt-0.5 font-mono">
                               {new Date(log.timestamp).toLocaleTimeString()}
                             </div>
                           )}
- 
+
                           {/* Event type badge in technical mode */}
                           {showTechnicalDetails && log.event_type && (
                             <Badge variant="outline" className="mt-1 text-xs">
@@ -216,7 +215,7 @@ export default function ExecutionTab({
                     );
                   })
               )}
- 
+
               {/* Processing indicator while running */}
               {isRunning && jobOutput.length > 0 && (
                 <div className="flex items-center gap-3 p-3 text-sm text-gray-500">
@@ -228,16 +227,15 @@ export default function ExecutionTab({
           </ScrollArea>
         </CardContent>
       </Card>
- 
+
       {/* ====================================================================
           COMPLETION SUMMARY CARD
           ==================================================================== */}
       {!isRunning && jobOutput.length > 0 && (
-        <Card className={`border-2 ${
-          isComplete ? 'border-green-200 bg-green-50' :
-          hasError ? 'border-red-200 bg-red-50' :
-          'border-gray-200'
-        }`}>
+        <Card className={`border-2 ${isComplete ? 'border-green-200 bg-green-50' :
+            hasError ? 'border-red-200 bg-red-50' :
+              'border-gray-200'
+          }`}>
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
               {isComplete && (
@@ -258,7 +256,7 @@ export default function ExecutionTab({
               {hasError && "Some validations failed - review results before proceeding"}
             </CardDescription>
           </CardHeader>
- 
+
           <CardContent>
             <div className="grid grid-cols-3 gap-4">
               {/* Steps completed */}
@@ -268,7 +266,7 @@ export default function ExecutionTab({
                 </div>
                 <div className="text-xs text-gray-500 mt-1">Steps Completed</div>
               </div>
- 
+
               {/* Progress percentage */}
               <div className="text-center p-3 bg-white rounded-lg border">
                 <div className="text-2xl font-bold text-green-600">
@@ -276,7 +274,7 @@ export default function ExecutionTab({
                 </div>
                 <div className="text-xs text-gray-500 mt-1">Progress</div>
               </div>
- 
+
               {/* Total validation checks */}
               <div className="text-center p-3 bg-white rounded-lg border">
                 <div className="text-2xl font-bold text-gray-600">

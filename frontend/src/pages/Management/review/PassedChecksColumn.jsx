@@ -9,14 +9,14 @@
  * @author nikos-geranios_vgi
  * @date 2025-11-05
  */
- 
+
 import React from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { CheckCircle } from 'lucide-react';
-import { PRE_CHECK_ICONS } from '../../constants/icons';
- 
+import { PRE_CHECK_ICONS } from '../constants/icons';
+
 /**
  * Passed Checks Column Component
  *
@@ -45,7 +45,7 @@ export default function PassedChecksColumn({ passedChecks }) {
           All validations successful
         </CardDescription>
       </CardHeader>
- 
+
       <CardContent className="space-y-2">
         <ScrollArea className="h-[400px] pr-4">
           {passedChecks.map((result, index) => {

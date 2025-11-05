@@ -9,13 +9,13 @@
  * @author nikos-geranios_vgi
  * @date 2025-11-05
  */
- 
+
 import React from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { XCircle, CheckCircle } from 'lucide-react';
-import { PRE_CHECK_ICONS } from '../../constants/icons';
- 
+import { PRE_CHECK_ICONS } from '../constants/icons';
+
 /**
  * Critical Issues Column Component
  *
@@ -47,7 +47,7 @@ export default function CriticalIssuesColumn({ criticalChecks }) {
             : 'No critical issues detected'}
         </CardDescription>
       </CardHeader>
- 
+
       <CardContent className="space-y-3">
         {criticalChecks.length > 0 ? (
           criticalChecks.map((result, index) => {
