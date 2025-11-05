@@ -353,13 +353,6 @@ def build_script_arguments(
     phase: UpgradePhase = UpgradePhase.UPGRADE,
     pre_check_options: Optional[Dict[str, Any]] = None,
 ) -> List[str]:
-    """
-    Build command-line arguments for run.py script.
-
-    Args:
-        phase: Whether this is pre_check or upgrade phase
-        pre_check_options: Additional options for pre-check phase
-    """
     args = []
 
     # Phase selector (NEW)
@@ -375,9 +368,9 @@ def build_script_arguments(
     args.extend(["--username", username])
     args.extend(["--password", password])
 
-    # Core parameters
-    args.extend(["--image_filename", image_filename])
-    args.extend(["--target_version", target_version])
+    # 🛠️ FIX THESE TWO LINES - CHANGE UNDERSCORES TO HYPHENS:
+    args.extend(["--image-filename", image_filename])  # ✅ FIXED
+    args.extend(["--target-version", target_version])  # ✅ FIXED
 
     # Optional parameters
     if vendor:
