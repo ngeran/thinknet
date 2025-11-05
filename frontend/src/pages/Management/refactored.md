@@ -327,8 +327,10 @@ export function createLogSignature(payload) {
   const timestamp = payload.timestamp || '';
   return `${eventType}::${timestamp}::${msg.substring(0, 100)}`;
 }
+
 7. utils/messageFormatting.js
 JavaScript
+
 /**
  * =============================================================================
  * MESSAGE FORMATTING UTILITIES
@@ -406,7 +408,12 @@ Let me continue with the remaining utility files and hooks in the next response.
  
 You said: Without Using Public Code please continue with
 Without Using Public Code please continue with the remaining files
-Copilot said: ## 8. utils/jsonExtraction.js ```javascript /** * ============================================================================= * JSON
+Copilot said: ## 8. utils/jsonExtraction.js 
+
+
+```javascript 
+
+/** * ============================================================================= * JSON
 8. utils/jsonExtraction.js
 JavaScript
 /**
