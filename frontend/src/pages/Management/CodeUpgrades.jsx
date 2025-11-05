@@ -622,40 +622,59 @@ export default function CodeUpgrades() {
     /**
      * Enhanced nested data extraction with comprehensive logging
      */
+    // REPLACE THE ENTIRE FUNCTION WITH THIS CORRECTED VERSION:
+
     const extractNestedProgressData = (initialParsed) => {
       let currentPayload = initialParsed;
 
       // Handle ORCHESTRATOR_LOG with embedded JSON
       if (initialParsed.event_type === "ORCHESTRATOR_LOG" && initialParsed.message) {
         const message = initialParsed.message;
-        console.log("[NESTED_EXTRACTION] Checking ORCHESTRATOR_LOG for embedded events");
 
-        // Extract PRE_CHECK_COMPLETE from log message
-        const preCheckMatch = message.match(/PRE_CHECK_COMPLETE.*?(\{.*?\})/s);
-        if (preCheckMatch && preCheckMatch[1]) {
+        // Log the message for debugging
+        console.log("[NESTED_EXTRACTION] Checking ORCHESTRATOR_LOG message:", message.substring(0, 150));
+
+        // 🎯 CRITICAL: Extract PRE_CHECK_EVENT:{json} from the message
+        // The message format is: "[STDOUT] PRE_CHECK_EVENT:{...}"
+        // We need to extract everything after "PRE_CHECK_EVENT:"
+
+        if (message.includes("PRE_CHECK_EVENT:")) {
+          console.log("[NESTED_EXTRACTION] 🔍 Found PRE_CHECK_EVENT in message");
+
+          // Find the position where the JSON starts
+          const jsonStartIndex = message.indexOf("PRE_CHECK_EVENT:") + "PRE_CHECK_EVENT:".length;
+          const jsonString = message.substring(jsonStartIndex).trim();
+
+          console.log("[NESTED_EXTRACTION] Attempting to parse JSON, first 100 chars:", jsonString.substring(0, 100));
+
           try {
-            const preCheckData = JSON.parse(preCheckMatch[1]);
-            console.log("[NESTED_EXTRACTION] 🎯 SUCCESS: Extracted PRE_CHECK_COMPLETE from ORCHESTRATOR_LOG");
+            const preCheckData = JSON.parse(jsonString);
+            console.log("[NESTED_EXTRACTION] 🎯 SUCCESS: Extracted PRE_CHECK_EVENT data");
+            console.log("[NESTED_EXTRACTION] Event type:", preCheckData.event_type);
+            console.log("[NESTED_EXTRACTION] Has pre_check_summary:", !!preCheckData.data?.pre_check_summary);
             return { payload: preCheckData, isNested: true };
           } catch (parseError) {
-            console.debug('[NESTED_EXTRACTION] Failed to parse PRE_CHECK_COMPLETE from ORCHESTRATOR_LOG:', parseError);
+            console.error('[NESTED_EXTRACTION] ❌ Failed to parse PRE_CHECK_EVENT JSON:', parseError);
+            console.error('[NESTED_EXTRACTION] JSON string was:', jsonString.substring(0, 200));
           }
         }
 
-        // Extract OPERATION_COMPLETE from log message
-        const operationMatch = message.match(/OPERATION_COMPLETE.*?(\{.*?\})/s);
-        if (operationMatch && operationMatch[1]) {
-          try {
-            const operationData = JSON.parse(operationMatch[1]);
-            console.log("[NESTED_EXTRACTION] 🎯 SUCCESS: Extracted OPERATION_COMPLETE from ORCHESTRATOR_LOG");
-            return { payload: operationData, isNested: true };
-          } catch (parseError) {
-            console.debug('[NESTED_EXTRACTION] Failed to parse OPERATION_COMPLETE from ORCHESTRATOR_LOG:', parseError);
+        // Also check for OPERATION_COMPLETE events (these work fine already)
+        if (message.includes("OPERATION_COMPLETE")) {
+          const operationMatch = message.match(/OPERATION_COMPLETE.*?(\{.*?\})/s);
+          if (operationMatch && operationMatch[1]) {
+            try {
+              const operationData = JSON.parse(operationMatch[1]);
+              console.log("[NESTED_EXTRACTION] 🎯 Extracted OPERATION_COMPLETE");
+              return { payload: operationData, isNested: true };
+            } catch (parseError) {
+              console.debug('[NESTED_EXTRACTION] Failed to parse OPERATION_COMPLETE:', parseError);
+            }
           }
         }
       }
 
-      // Handle nested data structure
+      // Handle nested data structure (backup method)
       if (initialParsed.data) {
         try {
           const dataPayload = typeof initialParsed.data === 'string'
