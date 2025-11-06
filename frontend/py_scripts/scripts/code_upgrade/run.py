@@ -3,7 +3,7 @@
 ================================================================================
 SCRIPT:             Juniper Device Code Upgrade - Enhanced Edition
 ENTRY POINT:        main.py
-VERSION:            1.0.6 - Simple pre-check results fix
+VERSION:            1.0.8 - Fixed pre-check phase, event sending, and severity parsing
 ================================================================================
 """
 
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 def parse_arguments():
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Juniper Device Code Upgrade - Enhanced Edition v1.0.6",
+        description="Juniper Device Code Upgrade - Enhanced Edition v1.0.8",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
@@ -77,8 +77,12 @@ def extract_pre_check_results(upgrader):
                     for result in summary.results:
                         # Handle severity - convert to string if needed
                         severity_value = getattr(result, "severity", "unknown")
-                        if hasattr(severity_value, "value"):
-                            severity_value = severity_value.value
+                        # 🔑 FIX 1: Safely convert Enum members (which have a .value attribute) to their string value,
+                        # and ensure the final output is lower-cased to match frontend expectations ('critical', 'warning', 'pass').
+                        # This resolves the "Cannot access attribute 'value' for class 'str'" error.
+                        severity_value = str(
+                            getattr(severity_value, "value", severity_value)
+                        ).lower()
 
                         results.append(
                             {
@@ -127,12 +131,32 @@ def print_pre_check_results(hostname: str, pre_check_results: dict):
             },
         }
 
-        # Print as JSON - the worker will forward this to the frontend
-        print(f"PRE_CHECK_EVENT:{json.dumps(event_data)}")
+        # Print as pure JSON - the worker will forward this to the frontend as proper event
+        print(json.dumps(event_data))
         logger.info("✅ Pre-check results formatted for frontend")
 
     except Exception as e:
         logger.error(f"❌ Error formatting pre-check results: {e}")
+
+
+# 🔑 FIX 2 & 3: Define the missing utility function to resolve NameError on lines 212 and 243.
+def send_operation_complete(status, success: bool, message: str) -> None:
+    """
+    Sends a generic OPERATION_COMPLETE event to the worker output stream.
+    Used for final status reporting when the full pre-check summary is not needed.
+    """
+    payload = {
+        "level": "SUCCESS" if success else "ERROR",
+        "event_type": "OPERATION_COMPLETE",
+        "message": message,
+        "data": {
+            "status": "SUCCESS" if success else "FAILED",
+            "returncode": 0 if success else 1,
+        },
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+    print(json.dumps(payload))
+    logger.info(f"✅ OPERATION_COMPLETE event sent.")
 
 
 def main():
@@ -141,7 +165,7 @@ def main():
 
     # Log startup information
     logger.info("=" * 80)
-    logger.info("🚀 Juniper Device Upgrade Script v1.0.6 - Starting")
+    logger.info("🚀 Juniper Device Upgrade Script v1.0.8 - Starting")
     logger.info("=" * 80)
     logger.info(
         f"📅 Started at: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}"
@@ -176,7 +200,7 @@ def main():
         logger.error("❌ Must specify --hostname")
         return 2
 
-    # Create and run upgrader
+    # Create upgrader
     try:
         upgrader_kwargs = {
             "hostname": args.hostname,
@@ -197,86 +221,35 @@ def main():
         upgrader = DeviceUpgrader(**upgrader_kwargs)
 
         # Execute based on phase
-        pre_check_results = None
         if args.phase == "pre_check":
             logger.info("🎯 Starting pre-check validation...")
 
             try:
-                success = upgrader.run_upgrade()
-            except AttributeError as e:
-                if "'NoneType' object has no attribute 'value'" in str(e):
-                    logger.warning("⚠️  Internal error in DeviceUpgrader (known issue)")
-                    logger.info("🔄 Extracting pre-check results despite the error...")
+                with upgrader.connector.connect():
+                    upgrader.status.current_version = upgrader.get_current_version()
+                    upgrader._validate_downgrade_scenario(
+                        upgrader.status.current_version, args.target_version
+                    )
+                    success = upgrader.run_pre_checks()
 
-                    # Extract pre-check results despite the error
-                    pre_check_results = extract_pre_check_results(upgrader)
-                    if pre_check_results:
-                        logger.info(
-                            f"📊 Pre-check completed: {pre_check_results['passed']}/{pre_check_results['total_checks']} passed"
-                        )
-                        logger.info(
-                            f"⚠️  Critical failures: {pre_check_results['critical_failures']}"
-                        )
-
-                        # Determine success based on pre-check results
-                        success = pre_check_results["can_proceed"]
-
-                        if success:
-                            logger.info(
-                                "✅ Pre-check validation completed successfully"
-                            )
-                            logger.info("📋 Device is ready for upgrade")
-                        else:
-                            logger.error(
-                                "❌ Pre-check validation failed - critical issues found"
-                            )
-                            logger.info("🔧 Review the validation results above")
-
-                        # PRINT PRE-CHECK RESULTS FOR FRONTEND
-                        print_pre_check_results(args.hostname, pre_check_results)
-                    else:
-                        logger.error("❌ Could not extract pre-check results")
-                        success = False
-                else:
-                    raise
-            except Exception as e:
-                logger.error(f"❌ Error during pre-check: {e}")
-                success = False
-
-        else:  # upgrade phase
-            logger.info("🚀 Starting upgrade execution...")
-            success = upgrader.run_upgrade()
-
-        # Final summary
-        logger.info("=" * 80)
-        if success:
-            if args.phase == "pre_check":
-                logger.info("✅ PRE-CHECK COMPLETED SUCCESSFULLY")
-                logger.info("📋 Device meets requirements for upgrade")
-            else:
-                logger.info("✅ UPGRADE COMPLETED SUCCESSFULLY")
-
-            logger.info(
-                f"📅 Completed at: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}"
-            )
-            logger.info("=" * 80)
-            return 0
-        else:
-            if args.phase == "pre_check":
-                logger.error("❌ PRE-CHECK FAILED")
-                logger.info(
-                    "🔧 Critical issues detected - review results before proceeding"
+                # Send final operation complete for pre-check
+                send_operation_complete(
+                    upgrader.status,
+                    success,
+                    "Pre-check completed successfully"
+                    if success
+                    else "Pre-check failed with critical issues",
                 )
 
-                # Try to extract and log detailed pre-check results
-                if not pre_check_results:
-                    pre_check_results = extract_pre_check_results(upgrader)
-
+                pre_check_results = extract_pre_check_results(upgrader)
                 if pre_check_results:
                     logger.info(
                         f"📊 Pre-check summary: {pre_check_results['passed']}/{pre_check_results['total_checks']} passed, "
                         f"{pre_check_results['warnings']} warnings, {pre_check_results['critical_failures']} critical failures"
                     )
+
+                    # CRITICAL STEP: Print the pre-check results payload to be picked up by the worker
+                    print_pre_check_results(args.hostname, pre_check_results)
 
                     # Log individual failed checks
                     failed_checks = [
@@ -291,8 +264,35 @@ def main():
                             if result["recommendation"]:
                                 logger.info(f"      💡 {result['recommendation']}")
 
-                    # PRINT PRE-CHECK RESULTS FOR FRONTEND (even on failure)
-                    print_pre_check_results(args.hostname, pre_check_results)
+            except Exception as e:
+                logger.error(f"❌ Error during pre-check: {e}")
+                success = False
+                send_operation_complete(upgrader.status, False, str(e))
+
+        else:  # upgrade phase
+            logger.info("🚀 Starting upgrade execution...")
+            success = upgrader.run_upgrade()
+
+        # Final summary
+        logger.info("=" * 80)
+        if success:
+            if args.phase == "pre_check":
+                logger.info("✅ PRE-CHECK COMPLETED SUCCESSFULLY")
+                logger.info("📋 Device is ready for upgrade")
+            else:
+                logger.info("✅ UPGRADE COMPLETED SUCCESSFULLY")
+
+            logger.info(
+                f"📅 Completed at: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}"
+            )
+            logger.info("=" * 80)
+            return 0
+        else:
+            if args.phase == "pre_check":
+                logger.error("❌ PRE-CHECK FAILED")
+                logger.info(
+                    "🔧 Critical issues detected - review results before proceeding"
+                )
             else:
                 logger.error("❌ UPGRADE FAILED")
 

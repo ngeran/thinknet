@@ -119,31 +119,34 @@ export function useWebSocketMessages({
 
     // ======================================================================
     // CRITICAL FIX: Extract PRE_CHECK_COMPLETE from ORCHESTRATOR_LOG string
-    // The backend sends the final structured result as a string prefixed with
-    // 'PRE_CHECK_EVENT:' inside the ORCHESTRATOR_LOG's 'message' field.
-    // We must manually parse it here.
+    // Now handles BOTH prefixed and non-prefixed JSON strings
     // ======================================================================
     if (eventToHandle.event_type === "ORCHESTRATOR_LOG" &&
-      typeof eventToHandle.message === 'string' &&
-      eventToHandle.message.startsWith("PRE_CHECK_EVENT:")) {
-      try {
-        const PREFIX = "PRE_CHECK_EVENT:";
-        const nestedJsonString = eventToHandle.message.substring(PREFIX.length);
-        const nestedPayload = JSON.parse(nestedJsonString);
+      typeof eventToHandle.message === 'string') {
+      let jsonStr = eventToHandle.message;
 
-        // If successfully parsed and is the expected final event, use it.
+      try {
+        // Strip prefix if present (legacy backend)
+        const PREFIX = "PRE_CHECK_EVENT:";
+        if (jsonStr.startsWith(PREFIX)) {
+          jsonStr = jsonStr.substring(PREFIX.length);
+          console.log("[WEBSOCKET_FIX] Stripped legacy prefix");
+        }
+
+        const nestedPayload = JSON.parse(jsonStr);
+
+        // If successfully parsed and is the expected event, use it
         if (nestedPayload && nestedPayload.event_type === "PRE_CHECK_COMPLETE") {
           console.log("[WEBSOCKET_FIX] 🎯 Successfully extracted nested PRE_CHECK_COMPLETE event.");
           eventToHandle = nestedPayload;
         } else {
-          console.warn("[WEBSOCKET_FIX] Parsed nested payload, but it was not PRE_CHECK_COMPLETE. Using original payload.");
+          console.warn("[WEBSOCKET_FIX] Parsed nested payload, but it was not PRE_CHECK_COMPLETE.");
         }
       } catch (e) {
-        console.error("[WEBSOCKET_FIX] ❌ Failed to parse nested PRE_CHECK_EVENT JSON:", e);
-        // Fall through, continue using the original finalPayload to log the error message
+        console.error("[WEBSOCKET_FIX] ❌ Failed to parse nested JSON:", e);
+        // Fall through to handle as normal log
       }
     }
-
 
     console.log("[WEBSOCKET_PROCESSED] Final payload analysis:", {
       event_type: eventToHandle.event_type,
