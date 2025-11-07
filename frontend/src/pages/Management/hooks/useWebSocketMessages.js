@@ -1,53 +1,44 @@
 /**
  * =============================================================================
- * WEBSOCKET MESSAGE PROCESSING HOOK
+ * WEBSOCKET MESSAGE PROCESSING HOOK - RUST WEBSOCKET COMPATIBLE
  * =============================================================================
  *
- * Handles WebSocket message processing and state updates
+ * VERSION: 2.1.0 - Rust WebSocket Integration
+ * AUTHOR: nikos-geranios_vgi
+ * DATE: 2025-11-07
  *
- * CRITICAL FIXES APPLIED:
- * 1. Fixed JSON parsing for STDOUT logs that aren't valid JSON
- * 2. Added deduplication for OPERATION_COMPLETE events with safe ref access
- * 3. Improved error handling and logging for nested JSON extraction
+ * ARCHITECTURE:
+ * - Rust WebSocket sends: {"channel": "ws_channel:job:UUID", "data": "{...}"}
+ * - This hook unwraps the outer structure and processes the inner event
+ * - Backend events are clean JSON in the "data" field
  *
  * @module hooks/useWebSocketMessages
- * @author nikos-geranios_vgi
- * @date 2025-11-05
  */
 
-import { useEffect } from 'react';
-import { extractNestedProgressData } from '../utils/jsonExtraction';
-import { shouldFilterMessage, createLogSignature } from '../utils/messageFiltering';
-import { formatStepMessage } from '../utils/messageFormatting';
+import { useEffect, useCallback, useRef } from 'react';
 import { TIMING } from '../constants/timing';
 
+// =============================================================================
+// SECTION 1: RECOGNIZED EVENT TYPES
+// =============================================================================
+
+const RECOGNIZED_EVENT_TYPES = new Set([
+  'PRE_CHECK_RESULT',
+  'PRE_CHECK_COMPLETE',
+  'OPERATION_START',
+  'STEP_COMPLETE',
+  'OPERATION_COMPLETE',
+  'LOG_MESSAGE'
+]);
+
+// =============================================================================
+// SECTION 2: MAIN HOOK DEFINITION
+// =============================================================================
+
 /**
- * Custom hook for processing WebSocket messages
+ * Custom hook for processing WebSocket messages from Rust WebSocket Hub.
  *
- * This is the heart of real-time progress tracking and state management.
- *
- * RESPONSIBILITIES:
- * 1. Receives and parses WebSocket messages
- * 2. Extracts nested JSON from ORCHESTRATOR_LOG messages
- * 3. Filters and deduplicates log entries
- * 4. Updates progress tracking
- * 5. Handles PRE_CHECK_COMPLETE to enable Review tab
- * 6. Handles OPERATION_COMPLETE for job finalization
- * 7. Manages tab transitions
- * 8. Updates job output for display
- *
- * @param {Object} params - Hook parameters
- * @param {string} params.lastMessage - Latest WebSocket message
- * @param {string} params.jobId - Current job ID
- * @param {string} params.wsChannel - Current WebSocket channel
- * @param {string} params.currentPhase - Current workflow phase
- * @param {Array} params.jobOutput - Current job output logs
- * @param {Object} params.preCheckSummary - Pre-check summary data
- * @param {number} params.totalSteps - Total steps in operation
- * @param {number} params.progress - Current progress percentage
- * @param {Function} params.sendMessage - Function to send WebSocket messages
- * @param {Function} params.setState - Function to update state
- * @param {Object} params.refs - Refs for persistent values
+ * @param {Object} params Hook parameters
  */
 export function useWebSocketMessages({
   lastMessage,
@@ -63,310 +54,149 @@ export function useWebSocketMessages({
   refs
 }) {
 
+  // ===========================================================================
+  // SUBSECTION 2.1: STATE MANAGEMENT
+  // ===========================================================================
+
+  const processedEventsRef = useRef(new Set());
+  const transitionTimeoutRef = useRef(null);
+
+  // ===========================================================================
+  // SUBSECTION 2.2: CLEANUP UTILITIES
+  // ===========================================================================
+
+  const cleanupResources = useCallback(() => {
+    if (transitionTimeoutRef.current) {
+      clearTimeout(transitionTimeoutRef.current);
+      transitionTimeoutRef.current = null;
+    }
+  }, []);
+
+  // ===========================================================================
+  // SUBSECTION 2.3: RESET ON JOB CHANGE
+  // ===========================================================================
+
   useEffect(() => {
-    if (!lastMessage || !jobId) return;
-
-    const raw = lastMessage;
-
-    // ===========================================================================
-    // SECTION 1: RAW MESSAGE PROCESSING
-    // ===========================================================================
-
-    // ===========================================================================
-    // SUBSECTION 1.1: RAW MESSAGE LOGGING (CONSOLE ONLY - NOT ADDED TO STATE)
-    // ===========================================================================
-    console.log("[WEBSOCKET_RAW] ========================================");
-    console.log("[WEBSOCKET_RAW] New message received");
-    console.log("[WEBSOCKET_RAW] Length:", raw.length);
-    console.log("[WEBSOCKET_RAW] Preview:", raw.substring(0, 500) + (raw.length > 500 ? '...' : ''));
-    console.log("[WEBSOCKET_RAW] ========================================");
-
-    // ===========================================================================
-    // SUBSECTION 1.2: MESSAGE VALIDATION
-    // ===========================================================================
-    // Validate message format
-    if (typeof raw !== 'string' || (!raw.startsWith('{') && !raw.startsWith('['))) {
-      console.debug("[WEBSOCKET] Ignoring non-JSON message");
-      return;
+    if (jobId) {
+      console.log("[WEBSOCKET] New job detected, resetting processed events");
+      processedEventsRef.current = new Set();
     }
-
-    // ===========================================================================
-    // SUBSECTION 1.3: INITIAL JSON PARSING
-    // ===========================================================================
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-      console.log("[WEBSOCKET_PARSED] Successfully parsed message structure:", {
-        event_type: parsed.event_type || 'N/A',
-        type: parsed.type || 'N/A',
-        has_data: !!parsed.data,
-        message_length: parsed.message?.length || 0,
-        channel: parsed.channel || 'N/A'
-      });
-    } catch (error) {
-      console.debug("[WEBSOCKET] Failed to parse message as JSON:", error);
-      return;
-    }
-
-    // ===========================================================================
-    // SECTION 2: MESSAGE FILTERING AND EXTRACTION
-    // ===========================================================================
-
-    // ===========================================================================
-    // SUBSECTION 2.1: CHANNEL FILTERING
-    // ===========================================================================
-    if (parsed.channel && wsChannel && !parsed.channel.includes(wsChannel)) {
-      console.debug("[WEBSOCKET] Ignoring message for different channel:", parsed.channel);
-      return;
-    }
-
-    // ===========================================================================
-    // SUBSECTION 2.2: NESTED DATA EXTRACTION (Standard nested structures)
-    // ===========================================================================
-    const { payload: finalPayload, isNested } = extractNestedProgressData(parsed, setState);
-    let eventToHandle = finalPayload;
-
-    // ===========================================================================
-    // SUBSECTION 2.3: CRITICAL FIX - NESTED JSON EXTRACTION FROM ORCHESTRATOR_LOG
-    // ===========================================================================
-    // Handles BOTH prefixed and non-prefixed JSON strings
-    // FIXED: Now properly handles [STDOUT] logs that aren't valid JSON
-    if (eventToHandle.event_type === "ORCHESTRATOR_LOG" &&
-      typeof eventToHandle.message === 'string') {
-
-      let jsonStr = eventToHandle.message;
-
-      // Early detection of non-JSON messages (like [STDOUT] logs)
-      if (!jsonStr.trim().startsWith('{') && !jsonStr.trim().startsWith('[')) {
-        console.log("[WEBSOCKET_FIX] Skipping non-JSON message:", jsonStr.substring(0, 100));
-        // Continue with original eventToHandle - don't try to parse as JSON
-      } else {
-        try {
-          // Strip prefix if present (legacy backend)
-          const PREFIX = "PRE_CHECK_EVENT:";
-          if (jsonStr.startsWith(PREFIX)) {
-            jsonStr = jsonStr.substring(PREFIX.length);
-            console.log("[WEBSOCKET_FIX] Stripped legacy prefix");
-          }
-
-          const nestedPayload = JSON.parse(jsonStr);
-
-          // If successfully parsed and is the expected event, use it
-          if (nestedPayload && nestedPayload.event_type === "PRE_CHECK_COMPLETE") {
-            console.log("[WEBSOCKET_FIX] 🎯 Successfully extracted nested PRE_CHECK_COMPLETE event.");
-            eventToHandle = nestedPayload;
-          } else {
-            console.log("[WEBSOCKET_FIX] Parsed nested payload, but it was not PRE_CHECK_COMPLETE:", nestedPayload.event_type);
-          }
-        } catch (e) {
-          console.log("[WEBSOCKET_FIX] Not a JSON message (expected for STDOUT logs):", jsonStr.substring(0, 200));
-          // This is normal for STDOUT logs - continue with original eventToHandle
-        }
-      }
-    }
-
-    console.log("[WEBSOCKET_PROCESSED] Final payload analysis:", {
-      event_type: eventToHandle.event_type,
-      type: eventToHandle.type,
-      isNested: isNested,
-      currentPhase: currentPhase,
-    });
-
-    // ===========================================================================
-    // SECTION 3: OUTPUT MANAGEMENT
-    // ===========================================================================
-
-    // ===========================================================================
-    // SUBSECTION 3.1: DEDUPLICATION LOGIC
-    // ===========================================================================
-    const logSignature = createLogSignature(finalPayload);
-    const shouldAddToOutput = !refs.loggedMessagesRef.current.has(logSignature);
-    const shouldDisplay = !shouldFilterMessage(finalPayload);
-
-    // ===========================================================================
-    // SUBSECTION 3.2: ADD TO JOB OUTPUT (WITH INFINITE LOOP PROTECTION)
-    // ===========================================================================
-    if (shouldAddToOutput && shouldDisplay) {
-      refs.loggedMessagesRef.current.add(logSignature);
-
-      const currentStepNumber = jobOutput.filter(log => !shouldFilterMessage(log)).length + 1;
-
-      const logEntry = {
-        timestamp: finalPayload.timestamp || new Date().toISOString(),
-        message: formatStepMessage(
-          finalPayload.message || (typeof finalPayload === 'string' ? finalPayload : "Processing..."),
-          currentStepNumber
-        ),
-        level: finalPayload.level?.toLowerCase() || "info",
-        event_type: finalPayload.event_type,
-        data: finalPayload.data,
-      };
-
-      console.log(`[WEBSOCKET_LOG] Adding to job output (Step ${currentStepNumber}):`, logEntry.message);
-
-      setState({
-        jobOutput: prev => [...prev, logEntry]
-      });
-
-      // Update latest step message for progress bar
-      if (logEntry.message && finalPayload.event_type !== "OPERATION_COMPLETE") {
-        refs.latestStepMessageRef.current = logEntry.message;
-      }
-
-      // Auto-scroll to latest message
-      if (refs.scrollAreaRef.current) {
-        setTimeout(() => {
-          if (refs.scrollAreaRef.current) {
-            refs.scrollAreaRef.current.scrollTop = refs.scrollAreaRef.current.scrollHeight;
-          }
-        }, TIMING.AUTO_SCROLL_DELAY);
-      }
-    }
-
-    // ===========================================================================
-    // SECTION 4: EVENT PROCESSING
-    // ===========================================================================
-    // Pass the potentially extracted event to specific handlers
-    handleSpecificEvents(eventToHandle, {
-      currentPhase,
-      preCheckSummary,
-      totalSteps,
-      progress,
-      wsChannel,
-      sendMessage,
-      setState,
-      refs
-    });
-
-  }, [lastMessage, jobId, wsChannel, currentPhase, jobOutput, preCheckSummary, totalSteps, progress, sendMessage, setState, refs]);
-}
-
-/**
- * Handles specific WebSocket event types
- *
- * @param {Object} payload - Message payload (potentially extracted PRE_CHECK_COMPLETE)
- * @param {Object} context - Context with state and functions
- * @private
- */
-function handleSpecificEvents(payload, context) {
-  const {
-    currentPhase,
-    preCheckSummary,
-    totalSteps,
-    progress,
-    wsChannel,
-    sendMessage,
-    setState,
-    refs
-  } = context;
+  }, [jobId]);
 
   // ===========================================================================
-  // SECTION 5: EVENT TYPE HANDLERS
+  // SUBSECTION 2.4: CLEANUP ON UNMOUNT
   // ===========================================================================
 
-  // ===========================================================================
-  // SUBSECTION 5.1: PRE_CHECK_RESULT HANDLER
-  // ===========================================================================
-  if (payload.event_type === "PRE_CHECK_RESULT") {
-    console.log("[PRE_CHECK] Individual result received:", {
-      check_name: payload.check_name,
-      severity: payload.severity,
-      message: payload.message
+  useEffect(() => {
+    return () => {
+      console.log("[WEBSOCKET] Cleaning up resources");
+      cleanupResources();
+    };
+  }, [cleanupResources]);
+
+  // =============================================================================
+  // SECTION 3: EVENT HANDLERS
+  // =============================================================================
+
+  /**
+   * Handle PRE_CHECK_RESULT event
+   */
+  const handlePreCheckResult = useCallback((data) => {
+    console.log("[PRE_CHECK_RESULT] Individual check:", {
+      check_name: data.check_name,
+      severity: data.severity,
+      passed: data.passed
     });
 
     setState({
-      preCheckResults: prev => {
-        const updated = prev ? [...prev] : [];
-        updated.push(payload);
-        return updated;
-      }
+      preCheckResults: prev => [...(prev || []), data]
     });
-  }
+  }, [setState]);
 
-  // ===========================================================================
-  // SUBSECTION 5.2: PRE_CHECK_COMPLETE HANDLER - CRITICAL FOR REVIEW TAB
-  // ===========================================================================
-  // This handler is now guaranteed to receive the clean PRE_CHECK_COMPLETE
-  // payload thanks to the fix in the useEffect block.
-  if (payload.event_type === "PRE_CHECK_COMPLETE" ||
-    (payload.type === "PRE_CHECK_COMPLETE" && payload.data)) {
+  /**
+   * Handle PRE_CHECK_COMPLETE event - CRITICAL for Review tab
+   */
+  const handlePreCheckComplete = useCallback((data) => {
+    console.log("[PRE_CHECK_COMPLETE] ========================================");
+    console.log("[PRE_CHECK_COMPLETE] 🎯 PRE-CHECK COMPLETE EVENT RECEIVED");
+    console.log("[PRE_CHECK_COMPLETE] Enabling Review Tab");
+    console.log("[PRE_CHECK_COMPLETE] ========================================");
 
-    console.log("[PRE_CHECK] ========================================");
-    console.log("[PRE_CHECK] 🎯 PRE_CHECK_COMPLETE EVENT DETECTED");
-    console.log("[PRE_CHECK] THIS ENABLES THE REVIEW TAB");
-    console.log("[PRE_CHECK] ========================================");
+    const summary = data.pre_check_summary || data;
 
-    // Extract the final summary data, checking 'data' field first
-    let summaryData = payload.data || payload;
-
-    // EXTRACT THE NESTED pre_check_summary IF PRESENT, OTHERWISE USE THE DATA OBJECT ITSELF
-    const actualSummary = summaryData.pre_check_summary || summaryData;
-
-    if (actualSummary && (actualSummary.total_checks !== undefined || actualSummary.results)) {
-      console.log("[PRE_CHECK] ✅ SUCCESS: Summary extracted:", {
-        total_checks: actualSummary.total_checks,
-        can_proceed: actualSummary.can_proceed,
-        results_count: actualSummary.results?.length || 0
+    if (summary && (summary.total_checks !== undefined || summary.results)) {
+      console.log("[PRE_CHECK_COMPLETE] ✅ Valid summary:", {
+        total_checks: summary.total_checks,
+        can_proceed: summary.can_proceed,
+        results_count: summary.results?.length || 0
       });
 
+      if (!summary.results) {
+        summary.results = [];
+      }
+
       setState({
-        preCheckSummary: actualSummary,
-        canProceedWithUpgrade: actualSummary.can_proceed,
-        jobStatus: "success",
+        preCheckSummary: summary,
+        canProceedWithUpgrade: summary.can_proceed !== false,
+        jobStatus: summary.can_proceed === false ? "failed" : "success",
         isRunningPreCheck: false,
         progress: 100,
       });
 
-      console.log("[PRE_CHECK] ✅ State updated successfully - Review tab should now show results");
+      console.log("[PRE_CHECK_COMPLETE] ✅ State updated - Review tab enabled");
+
+      setTimeout(() => {
+        setState({
+          activeTab: "review",
+          currentPhase: "review",
+        });
+        console.log("[PRE_CHECK_COMPLETE] ✅ Transitioned to Review tab");
+      }, 500);
+
     } else {
-      console.warn("[PRE_CHECK] ❌ PRE_CHECK_COMPLETE without valid summary data. This is unexpected but handled.", {
-        actualSummary,
+      console.warn("[PRE_CHECK_COMPLETE] ❌ Invalid summary data:", summary);
+      setState({
+        jobStatus: "failed",
+        isRunningPreCheck: false,
+        progress: 100
       });
     }
-  }
+  }, [setState]);
 
-  // ===========================================================================
-  // SUBSECTION 5.3: OPERATION_START HANDLER
-  // ===========================================================================
-  if (payload.event_type === "OPERATION_START" &&
-    typeof payload.data?.total_steps === "number") {
-
-    console.log("[PROGRESS] Operation started:", {
-      total_steps: payload.data.total_steps,
-      operation: payload.data.operation
+  /**
+   * Handle OPERATION_START event
+   */
+  const handleOperationStart = useCallback((data) => {
+    console.log("[OPERATION_START] Operation started:", {
+      operation: data.operation,
+      total_steps: data.total_steps
     });
 
     setState({
-      totalSteps: payload.data.total_steps,
+      totalSteps: data.total_steps || 0,
       progress: 5,
     });
-  }
+  }, [setState]);
 
-  // ===========================================================================
-  // SUBSECTION 5.4: STEP_COMPLETE HANDLER
-  // ===========================================================================
-  if (payload.event_type === "STEP_COMPLETE" &&
-    typeof payload.data?.step === "number") {
+  /**
+   * Handle STEP_COMPLETE event
+   */
+  const handleStepComplete = useCallback((data) => {
+    const stepNum = data.step;
 
-    const stepNum = payload.data.step;
+    if (!refs?.processedStepsRef?.current) {
+      console.warn("[STEP_COMPLETE] processedStepsRef not initialized");
+      return;
+    }
 
-    // SAFE REF ACCESS: Check if ref exists before using it
-    const processedStepsRef = refs?.processedStepsRef?.current;
-    if (processedStepsRef && !processedStepsRef.has(stepNum)) {
-      processedStepsRef.add(stepNum);
-      console.log(`[PROGRESS] Step ${stepNum} completed`);
+    if (!refs.processedStepsRef.current.has(stepNum)) {
+      refs.processedStepsRef.current.add(stepNum);
+      console.log(`[STEP_COMPLETE] Step ${stepNum}/${data.total_steps} completed`);
 
       setState(prevState => {
         const newCompleted = prevState.completedSteps + 1;
-        let newProgress = progress;
-
-        if (totalSteps > 0) {
-          newProgress = Math.min(99, Math.round((newCompleted / totalSteps) * 100));
-        } else {
-          newProgress = Math.min(99, progress + 25);
-        }
-
-        console.log(`[PROGRESS] Progress update: ${newCompleted}/${totalSteps} steps (${newProgress}%)`);
+        const newProgress = data.percentage ||
+          Math.min(99, Math.round((newCompleted / prevState.totalSteps) * 100));
 
         return {
           completedSteps: newCompleted,
@@ -374,164 +204,260 @@ function handleSpecificEvents(payload, context) {
         };
       });
     }
-  }
+  }, [setState, refs]);
 
-  // ===========================================================================
-  // SUBSECTION 5.5: OPERATION_COMPLETE HANDLER (WITH SAFE DEDUPLICATION FIX)
-  // ===========================================================================
-  // FIXED: Added safe deduplication to prevent multiple handlers from processing same event
-  if (payload.event_type === "OPERATION_COMPLETE" ||
-    payload.type === "OPERATION_COMPLETE") {
+  /**
+   * Handle OPERATION_COMPLETE event
+   */
+  const handleOperationComplete = useCallback((data) => {
+    console.log("[OPERATION_COMPLETE] ========================================");
+    console.log("[OPERATION_COMPLETE] ⭐ OPERATION COMPLETE");
+    console.log("[OPERATION_COMPLETE] Status:", data.status);
+    console.log("[OPERATION_COMPLETE] Operation:", data.operation);
+    console.log("[OPERATION_COMPLETE] Success:", data.success);
+    console.log("[OPERATION_COMPLETE] ========================================");
 
-    // SAFE REF ACCESS: Create fallback if ref doesn't exist
-    let processedTimestamps;
-    if (refs?.processedOperationCompleteRef?.current) {
-      processedTimestamps = refs.processedOperationCompleteRef.current;
-    } else {
-      // Fallback: create a temporary Set if ref doesn't exist
-      console.warn("[WEBSOCKET] processedOperationCompleteRef not found, using fallback deduplication");
-      processedTimestamps = new Set();
-    }
+    const success = data.success || data.status === "SUCCESS";
+    const operation = data.operation || currentPhase;
 
-    const eventTimestamp = payload.timestamp || JSON.stringify(payload);
+    if (operation === "pre_check" && currentPhase === "pre_check") {
+      console.log("[OPERATION_COMPLETE] Finalizing pre-check operation");
 
-    if (!processedTimestamps.has(eventTimestamp)) {
-      processedTimestamps.add(eventTimestamp);
-      console.log(`[OPERATION_COMPLETE] Processing new operation complete event: ${eventTimestamp}`);
-
-      handleOperationComplete(payload, {
-        currentPhase,
-        preCheckSummary,
-        totalSteps,
-        wsChannel,
-        sendMessage,
-        setState,
-      });
-    } else {
-      console.log(`[OPERATION_COMPLETE] Skipping duplicate event: ${eventTimestamp}`);
-    }
-  }
-}
-
-/**
- * Handles OPERATION_COMPLETE event
- *
- * @param {Object} payload - Message payload
- * @param {Object} context - Context with state and functions
- * @private
- */
-function handleOperationComplete(payload, context) {
-  const {
-    currentPhase,
-    preCheckSummary,
-    totalSteps,
-    wsChannel,
-    sendMessage,
-    setState
-  } = context;
-
-  const finalStatus = payload.data?.status || payload.success;
-  const operationType = payload.data?.operation || currentPhase;
-
-  console.log("[OPERATION] ========================================");
-  console.log("[OPERATION] ⭐ OPERATION_COMPLETE DETECTED");
-  console.log("[OPERATION] Status:", finalStatus);
-  console.log("[OPERATION] Operation:", operationType);
-  console.log("[OPERATION] Phase:", currentPhase);
-  console.log("[OPERATION] ========================================");
-
-  // ===========================================================================
-  // SECTION 6: OPERATION COMPLETION HANDLING
-  // ===========================================================================
-
-  // ===========================================================================
-  // SUBSECTION 6.1: PRE-CHECK COMPLETION
-  // ===========================================================================
-  if (currentPhase === "pre_check" || operationType === "pre_check") {
-    console.log("[PRE_CHECK] Operation complete - finalizing pre-check phase");
-
-    // If we don't have summary from PRE_CHECK_COMPLETE, try to extract from OPERATION_COMPLETE
-    if (!preCheckSummary) {
-      console.log("[PRE_CHECK] No summary found yet, attempting extraction from OPERATION_COMPLETE payload...");
-
-      // Try multiple possible locations for the summary data (as a fallback)
-      const possibleSummary =
-        payload.data?.final_results?.data?.pre_check_summary ||
-        payload.data?.pre_check_summary ||
-        payload.data?.final_results?.pre_check_summary;
-
-      if (possibleSummary && (possibleSummary.total_checks !== undefined || possibleSummary.results)) {
-        console.log("[PRE_CHECK] ✅ Found summary in OPERATION_COMPLETE (Fallback success):", {
-          total_checks: possibleSummary.total_checks,
-          can_proceed: possibleSummary.can_proceed
-        });
-
-        setState({
-          preCheckSummary: possibleSummary,
-          canProceedWithUpgrade: possibleSummary.can_proceed,
-          jobStatus: "success",
-        });
-      } else {
-        console.warn("[PRE_CHECK] ❌ No summary available in OPERATION_COMPLETE. State may be inconsistent.");
-        setState({ jobStatus: "failed" });
+      if (data.final_results && !preCheckSummary) {
+        console.log("[OPERATION_COMPLETE] Extracting summary from final_results");
+        handlePreCheckComplete({ pre_check_summary: data.final_results });
       }
+
+      setState({
+        isRunningPreCheck: false,
+        progress: 100,
+        jobStatus: success ? "success" : "failed"
+      });
+
+      if (wsChannel) {
+        console.log(`[OPERATION_COMPLETE] Unsubscribing from ${wsChannel}`);
+        sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
+      }
+
+    } else if (operation === "upgrade" && currentPhase === "upgrade") {
+      console.log("[OPERATION_COMPLETE] Finalizing upgrade operation");
+
+      setState({
+        jobStatus: success ? "success" : "failed",
+        finalResults: data,
+        progress: 100,
+      });
+
+      if (wsChannel) {
+        sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
+      }
+
+      transitionTimeoutRef.current = setTimeout(() => {
+        setState({
+          activeTab: "results",
+          currentPhase: "results",
+        });
+        console.log("[OPERATION_COMPLETE] ✅ Transitioned to Results tab");
+      }, TIMING.TAB_TRANSITION_DELAY);
     }
+  }, [currentPhase, preCheckSummary, wsChannel, sendMessage, setState, handlePreCheckComplete]);
+
+  /**
+   * Handle LOG_MESSAGE event
+   */
+  const handleLogMessage = useCallback((event) => {
+    const logEntry = {
+      timestamp: event.timestamp || new Date().toISOString(),
+      message: event.message,
+      level: event.level?.toLowerCase() || "info",
+      event_type: "LOG_MESSAGE",
+    };
 
     setState({
-      isRunningPreCheck: false,
-      progress: 100,
-      completedSteps: totalSteps > 0 ? totalSteps : undefined,
+      jobOutput: prev => [...prev, logEntry]
     });
 
-    if (wsChannel) {
-      console.log(`[WEBSOCKET] Pre-check complete, unsubscribing from ${wsChannel}`);
-      sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
+    if (refs?.latestStepMessageRef) {
+      refs.latestStepMessageRef.current = event.message;
     }
 
-    // Schedule tab transition
-    console.log(`[TAB_TRANSITION] Scheduling transition to REVIEW in ${TIMING.TAB_TRANSITION_DELAY}ms`);
-    setTimeout(() => {
-      setState({
-        activeTab: "review",
-        currentPhase: "review",
-      });
-      console.log("[TAB_TRANSITION] ✅ Transition to REVIEW completed");
-    }, TIMING.TAB_TRANSITION_DELAY);
-  }
+    if (refs?.scrollAreaRef?.current) {
+      setTimeout(() => {
+        if (refs.scrollAreaRef.current) {
+          refs.scrollAreaRef.current.scrollTop = refs.scrollAreaRef.current.scrollHeight;
+        }
+      }, TIMING.AUTO_SCROLL_DELAY);
+    }
+  }, [setState, refs]);
 
-  // ===========================================================================
-  // SUBSECTION 6.2: UPGRADE COMPLETION
-  // ===========================================================================
-  else if (currentPhase === "upgrade" || operationType === "upgrade") {
-    console.log("[UPGRADE] Operation complete - finalizing upgrade phase");
+  // =============================================================================
+  // SECTION 4: MAIN MESSAGE PROCESSING
+  // =============================================================================
 
-    let finalSuccess = false;
-    if (payload.success === true ||
-      payload.data?.final_results?.success === true ||
-      payload.data?.status === "SUCCESS") {
-      finalSuccess = true;
+  useEffect(() => {
+    // ===========================================================================
+    // SUBSECTION 4.1: VALIDATION
+    // ===========================================================================
+
+    if (!lastMessage || !jobId) {
+      return;
     }
 
-    console.log("[UPGRADE] Final Status:", finalSuccess ? "✅ SUCCESS" : "❌ FAILED");
+    console.log("[WEBSOCKET] ========================================");
+    console.log("[WEBSOCKET] Raw message received");
+    console.log("[WEBSOCKET] Length:", lastMessage.length);
+    console.log("[WEBSOCKET] Preview:", lastMessage.substring(0, 300));
+    console.log("[WEBSOCKET] ========================================");
 
-    setState({
-      jobStatus: finalSuccess ? "success" : "failed",
-      finalResults: payload,
-      progress: 100,
-      completedSteps: totalSteps > 0 ? totalSteps : undefined,
+    // ===========================================================================
+    // SUBSECTION 4.2: PARSE RUST WEBSOCKET WRAPPER
+    // ===========================================================================
+
+    let rustWrapper;
+    try {
+      rustWrapper = JSON.parse(lastMessage);
+    } catch (error) {
+      console.error("[WEBSOCKET] Failed to parse Rust wrapper:", error);
+      console.debug("[WEBSOCKET] Raw:", lastMessage.substring(0, 200));
+      return;
+    }
+
+    // Validate Rust wrapper structure
+    if (!rustWrapper || typeof rustWrapper !== 'object') {
+      console.debug("[WEBSOCKET] Invalid Rust wrapper structure");
+      return;
+    }
+
+    console.log("[WEBSOCKET] Rust wrapper parsed:", {
+      channel: rustWrapper.channel,
+      has_data: !!rustWrapper.data,
+      data_length: rustWrapper.data?.length
     });
 
-    if (wsChannel) {
-      console.log(`[WEBSOCKET] Upgrade complete, unsubscribing from ${wsChannel}`);
-      sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
+    // ===========================================================================
+    // SUBSECTION 4.3: EXTRACT INNER EVENT FROM DATA FIELD
+    // ===========================================================================
+
+    // The actual event JSON is in the "data" field as a string
+    if (!rustWrapper.data) {
+      console.debug("[WEBSOCKET] No data field in Rust wrapper");
+      return;
     }
 
-    setTimeout(() => {
-      setState({
-        activeTab: "results",
-        currentPhase: "results",
-      });
-      console.log("[UPGRADE] ✅ Transitioned to results tab");
-    }, TIMING.TAB_TRANSITION_DELAY);
-  }
+    let event;
+    try {
+      // Parse the inner event JSON from the data string
+      event = JSON.parse(rustWrapper.data);
+    } catch (error) {
+      console.error("[WEBSOCKET] Failed to parse inner event:", error);
+      console.debug("[WEBSOCKET] Data field:", rustWrapper.data.substring(0, 200));
+      return;
+    }
+
+    // ===========================================================================
+    // SUBSECTION 4.4: VALIDATE EVENT STRUCTURE
+    // ===========================================================================
+
+    if (!event || typeof event !== 'object') {
+      console.debug("[WEBSOCKET] Invalid event structure");
+      return;
+    }
+
+    const eventType = event.event_type;
+
+    if (!eventType) {
+      console.debug("[WEBSOCKET] No event_type found");
+      return;
+    }
+
+    if (!RECOGNIZED_EVENT_TYPES.has(eventType)) {
+      console.debug("[WEBSOCKET] Unrecognized event type:", eventType);
+      return;
+    }
+
+    // ===========================================================================
+    // SUBSECTION 4.5: DEDUPLICATION
+    // ===========================================================================
+
+    const eventSignature = `${eventType}-${event.timestamp || Date.now()}`;
+
+    if (processedEventsRef.current.has(eventSignature)) {
+      console.debug("[WEBSOCKET] Duplicate event ignored:", eventSignature);
+      return;
+    }
+
+    processedEventsRef.current.add(eventSignature);
+
+    if (processedEventsRef.current.size > 1000) {
+      const iterator = processedEventsRef.current.values();
+      processedEventsRef.current.delete(iterator.next().value);
+    }
+
+    // ===========================================================================
+    // SUBSECTION 4.6: LOGGING
+    // ===========================================================================
+
+    console.log("[WEBSOCKET] ✅ Event extracted and validated:", {
+      type: eventType,
+      job: event.job_id,
+      level: event.level,
+      has_data: !!event.data,
+      channel: rustWrapper.channel
+    });
+
+    // ===========================================================================
+    // SUBSECTION 4.7: EVENT ROUTING
+    // ===========================================================================
+
+    switch (eventType) {
+      case 'PRE_CHECK_RESULT':
+        if (event.data) {
+          handlePreCheckResult(event.data);
+        }
+        break;
+
+      case 'PRE_CHECK_COMPLETE':
+        if (event.data) {
+          handlePreCheckComplete(event.data);
+        }
+        break;
+
+      case 'OPERATION_START':
+        if (event.data) {
+          handleOperationStart(event.data);
+        }
+        break;
+
+      case 'STEP_COMPLETE':
+        if (event.data) {
+          handleStepComplete(event.data);
+        }
+        break;
+
+      case 'OPERATION_COMPLETE':
+        if (event.data) {
+          handleOperationComplete(event.data);
+        }
+        break;
+
+      case 'LOG_MESSAGE':
+        handleLogMessage(event);
+        break;
+
+      default:
+        console.debug("[WEBSOCKET] Unhandled event type:", eventType);
+    }
+
+  }, [
+    lastMessage,
+    jobId,
+    handlePreCheckResult,
+    handlePreCheckComplete,
+    handleOperationStart,
+    handleStepComplete,
+    handleOperationComplete,
+    handleLogMessage
+  ]);
 }
+
+export default useWebSocketMessages;

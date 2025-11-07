@@ -1,10 +1,10 @@
 """
 ================================================================================
 MODULE:             FastAPI Worker with Intelligent Stream Processing
-FILE:               worker.py
+FILE:               fastapi_worker.py
 VERSION:            2.0.0 - Clean Event Architecture
 AUTHOR:             nikos-geranios_vgi
-DATE:               2025-11-06
+DATE:               2025-11-07
 ================================================================================
 
 ARCHITECTURE IMPROVEMENTS:
@@ -16,10 +16,17 @@ ARCHITECTURE IMPROVEMENTS:
 DATA FLOW:
 1. Worker receives job from Redis queue
 2. Spawns subprocess for main.py script
-3. Captures stdout (events) and stderr (logs)
+3. Captures stdout (clean events) and stderr (debug logs)
 4. Forwards events directly without wrapping
 5. Wraps only actual log messages
 6. Publishes to Redis PubSub for WebSocket delivery
+
+RECOGNIZED EVENT TYPES:
+- PRE_CHECK_RESULT: Individual check result
+- PRE_CHECK_COMPLETE: Complete summary (enables Review tab)
+- OPERATION_START: Operation initialization
+- STEP_COMPLETE: Progress update
+- OPERATION_COMPLETE: Final status
 ================================================================================
 """
 
@@ -30,7 +37,7 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple, Any, Dict, cast, List
+from typing import Optional, Tuple, Any, Dict, cast, List, Set
 
 import redis
 import redis.asyncio as aioredis
@@ -39,12 +46,11 @@ import redis.asyncio as aioredis
 # SECTION 1: LOGGING CONFIGURATION
 # =============================================================================
 
-# Configure worker logging for debugging and monitoring
 logger = logging.getLogger("FASTAPI_WORKER")
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.DEBUG)
+console_handler.setLevel(logging.INFO)
 formatter = logging.Formatter(
     "%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s"
 )
@@ -55,18 +61,16 @@ logger.addHandler(console_handler)
 # SECTION 2: CONFIGURATION CONSTANTS
 # =============================================================================
 
-# Redis connection configuration
 REDIS_HOST = os.getenv("REDIS_HOST", "redis_broker")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 REDIS_CHANNEL_PREFIX = "ws_channel:job:"
 REDIS_JOB_QUEUE = "automation_jobs_queue"
 
-# Execution environment configuration
 PYTHON_INTERPRETER_PATH = "/usr/local/bin/python"
 BASE_SCRIPT_ROOT = "/app/app_gateway/py_scripts"
 
-# Recognized event types that should be forwarded directly
-RECOGNIZED_EVENT_TYPES = {
+# Event types that should be forwarded directly without wrapping
+RECOGNIZED_EVENT_TYPES: Set[str] = {
     "PRE_CHECK_COMPLETE",
     "PRE_CHECK_RESULT",
     "OPERATION_COMPLETE",
@@ -81,11 +85,16 @@ RECOGNIZED_EVENT_TYPES = {
 # SECTION 3: REDIS CONNECTION MANAGEMENT
 # =============================================================================
 
-# Initialize Redis connection for job queue monitoring
 r: Optional[redis.Redis] = None
 
 try:
-    r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+    r = redis.Redis(
+        host=REDIS_HOST,
+        port=REDIS_PORT,
+        decode_responses=True,
+        socket_connect_timeout=5,
+        retry_on_timeout=True,
+    )
     r.ping()
     logger.info(f"✅ WORKER: Connected to Redis at {REDIS_HOST}:{REDIS_PORT}")
 except Exception as e:
@@ -95,19 +104,24 @@ except Exception as e:
 # SECTION 4: STREAM PROCESSOR CLASS
 # =============================================================================
 
-
 class StreamProcessor:
     """
     Intelligent stream processor that distinguishes between events and logs.
 
-    RESPONSIBILITIES:
-    - Detects structured events and forwards them directly
-    - Wraps only actual log messages in LOG_MESSAGE events
-    - Extracts embedded events from log lines (legacy support)
-    - Maintains clean event architecture for frontend
+    DESIGN PRINCIPLES:
+    - Events are JSON objects with "event_type" field
+    - Events from stdout are forwarded directly (no wrapping)
+    - Logs from stderr are wrapped as LOG_MESSAGE events
+    - Embedded events in logs are extracted and forwarded
+
+    ARCHITECTURE:
+    - main.py sends events to stdout as clean JSON
+    - main.py sends logs to stderr for debugging
+    - Worker forwards stdout JSON events directly
+    - Worker wraps stderr logs for display
 
     Author: nikos-geranios_vgi
-    Date: 2025-11-06
+    Date: 2025-11-07
     """
 
     def __init__(self, job_id: str):
@@ -115,70 +129,98 @@ class StreamProcessor:
         Initialize stream processor for a specific job.
 
         Args:
-            job_id (str): Unique job identifier for message tracking
+            job_id: Unique job identifier
         """
         self.job_id = job_id
-        self.processed_events = set()  # Track processed events to avoid duplicates
+        self.event_count = 0
+        self.log_count = 0
 
-    def is_valid_event(self, data: Dict[str, Any]) -> bool:
+        logger.info(f"[PROCESSOR] Initialized for job {job_id}")
+
+    def is_valid_event_json(self, line: str) -> bool:
         """
-        Check if parsed JSON is a valid event that should be forwarded directly.
-
-        CRITERIA:
-        - Must be a dictionary
-        - Must have 'event_type' field
-        - Event type must be in recognized set
+        Quick check if line might be event JSON before parsing.
 
         Args:
-            data (Dict[str, Any]): Parsed JSON data to validate
+            line: Input line
 
         Returns:
-            bool: True if this is a recognized event type for direct forwarding
+            bool: True if line starts with { and contains event_type
         """
-        if not isinstance(data, dict):
-            return False
+        stripped = line.strip()
+        return (
+            stripped.startswith('{') and
+            '"event_type"' in stripped
+        )
 
-        event_type = data.get("event_type")
-        if not event_type:
-            return False
-
-        # Check if it's a recognized event type
-        return event_type in RECOGNIZED_EVENT_TYPES
-
-    def extract_json_from_line(self, line: str) -> Optional[Dict[str, Any]]:
+    def parse_and_validate_event(self, line: str) -> Optional[Dict[str, Any]]:
         """
-        Extract JSON object from a line that might contain other text.
-
-        USE CASE:
-        - Handles legacy logging where events might be embedded in log lines
-        - Useful for debugging and backward compatibility
+        Parse JSON and validate it's a recognized event.
 
         Args:
-            line (str): Input line that might contain JSON payload
+            line: Input line
 
         Returns:
-            Optional[Dict[str, Any]]: Extracted JSON object or None if not found
+            Parsed event dict or None
         """
-        # Quick check for JSON-like content
+        try:
+            data = json.loads(line)
+
+            # Must be a dict with event_type
+            if not isinstance(data, dict) or "event_type" not in data:
+                return None
+
+            event_type = data["event_type"]
+
+            # Check if it's a recognized event type
+            if event_type in RECOGNIZED_EVENT_TYPES:
+                return data
+
+            # Also allow LOG_MESSAGE events
+            if event_type == "LOG_MESSAGE":
+                return data
+
+            logger.debug(f"[PROCESSOR] Unknown event type: {event_type}")
+            return None
+
+        except json.JSONDecodeError:
+            return None
+        except Exception as e:
+            logger.debug(f"[PROCESSOR] Event validation error: {e}")
+            return None
+
+    def extract_embedded_event(self, line: str) -> Optional[Dict[str, Any]]:
+        """
+        Extract event JSON that might be embedded in a log line.
+
+        Handles cases where logging framework outputs JSON as part of log message.
+
+        Args:
+            line: Log line that might contain embedded JSON
+
+        Returns:
+            Extracted event dict or None
+        """
         if '{"event_type"' not in line:
             return None
 
         try:
-            # Find the JSON object start position
-            json_start = line.find('{"')
+            # Find JSON object boundaries
+            json_start = line.find('{"event_type"')
             if json_start == -1:
                 return None
 
-            # Extract from start to proper end
+            # Extract substring starting from JSON
             json_str = line[json_start:]
 
-            # Find matching closing brace with proper nesting
+            # Find matching closing brace
             depth = 0
             end_pos = 0
+
             for i, char in enumerate(json_str):
-                if char == "{":
+                if char == '{':
                     depth += 1
-                elif char == "}":
+                elif char == '}':
                     depth -= 1
                     if depth == 0:
                         end_pos = i + 1
@@ -186,10 +228,10 @@ class StreamProcessor:
 
             if end_pos > 0:
                 clean_json = json_str[:end_pos]
-                return json.loads(clean_json)
+                return self.parse_and_validate_event(clean_json)
 
-        except (json.JSONDecodeError, Exception) as e:
-            logger.debug(f"JSON extraction failed: {e}")
+        except Exception as e:
+            logger.debug(f"[PROCESSOR] Embedded event extraction failed: {e}")
 
         return None
 
@@ -197,189 +239,188 @@ class StreamProcessor:
         """
         Process stdout line - expect clean JSON events here.
 
-        ARCHITECTURE:
-        - main.py sends structured events to stdout as clean JSON
+        ARCHITECTURE NOTE:
+        - main.py sends events to stdout as clean JSON
         - These should be forwarded directly without wrapping
-        - Only add job_id if missing for proper routing
+        - Any non-JSON output is wrapped as LOG_MESSAGE
 
         Args:
-            line (str): Raw line from stdout stream
+            line: Line from stdout
 
         Returns:
-            Optional[str]: JSON string to publish or None if not processable
+            Message to publish or None
         """
         line = line.strip()
         if not line:
             return None
 
-        # Try to parse as JSON (primary path for structured events)
-        if line.startswith("{"):
-            try:
-                data = json.loads(line)
+        # Check if it looks like event JSON
+        if self.is_valid_event_json(line):
+            event_data = self.parse_and_validate_event(line)
 
-                # Check if it's a valid event for direct forwarding
-                if self.is_valid_event(data):
-                    # Add job_id if not present for proper frontend routing
-                    if "job_id" not in data:
-                        data["job_id"] = self.job_id
+            if event_data:
+                # Add job_id if not present
+                if "job_id" not in event_data:
+                    event_data["job_id"] = self.job_id
 
-                    logger.info(
-                        f"✅ WORKER [{self.job_id}]: Forwarding {data['event_type']} event from stdout"
-                    )
-                    return json.dumps(data)
+                self.event_count += 1
 
-            except json.JSONDecodeError:
-                logger.debug(f"STDOUT line is not valid JSON: {line[:100]}")
+                logger.info(
+                    f"[PROCESSOR] ✅ Event #{self.event_count} from stdout: "
+                    f"{event_data['event_type']} (Job: {self.job_id})"
+                )
 
-        # Not a structured event, wrap as log message
-        return json.dumps(
-            {
-                "event_type": "LOG_MESSAGE",
-                "level": "INFO",
-                "message": line,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
-                "job_id": self.job_id,
-            }
-        )
+                # Forward event as-is (just re-serialize after adding job_id)
+                return json.dumps(event_data)
+
+        # Not an event - wrap as log message
+        self.log_count += 1
+        return json.dumps({
+            "event_type": "LOG_MESSAGE",
+            "level": "INFO",
+            "message": line,
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "job_id": self.job_id
+        })
 
     async def process_stderr_line(self, line: str) -> Optional[str]:
         """
         Process stderr line - expect Python logging output here.
 
-        ARCHITECTURE:
-        - main.py sends logs and errors to stderr
+        ARCHITECTURE NOTE:
+        - main.py sends logs to stderr
         - These should be wrapped as LOG_MESSAGE events
-        - Check for embedded events for legacy compatibility
+        - But check for embedded events (legacy compatibility)
 
         Args:
-            line (str): Raw line from stderr stream
+            line: Line from stderr
 
         Returns:
-            Optional[str]: JSON string to publish or None if not processable
+            Message to publish or None
         """
         line = line.strip()
         if not line:
             return None
 
-        # Check if there's an embedded event in the log line (legacy support)
-        extracted_data = self.extract_json_from_line(line)
-        if extracted_data and self.is_valid_event(extracted_data):
+        # Check if there's an embedded event in the log line
+        # (Handles legacy cases where events might be logged)
+        embedded_event = self.extract_embedded_event(line)
+
+        if embedded_event:
             # Add job_id if not present
-            if "job_id" not in extracted_data:
-                extracted_data["job_id"] = self.job_id
+            if "job_id" not in embedded_event:
+                embedded_event["job_id"] = self.job_id
+
+            self.event_count += 1
 
             logger.info(
-                f"✅ WORKER [{self.job_id}]: Extracted {extracted_data['event_type']} from stderr log"
+                f"[PROCESSOR] ✅ Event #{self.event_count} extracted from stderr: "
+                f"{embedded_event['event_type']} (Job: {self.job_id})"
             )
-            return json.dumps(extracted_data)
+
+            return json.dumps(embedded_event)
 
         # Determine log level from Python logging format
         level = "INFO"
         if "ERROR" in line or "CRITICAL" in line:
             level = "ERROR"
-        elif "WARNING" in line:
+        elif "WARNING" in line or "⚠️" in line:
             level = "WARNING"
         elif "DEBUG" in line:
             level = "DEBUG"
 
-        # Wrap as standardized log message event
-        return json.dumps(
-            {
-                "event_type": "LOG_MESSAGE",
-                "level": level,
-                "message": line,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
-                "job_id": self.job_id,
-            }
-        )
+        # Wrap as log message
+        self.log_count += 1
+        return json.dumps({
+            "event_type": "LOG_MESSAGE",
+            "level": level,
+            "message": line,
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "job_id": self.job_id
+        })
 
+    def get_stats(self) -> Dict[str, int]:
+        """Get processing statistics."""
+        return {
+            "events_processed": self.event_count,
+            "logs_processed": self.log_count,
+            "total_messages": self.event_count + self.log_count
+        }
 
 # =============================================================================
-# SECTION 5: ASYNC PUBLISHING SERVICE
+# SECTION 5: ASYNC REDIS PUBLISHING
 # =============================================================================
-
 
 async def async_publish_message(channel: str, message: str) -> None:
     """
     Publish a message to Redis Pub/Sub using async client.
 
-    FEATURES:
-    - Non-blocking Redis operations
-    - Automatic connection management
-    - Error handling and logging
-
     Args:
-        channel (str): Redis channel name for publishing
-        message (str): JSON message to publish to subscribers
+        channel: Redis channel name
+        message: Message to publish (JSON string)
     """
     try:
         async_r = aioredis.from_url(
-            f"redis://{REDIS_HOST}:{REDIS_PORT}", decode_responses=True
+            f"redis://{REDIS_HOST}:{REDIS_PORT}",
+            decode_responses=True,
+            socket_connect_timeout=5,
         )
         await async_r.publish(channel, message)
         await async_r.close()
+
     except Exception as e:
-        logger.critical(f"❌ CRITICAL: Failed to publish to {channel}: {e}")
-
+        logger.error(f"❌ Failed to publish to {channel}: {e}")
 
 # =============================================================================
-# SECTION 6: STREAM READER IMPLEMENTATION
+# SECTION 6: STREAM READER
 # =============================================================================
-
 
 async def stream_reader(
     stream: asyncio.StreamReader,
     processor: StreamProcessor,
     stream_name: str,
-    redis_channel: str,
+    redis_channel: str
 ) -> None:
     """
     Read stream and process lines with intelligent handling.
 
-    PROCESS FLOW:
-    1. Read line from stream asynchronously
-    2. Process based on stream type (stdout/stderr)
-    3. Convert to appropriate message format
-    4. Publish to Redis channel
+    ARCHITECTURE:
+    - Reads lines asynchronously from stream
+    - Routes to appropriate processor method
+    - Publishes processed messages to Redis
+    - Handles errors gracefully
 
     Args:
-        stream (asyncio.StreamReader): Async stream to read from
-        processor (StreamProcessor): Intelligent stream processor instance
-        stream_name (str): Identifier for stream type ('stdout' or 'stderr')
-        redis_channel (str): Redis channel for publishing messages
+        stream: Async stream to read from
+        processor: Stream processor instance
+        stream_name: Name of stream (stdout/stderr)
+        redis_channel: Redis channel for publishing
     """
-    logger.info(f"📖 WORKER [{processor.job_id}]: Starting {stream_name} reader")
+    logger.info(f"[STREAM] Starting {stream_name} reader for job {processor.job_id}")
+
+    line_count = 0
 
     while True:
         try:
-            # ===================================================================
-            # SUBSECTION 6.1: STREAM READING
-            # ===================================================================
             line_bytes = await stream.readline()
+
             if not line_bytes:
                 logger.info(
-                    f"📚 WORKER [{processor.job_id}]: {stream_name} stream ended"
+                    f"[STREAM] {stream_name} ended for job {processor.job_id} "
+                    f"({line_count} lines processed)"
                 )
                 break
 
-            # ===================================================================
-            # SUBSECTION 6.2: DECODING AND PROCESSING
-            # ===================================================================
-            line = line_bytes.decode("utf-8", errors="replace").strip()
-            if not line:
-                continue
+            line_count += 1
+            line = line_bytes.decode('utf-8', errors='replace')
 
-            # ===================================================================
-            # SUBSECTION 6.3: MESSAGE PROCESSING BY STREAM TYPE
-            # ===================================================================
+            # Process based on stream type
             if stream_name == "stdout":
                 message = await processor.process_stdout_line(line)
             else:  # stderr
                 message = await processor.process_stderr_line(line)
 
-            # ===================================================================
-            # SUBSECTION 6.4: MESSAGE PUBLISHING
-            # ===================================================================
+            # Publish if we have a message
             if message:
                 asyncio.create_task(async_publish_message(redis_channel, message))
 
@@ -389,69 +430,66 @@ async def stream_reader(
             )
             break
 
+    # Log final statistics
+    stats = processor.get_stats()
+    logger.info(
+        f"[STREAM] {stream_name} statistics for job {processor.job_id}: "
+        f"{stats['events_processed']} events, {stats['logs_processed']} logs"
+    )
 
 # =============================================================================
-# SECTION 7: SCRIPT EXECUTION ORCHESTRATOR
+# SECTION 7: SCRIPT EXECUTION
 # =============================================================================
-
 
 async def run_script_and_stream_to_redis(
-    script_path: Path, cmd_args: List[str], job_id: str
+    script_path: Path,
+    cmd_args: List[str],
+    job_id: str
 ) -> None:
     """
     Execute script and stream output with intelligent processing.
 
-    EXECUTION FLOW:
-    1. Validate environment and parameters
-    2. Spawn subprocess with proper environment
-    3. Create stream processing tasks for stdout and stderr
-    4. Monitor process completion
-    5. Handle success/failure states
+    ARCHITECTURE:
+    1. Spawn subprocess for script execution
+    2. Create separate tasks for stdout and stderr processing
+    3. Forward events directly, wrap logs appropriately
+    4. Handle completion and error states
+    5. Send final status if process fails
 
     Args:
-        script_path (Path): Path to Python script to execute
-        cmd_args (List[str]): Command-line arguments for the script
-        job_id (str): Unique job identifier for tracking
+        script_path: Path to script to execute
+        cmd_args: Command-line arguments
+        job_id: Unique job identifier
     """
     global r
 
-    logger.info(f"🚀 WORKER: Starting job {job_id}")
+    logger.info("=" * 80)
+    logger.info(f"[JOB] Starting job {job_id}")
+    logger.info("=" * 80)
 
-    # =========================================================================
-    # SUBSECTION 7.1: ENVIRONMENT VALIDATION
-    # =========================================================================
     if not r:
-        logger.error(f"❌ WORKER: Cannot run job {job_id}, Redis not connected")
+        logger.error(f"❌ Cannot run job {job_id}, Redis not connected")
         return
 
-    if not script_path.exists():
-        logger.error(f"❌ WORKER: Script not found: {script_path}")
-        return
-
-    # =========================================================================
-    # SUBSECTION 7.2: INITIALIZATION
-    # =========================================================================
     redis_channel = f"{REDIS_CHANNEL_PREFIX}{job_id}"
     processor = StreamProcessor(job_id)
 
-    # Build full command with unbuffered output
+    # Build full command
     full_command = [PYTHON_INTERPRETER_PATH, "-u", str(script_path)] + cmd_args
-    logger.debug(f"🛠️ WORKER [{job_id}]: Command: {' '.join(full_command)}")
 
-    # =========================================================================
-    # SUBSECTION 7.3: ENVIRONMENT SETUP
-    # =========================================================================
+    logger.info(f"[JOB] Command: {' '.join(full_command)}")
+    logger.info(f"[JOB] Redis channel: {redis_channel}")
+
+    # Setup environment
     subprocess_env = os.environ.copy()
     script_parent_dir = str(script_path.parent)
     subprocess_env["PYTHONPATH"] = (
         f"{BASE_SCRIPT_ROOT}:{script_parent_dir}:"
         + subprocess_env.get("PYTHONPATH", "")
     )
-    subprocess_env["PARAMIKO_HOSTKEY_VERIFY"] = "0"  # SSH host key verification
+    subprocess_env["PARAMIKO_HOSTKEY_VERIFY"] = "0"
 
-    # =========================================================================
-    # SUBSECTION 7.4: PROCESS EXECUTION
-    # =========================================================================
+    # Start subprocess
     try:
         process = await asyncio.create_subprocess_exec(
             *full_command,
@@ -459,102 +497,86 @@ async def run_script_and_stream_to_redis(
             stderr=subprocess.PIPE,
             env=subprocess_env,
         )
-        logger.info(f"✅ WORKER [{job_id}]: Process started with PID {process.pid}")
+        logger.info(f"✅ [JOB] Process started with PID {process.pid}")
 
     except Exception as e:
-        error_event = json.dumps(
-            {
-                "event_type": "OPERATION_COMPLETE",
-                "level": "CRITICAL",
-                "message": f"Failed to start script: {e}",
-                "data": {"status": "FAILED", "error": str(e)},
-                "timestamp": datetime.utcnow().isoformat() + "Z",
-                "job_id": job_id,
-            }
-        )
+        error_event = json.dumps({
+            "event_type": "OPERATION_COMPLETE",
+            "level": "CRITICAL",
+            "message": f"Failed to start script: {e}",
+            "data": {
+                "status": "FAILED",
+                "success": False,
+                "error": str(e)
+            },
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "job_id": job_id
+        })
         await async_publish_message(redis_channel, error_event)
-        logger.critical(f"💥 WORKER [{job_id}]: Failed to spawn process: {e}")
+        logger.critical(f"💥 [JOB] Failed to spawn process for {job_id}: {e}")
         return
 
-    # =========================================================================
-    # SUBSECTION 7.5: STREAM VERIFICATION
-    # =========================================================================
+    # Verify streams are available
     if process.stdout is None or process.stderr is None:
-        logger.error(f"❌ WORKER [{job_id}]: Process streams not available")
+        logger.error(f"❌ [JOB] Process streams not available for {job_id}")
         return
 
-    # =========================================================================
-    # SUBSECTION 7.6: STREAM PROCESSING TASK CREATION
-    # =========================================================================
-    # CRITICAL: stdout gets events, stderr gets logs based on main.py architecture
+    # Create stream processing tasks
+    # CRITICAL: stdout = events, stderr = logs
     stdout_task = asyncio.create_task(
-        stream_reader(process.stdout, processor, "stdout", redis_channel)
+        stream_reader(
+            process.stdout,
+            processor,
+            "stdout",
+            redis_channel
+        )
     )
 
     stderr_task = asyncio.create_task(
-        stream_reader(process.stderr, processor, "stderr", redis_channel)
+        stream_reader(
+            process.stderr,
+            processor,
+            "stderr",
+            redis_channel
+        )
     )
 
-    # =========================================================================
-    # SUBSECTION 7.7: TASK EXECUTION AND MONITORING
-    # =========================================================================
+    # Wait for streams to complete
     await asyncio.gather(stdout_task, stderr_task)
 
     # Wait for process to complete
     await process.wait()
 
-    # =========================================================================
-    # SUBSECTION 7.8: COMPLETION HANDLING
-    # =========================================================================
+    # Handle process completion
+    stats = processor.get_stats()
+
+    logger.info("=" * 80)
     if process.returncode == 0:
-        logger.info(f"✅ WORKER [{job_id}]: Process completed successfully")
-
-        # Send success event if not already sent by the script
-        success_event = json.dumps(
-            {
-                "event_type": "OPERATION_COMPLETE",
-                "level": "SUCCESS",
-                "message": "Process completed successfully",
-                "data": {
-                    "status": "SUCCESS",
-                    "success": True,
-                    "exit_code": process.returncode,
-                },
-                "timestamp": datetime.utcnow().isoformat() + "Z",
-                "job_id": job_id,
-            }
-        )
-        await async_publish_message(redis_channel, success_event)
-
+        logger.info(f"✅ [JOB] {job_id} completed successfully")
     else:
-        logger.error(
-            f"❌ WORKER [{job_id}]: Process failed with code {process.returncode}"
-        )
+        logger.error(f"❌ [JOB] {job_id} failed with exit code {process.returncode}")
 
-        # Send failure event
-        error_event = json.dumps(
-            {
-                "event_type": "OPERATION_COMPLETE",
-                "level": "ERROR",
-                "message": f"Process failed with exit code {process.returncode}",
-                "data": {
-                    "status": "FAILED",
-                    "success": False,
-                    "exit_code": process.returncode,
-                },
-                "timestamp": datetime.utcnow().isoformat() + "Z",
-                "job_id": job_id,
-            }
-        )
+        # Send failure event if process failed unexpectedly
+        error_event = json.dumps({
+            "event_type": "OPERATION_COMPLETE",
+            "level": "ERROR",
+            "message": f"Process failed with exit code {process.returncode}",
+            "data": {
+                "status": "FAILED",
+                "success": False,
+                "exit_code": process.returncode
+            },
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "job_id": job_id
+        })
         await async_publish_message(redis_channel, error_event)
 
-    logger.info(f"🏁 WORKER [{job_id}]: Job processing complete")
-
+    logger.info(f"[JOB] Processing statistics: {stats}")
+    logger.info("=" * 80)
 
 # =============================================================================
-# SECTION 8: JOB CONSUMER SERVICE
+# SECTION 8: JOB CONSUMER
 # =============================================================================
-
 
 async def job_consumer() -> None:
     """
@@ -564,27 +586,32 @@ async def job_consumer() -> None:
     - Uses BLPOP for efficient blocking queue consumption
     - Spawns concurrent tasks for each job
     - Handles errors gracefully with retries
-    - Maintains separation between job consumption and execution
+    - Processes jobs in background while monitoring queue
 
     Author: nikos-geranios_vgi
-    Date: 2025-11-06
+    Date: 2025-11-07
     """
     global r
 
-    # =========================================================================
-    # SUBSECTION 8.1: SERVICE VALIDATION
-    # =========================================================================
     if not r or not r.ping():
         logger.error("❌ Worker cannot start, Redis is not connected")
         return
 
-    logger.info(f"👷 Worker started, monitoring queue: {REDIS_JOB_QUEUE}")
+    logger.info("=" * 80)
+    logger.info("👷 FastAPI Worker Started")
+    logger.info("=" * 80)
+    logger.info(f"📅 Started: {datetime.utcnow().isoformat()}Z")
+    logger.info(f"👤 Author: nikos-geranios_vgi")
+    logger.info(f"🔧 Redis: {REDIS_HOST}:{REDIS_PORT}")
+    logger.info(f"📦 Queue: {REDIS_JOB_QUEUE}")
+    logger.info(f"🎯 Recognized Events: {', '.join(sorted(RECOGNIZED_EVENT_TYPES))}")
+    logger.info("=" * 80)
+    logger.info(f"⏳ Monitoring queue: {REDIS_JOB_QUEUE}")
+    logger.info("=" * 80)
 
     redis_sync_client: redis.Redis = r
+    job_counter = 0
 
-    # =========================================================================
-    # SUBSECTION 8.2: MAIN CONSUMER LOOP
-    # =========================================================================
     while True:
         try:
             # Use asyncio.to_thread to prevent blocking the event loop
@@ -595,21 +622,20 @@ async def job_consumer() -> None:
             item: Optional[Tuple[str, str]] = cast(Optional[Tuple[str, str]], result)
 
             if item:
-                # =============================================================
-                # SUBSECTION 8.3: JOB PROCESSING
-                # =============================================================
                 _, job_data_json = item
 
                 # Parse job payload
-                job_payload: Dict[str, Any] = json.loads(job_data_json)
+                try:
+                    job_payload: Dict[str, Any] = json.loads(job_data_json)
+                except json.JSONDecodeError as e:
+                    logger.error(f"❌ Invalid JSON in job payload: {e}")
+                    continue
 
                 job_id = job_payload.get("job_id")
                 script_path = Path(job_payload.get("script_path", ""))
                 cmd_args = job_payload.get("cmd_args", [])
 
-                # =============================================================
-                # SUBSECTION 8.4: PAYLOAD VALIDATION
-                # =============================================================
+                # Validate job payload
                 if not job_id:
                     logger.error("❌ Job missing job_id")
                     continue
@@ -622,11 +648,10 @@ async def job_consumer() -> None:
                     logger.error(f"❌ Invalid cmd_args type: {type(cmd_args)}")
                     continue
 
-                logger.info(f"📥 Worker picked up job: {job_id}")
+                job_counter += 1
+                logger.info(f"📥 [#{job_counter}] Picked up job: {job_id}")
 
-                # =============================================================
-                # SUBSECTION 8.5: CONCURRENT JOB EXECUTION
-                # =============================================================
+                # Process job concurrently
                 asyncio.create_task(
                     run_script_and_stream_to_redis(script_path, cmd_args, job_id)
                 )
@@ -634,7 +659,6 @@ async def job_consumer() -> None:
         except Exception as e:
             logger.critical(f"💥 Worker error during queue processing: {e}")
             await asyncio.sleep(5)  # Wait before retrying
-
 
 # =============================================================================
 # SECTION 9: MAIN ENTRY POINT
@@ -644,33 +668,15 @@ if __name__ == "__main__":
     """
     Main entry point for the worker process.
 
-    RESPONSIBILITIES:
-    - Starts the job consumer loop
-    - Handles graceful shutdown on interrupt
-    - Provides startup diagnostics
-
-    Execution: python worker.py
+    Starts the job consumer loop and handles graceful shutdown.
     """
     if r and r.ping():
         try:
-            # =================================================================
-            # SUBSECTION 9.1: STARTUP BANNER
-            # =================================================================
-            logger.info("=" * 80)
-            logger.info("🚀 FastAPI Worker v2.0.0 - Starting")
-            logger.info("=" * 80)
-            logger.info(f"📅 Started at: {datetime.utcnow().isoformat()}Z")
-            logger.info(f"👤 Author: nikos-geranios_vgi")
-            logger.info(f"🔧 Redis: {REDIS_HOST}:{REDIS_PORT}")
-            logger.info(f"📦 Queue: {REDIS_JOB_QUEUE}")
-            logger.info("=" * 80)
-
-            # =================================================================
-            # SUBSECTION 9.2: MAIN SERVICE LOOP
-            # =================================================================
             asyncio.run(job_consumer())
 
         except KeyboardInterrupt:
-            logger.info("🛑 Worker shutting down gracefully...")
+            logger.info("\n🛑 Worker shutting down gracefully...")
+            logger.info(f"📅 Shutdown: {datetime.utcnow().isoformat()}Z")
     else:
         logger.error("❌ Cannot start worker - Redis connection failed")
+        logger.error("💡 Check Redis configuration and network connectivity")
