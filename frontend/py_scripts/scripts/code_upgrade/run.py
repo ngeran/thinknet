@@ -1,22 +1,24 @@
+#!/usr/bin/env python3
 """
 ================================================================================
 SCRIPT:             Juniper Device Code Upgrade - Clean Event Architecture
 ENTRY POINT:        main.py
-VERSION:            2.0.0 - Simplified Messaging
+VERSION:            2.1.0 - Structured Step Reporting
 AUTHOR:             nikos-geranios_vgi
 DATE:               2025-11-07
+LAST UPDATED:       2025-11-07 15:13:11 UTC
 ================================================================================
 
 ARCHITECTURE CHANGES:
 - All events go to STDOUT as clean JSON
 - All logs go to STDERR for debugging
-- No wrapping, no nesting, no prefixes
-- Worker forwards events directly without modification
+- Structured step-by-step reporting for user-friendly display
+- Clear progress tracking with meaningful messages
 
 MESSAGE FLOW:
-1. Script emits event → print(json.dumps(event)) to stdout
+1. Script emits step event → print(json.dumps(event)) to stdout
 2. Worker reads stdout → detects JSON → forwards as-is
-3. Frontend receives clean event → handles directly
+3. Frontend receives clean event → displays user-friendly step
 ================================================================================
 """
 
@@ -194,7 +196,7 @@ from upgrade.device_upgrader import DeviceUpgrader
 def parse_arguments():
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Juniper Device Code Upgrade - Clean Architecture v2.0.0",
+        description="Juniper Device Code Upgrade - Clean Architecture v2.1.0",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
@@ -286,9 +288,6 @@ def create_early_failure_summary(error_message: str, check_name: str = "Device C
     """
     Create a pre-check summary for early failures (connectivity, auth, etc.).
 
-    This ensures users always see structured results in the Review tab,
-    even when the pre-check fails before running actual checks.
-
     Args:
         error_message: The error message from the exception
         check_name: Name of the check that failed
@@ -337,15 +336,15 @@ def get_recommendation_for_error(error_message: str) -> str:
         return "Review the error message above and verify device accessibility, credentials, and network connectivity."
 
 # =============================================================================
-# SECTION 7: PRE-CHECK EXECUTION
+# SECTION 7: PRE-CHECK EXECUTION WITH STRUCTURED STEPS
 # =============================================================================
 
 def execute_pre_check_phase(args, upgrader) -> bool:
     """
-    Execute pre-check phase with comprehensive error handling.
+    Execute pre-check phase with structured step-by-step reporting.
 
     IMPORTANT: This function ALWAYS emits PRE_CHECK_COMPLETE, even on failure.
-    This ensures the Review tab always shows results.
+    Each major action emits a clear step event for frontend display.
 
     Args:
         args: Parsed arguments
@@ -358,59 +357,183 @@ def execute_pre_check_phase(args, upgrader) -> bool:
     logger.info("🎯 Starting Pre-Check Validation Phase")
     logger.info("=" * 80)
 
-    emitter.operation_start("pre_check", 10)
+    # Total steps for pre-check phase
+    TOTAL_STEPS = 10
+    current_step = 0
 
     success = False
     pre_check_results = None
 
+    # =================================================================
+    # STEP 1: Initialize Pre-Check
+    # =================================================================
+    current_step += 1
+    emitter.operation_start("pre_check", TOTAL_STEPS)
+    emitter.step_complete(
+        current_step,
+        TOTAL_STEPS,
+        f"Pre-check validation started for {args.hostname}"
+    )
+    logger.info(f"Step {current_step}/{TOTAL_STEPS}: Pre-check initialized")
+
     try:
-        # =================================================================
-        # STEP 1: Device Connectivity & Authentication
-        # =================================================================
-        logger.info("Step 1/10: Testing device connectivity...")
-        emitter.step_complete(1, 10, "Testing device connectivity")
+        # =============================================================
+        # STEP 2: Check Reachability
+        # =============================================================
+        current_step += 1
+        emitter.step_complete(
+            current_step,
+            TOTAL_STEPS,
+            f"Checking reachability to {args.hostname}..."
+        )
+        logger.info(f"Step {current_step}/{TOTAL_STEPS}: Testing reachability")
 
         try:
             with upgrader.connector.connect():
-                logger.info("✅ Device connected successfully")
+                # ==========================================================
+                # STEP 3: Device Connected
+                # ==========================================================
+                current_step += 1
+                emitter.step_complete(
+                    current_step,
+                    TOTAL_STEPS,
+                    f"✅ Device {args.hostname} is reachable and connected"
+                )
+                logger.info(f"Step {current_step}/{TOTAL_STEPS}: Device connected successfully")
 
-                # =============================================================
-                # STEP 2: Get Current Version
-                # =============================================================
-                logger.info("Step 2/10: Retrieving current version...")
-                emitter.step_complete(2, 10, "Retrieving current version")
+                # =======================================================
+                # STEP 4: Retrieve Current Version
+                # =======================================================
+                current_step += 1
+                emitter.step_complete(
+                    current_step,
+                    TOTAL_STEPS,
+                    "Retrieving current device version..."
+                )
+                logger.info(f"Step {current_step}/{TOTAL_STEPS}: Getting device version")
+
                 upgrader.status.current_version = upgrader.get_current_version()
-                logger.info(f"✅ Current version: {upgrader.status.current_version}")
 
-                # =============================================================
-                # STEP 3: Version Validation
-                # =============================================================
-                logger.info("Step 3/10: Validating version compatibility...")
-                emitter.step_complete(3, 10, "Validating version compatibility")
+                # =======================================================
+                # STEP 5: Current Version Retrieved
+                # =======================================================
+                current_step += 1
+                emitter.step_complete(
+                    current_step,
+                    TOTAL_STEPS,
+                    f"✅ Current version: {upgrader.status.current_version}"
+                )
+                logger.info(f"Step {current_step}/{TOTAL_STEPS}: Version: {upgrader.status.current_version}")
+
+                # =======================================================
+                # STEP 6: Version Compatibility Check
+                # =======================================================
+                current_step += 1
+                emitter.step_complete(
+                    current_step,
+                    TOTAL_STEPS,
+                    f"Validating version compatibility: {upgrader.status.current_version} → {args.target_version}"
+                )
+                logger.info(f"Step {current_step}/{TOTAL_STEPS}: Checking version compatibility")
+
                 upgrader._validate_downgrade_scenario(
                     upgrader.status.current_version,
                     args.target_version
                 )
-                logger.info("✅ Version validation passed")
 
-                # =============================================================
-                # STEPS 4-9: Run Actual Pre-Checks
-                # =============================================================
-                logger.info("Step 4/10: Running comprehensive pre-checks...")
-                emitter.step_complete(4, 10, "Running device validation checks")
+                # =======================================================
+                # STEP 7: Compatibility Validated
+                # =======================================================
+                current_step += 1
+                emitter.step_complete(
+                    current_step,
+                    TOTAL_STEPS,
+                    "✅ Version compatibility validated"
+                )
+                logger.info(f"Step {current_step}/{TOTAL_STEPS}: Compatibility check passed")
+
+                # =======================================================
+                # STEP 8: Running Comprehensive Pre-Checks
+                # =======================================================
+                current_step += 1
+                emitter.step_complete(
+                    current_step,
+                    TOTAL_STEPS,
+                    "Running comprehensive device validation checks..."
+                )
+                logger.info(f"Step {current_step}/{TOTAL_STEPS}: Starting validation checks")
+
+                # This runs multiple internal checks
                 success = upgrader.run_pre_checks()
 
-                # =============================================================
-                # STEP 10: Extract Results
-                # =============================================================
-                logger.info("Step 10/10: Finalizing results...")
-                emitter.step_complete(10, 10, "Finalizing pre-check results")
+                # =======================================================
+                # STEP 9: Pre-Checks Completed
+                # =======================================================
+                current_step += 1
+                if success:
+                    emitter.step_complete(
+                        current_step,
+                        TOTAL_STEPS,
+                        "✅ All validation checks completed successfully"
+                    )
+                    logger.info(f"Step {current_step}/{TOTAL_STEPS}: All checks passed")
+                else:
+                    emitter.step_complete(
+                        current_step,
+                        TOTAL_STEPS,
+                        "⚠️ Validation checks completed with issues"
+                    )
+                    logger.warning(f"Step {current_step}/{TOTAL_STEPS}: Some checks failed")
+
+                # =======================================================
+                # STEP 10: Finalizing Results
+                # =======================================================
+                current_step += 1
+                emitter.step_complete(
+                    current_step,
+                    TOTAL_STEPS,
+                    "Finalizing validation results..."
+                )
+                logger.info(f"Step {current_step}/{TOTAL_STEPS}: Extracting results")
+
                 pre_check_results = extract_pre_check_results(upgrader)
 
         except Exception as conn_error:
-            # Handle connectivity/authentication failures
+            # ==========================================================
+            # STEP 3 (FAILURE): Connection Failed
+            # ==========================================================
             error_msg = str(conn_error)
-            logger.error(f"❌ Connection/Authentication failed: {error_msg}")
+            logger.error(f"Connection error: {error_msg}")
+
+            # Determine specific failure type for better user feedback
+            if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+                emitter.step_complete(
+                    current_step,
+                    TOTAL_STEPS,
+                    f"❌ Device {args.hostname} is unreachable - Network timeout"
+                )
+                logger.error(f"Step {current_step}/{TOTAL_STEPS}: Network timeout")
+            elif "authentication" in error_msg.lower() or "permission" in error_msg.lower():
+                emitter.step_complete(
+                    current_step,
+                    TOTAL_STEPS,
+                    "❌ Authentication failed - Check username and password"
+                )
+                logger.error(f"Step {current_step}/{TOTAL_STEPS}: Authentication failed")
+            elif "refused" in error_msg.lower():
+                emitter.step_complete(
+                    current_step,
+                    TOTAL_STEPS,
+                    f"❌ Connection refused by {args.hostname} - Check SSH/NETCONF service"
+                )
+                logger.error(f"Step {current_step}/{TOTAL_STEPS}: Connection refused")
+            else:
+                emitter.step_complete(
+                    current_step,
+                    TOTAL_STEPS,
+                    f"❌ Failed to connect to {args.hostname}: {error_msg[:100]}"
+                )
+                logger.error(f"Step {current_step}/{TOTAL_STEPS}: Connection failed")
 
             # Create early failure summary
             pre_check_results = create_early_failure_summary(
@@ -419,10 +542,25 @@ def execute_pre_check_phase(args, upgrader) -> bool:
             )
             success = False
 
+            # Fill remaining steps as skipped
+            for remaining_step in range(current_step + 1, TOTAL_STEPS + 1):
+                emitter.step_complete(
+                    remaining_step,
+                    TOTAL_STEPS,
+                    "⊘ Skipped due to connection failure"
+                )
+                logger.debug(f"Step {remaining_step}/{TOTAL_STEPS}: Skipped")
+
     except Exception as e:
         # Handle any other unexpected errors
         error_msg = str(e)
-        logger.error(f"❌ Pre-check failed with error: {error_msg}")
+        logger.error(f"Unexpected error during pre-check: {error_msg}")
+
+        emitter.step_complete(
+            current_step,
+            TOTAL_STEPS,
+            f"❌ Pre-check error: {error_msg[:100]}"
+        )
 
         pre_check_results = create_early_failure_summary(
             error_msg,
@@ -430,13 +568,21 @@ def execute_pre_check_phase(args, upgrader) -> bool:
         )
         success = False
 
+        # Fill remaining steps as skipped
+        for remaining_step in range(current_step + 1, TOTAL_STEPS + 1):
+            emitter.step_complete(
+                remaining_step,
+                TOTAL_STEPS,
+                "⊘ Skipped due to error"
+            )
+
     # =====================================================================
     # ALWAYS EMIT PRE_CHECK_COMPLETE (Success or Failure)
     # =====================================================================
     if pre_check_results:
         emitter.pre_check_complete(args.hostname, pre_check_results)
 
-        # Log summary
+        # Log summary to stderr
         logger.info("=" * 80)
         logger.info("📊 PRE-CHECK SUMMARY")
         logger.info("=" * 80)
@@ -456,7 +602,6 @@ def execute_pre_check_phase(args, upgrader) -> bool:
                 if result["recommendation"]:
                     logger.info(f"     → {result['recommendation']}")
     else:
-        # Fallback if no results could be created
         logger.error("❌ No pre-check results available")
         pre_check_results = create_early_failure_summary(
             "Pre-check failed to generate results",
@@ -527,12 +672,12 @@ def main():
 
     # Startup logging
     logger.info("=" * 80)
-    logger.info("🚀 Juniper Device Upgrade Script v2.0.0 - Starting")
+    logger.info("🚀 Juniper Device Upgrade Script v2.1.0 - Starting")
     logger.info("=" * 80)
     logger.info(f"📅 Started: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}")
     logger.info(f"👤 User: nikos-geranios_vgi")
     logger.info(f"🎯 Device: {args.hostname}")
-    logger.info(f"📦 Version: {args.target_version}")
+    logger.info(f"📦 Target Version: {args.target_version}")
     logger.info(f"🖼️  Image: {args.image_filename}")
     logger.info(f"📋 Phase: {args.phase.upper()}")
     logger.info("=" * 80)

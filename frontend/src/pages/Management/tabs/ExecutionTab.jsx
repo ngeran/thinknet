@@ -1,47 +1,36 @@
 /**
  * =============================================================================
- * EXECUTION TAB COMPONENT
+ * EXECUTION TAB - FIXED EVENT DETECTION
  * =============================================================================
  *
- * Real-time progress monitoring for pre-check and upgrade operations
- *
- * @module components/tabs/ExecutionTab
- * @author nikos-geranios_vgi
- * @date 2025-11-05
+ * VERSION: 2.2.0 - Fixed Event Type Detection
+ * AUTHOR: nikos-geranios_vgi
+ * DATE: 2025-11-07
+ * LAST UPDATED: 2025-11-07 16:10:57 UTC
  */
 
-import React from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import React, { useEffect } from 'react';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Progress } from '@/components/ui/progress';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Loader2, CheckCircle, XCircle, Terminal } from 'lucide-react';
-import EnhancedProgressBar from '@/components/realTimeProgress/EnhancedProgressBar';
-import { shouldFilterMessage } from '../utils/messageFiltering';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import {
+  CheckCircle,
+  Circle,
+  XCircle,
+  AlertCircle,
+  Loader2,
+  AlertTriangle,
+  Eye,
+  EyeOff,
+  PlayCircle
+} from 'lucide-react';
 
-/**
- * Execution Tab Component
- *
- * Displays real-time progress of pre-check validation or upgrade execution:
- * - Operation status header
- * - Progress bar with percentage
- * - Step-by-step validation log
- * - Completion summary statistics
- *
- * @param {Object} props
- * @param {string} props.currentPhase - Current operation phase
- * @param {boolean} props.isRunning - Whether operation is running
- * @param {boolean} props.isComplete - Whether operation completed successfully
- * @param {boolean} props.hasError - Whether operation failed
- * @param {number} props.progress - Progress percentage (0-100)
- * @param {number} props.completedSteps - Number of completed steps
- * @param {number} props.totalSteps - Total number of steps
- * @param {string} props.latestStepMessage - Latest step message for display
- * @param {Array} props.jobOutput - Array of job output messages
- * @param {boolean} props.showTechnicalDetails - Whether to show technical details
- * @param {Function} props.onToggleTechnicalDetails - Callback to toggle details
- * @param {React.Ref} props.scrollAreaRef - Ref for scroll area
- */
+// =============================================================================
+// SECTION 1: MAIN COMPONENT
+// =============================================================================
+
 export default function ExecutionTab({
   currentPhase,
   isRunning,
@@ -54,238 +43,464 @@ export default function ExecutionTab({
   jobOutput,
   showTechnicalDetails,
   onToggleTechnicalDetails,
-  scrollAreaRef,
+  scrollAreaRef
 }) {
+
+  // ===========================================================================
+  // SUBSECTION 1.1: DEBUG - LOG WHAT WE'RE RECEIVING
+  // ===========================================================================
+
+  useEffect(() => {
+    if (jobOutput.length > 0) {
+      console.log("[EXECUTION_TAB] ========================================");
+      console.log("[EXECUTION_TAB] Total messages:", jobOutput.length);
+      console.log("[EXECUTION_TAB] Event types present:",
+        [...new Set(jobOutput.map(e => e.event_type))]);
+      console.log("[EXECUTION_TAB] Last 3 messages:", jobOutput.slice(-3));
+      console.log("[EXECUTION_TAB] ========================================");
+    }
+  }, [jobOutput.length]);
+
+  // ===========================================================================
+  // SUBSECTION 1.2: FILTER STRUCTURED STEPS (FIXED)
+  // ===========================================================================
+
+  /**
+   * CRITICAL FIX: Show ALL messages that have useful content
+   * Don't filter by event_type since we're seeing OPERATION_COMPLETE but not STEP_COMPLETE
+   */
+  const structuredSteps = jobOutput.filter(entry => {
+    // Include any message that looks like a step
+    if (entry.event_type === 'STEP_COMPLETE') return true;
+    if (entry.event_type === 'OPERATION_START') return true;
+    if (entry.event_type === 'OPERATION_COMPLETE') return true;
+
+    // Also include LOG_MESSAGE if it contains step information
+    if (entry.event_type === 'LOG_MESSAGE' && entry.message) {
+      // Check if message contains step patterns
+      if (entry.message.includes('Step ') ||
+          entry.message.includes('✅') ||
+          entry.message.includes('❌') ||
+          entry.message.includes('Checking') ||
+          entry.message.includes('Validating') ||
+          entry.message.includes('Retrieving')) {
+        return true;
+      }
+    }
+
+    return false;
+  });
+
+  /**
+   * Get all messages for technical details view
+   */
+  const allMessages = jobOutput;
+
+  // ===========================================================================
+  // SUBSECTION 1.3: DEBUG LOG FILTERED RESULTS
+  // ===========================================================================
+
+  useEffect(() => {
+    console.log("[EXECUTION_TAB] Structured steps count:", structuredSteps.length);
+    if (structuredSteps.length > 0) {
+      console.log("[EXECUTION_TAB] First structured step:", structuredSteps[0]);
+    }
+  }, [structuredSteps.length]);
+
+  // ===========================================================================
+  // SUBSECTION 1.4: AUTO-SCROLL EFFECT
+  // ===========================================================================
+
+  useEffect(() => {
+    if (scrollAreaRef?.current) {
+      const scrollElement = scrollAreaRef.current;
+      setTimeout(() => {
+        if (scrollElement) {
+          scrollElement.scrollTop = scrollElement.scrollHeight;
+        }
+      }, 100);
+    }
+  }, [jobOutput.length, scrollAreaRef]);
+
+  // ===========================================================================
+  // SUBSECTION 1.5: HELPER FUNCTIONS
+  // ===========================================================================
+
+  /**
+   * Get icon for step based on message content and position
+   */
+  const getStepIcon = (message, isLastStep) => {
+    if (message.includes('❌')) {
+      return <XCircle className="h-5 w-5 text-red-500" />;
+    } else if (message.includes('✅')) {
+      return <CheckCircle className="h-5 w-5 text-green-500" />;
+    } else if (message.includes('⚠️')) {
+      return <AlertCircle className="h-5 w-5 text-yellow-500" />;
+    } else if (message.includes('⊘')) {
+      return <Circle className="h-5 w-5 text-gray-300" />;
+    } else if (isLastStep && isRunning) {
+      return <Loader2 className="h-5 w-5 text-blue-500 animate-spin" />;
+    } else {
+      return <Circle className="h-5 w-5 text-blue-500 fill-blue-500" />;
+    }
+  };
+
+  /**
+   * Extract step number from message
+   */
+  const extractStepNumber = (message, fallbackIndex) => {
+    const match = message.match(/Step (\d+)[/:]/);
+    if (match) {
+      return parseInt(match[1]);
+    }
+    return fallbackIndex + 1;
+  };
+
+  /**
+   * Get status badge for overall operation
+   */
+  const getStatusBadge = () => {
+    if (isRunning) {
+      return (
+        <Badge variant="default" className="bg-blue-500">
+          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+          In Progress
+        </Badge>
+      );
+    }
+
+    if (isComplete) {
+      return (
+        <Badge variant="default" className="bg-green-500">
+          <CheckCircle className="h-3 w-3 mr-1" />
+          Completed
+        </Badge>
+      );
+    }
+
+    if (hasError) {
+      return (
+        <Badge variant="destructive">
+          <XCircle className="h-3 w-3 mr-1" />
+          Failed
+        </Badge>
+      );
+    }
+
+    return (
+      <Badge variant="outline">
+        <Circle className="h-3 w-3 mr-1" />
+        Idle
+      </Badge>
+    );
+  };
+
+  /**
+   * Get status class for step styling
+   */
+  const getStepStatusClass = (message, isLastStep) => {
+    if (message.includes('❌')) {
+      return 'border-red-200 bg-red-50';
+    } else if (message.includes('✅')) {
+      return 'border-green-200 bg-green-50';
+    } else if (message.includes('⚠️')) {
+      return 'border-yellow-200 bg-yellow-50';
+    } else if (message.includes('⊘')) {
+      return 'border-gray-200 bg-gray-50 opacity-60';
+    } else if (isLastStep && isRunning) {
+      return 'border-blue-300 bg-blue-100 shadow-sm';
+    } else {
+      return 'border-blue-200 bg-blue-50';
+    }
+  };
+
+  // =============================================================================
+  // SECTION 2: RENDER
+  // =============================================================================
+
   return (
-    <div className="space-y-6 max-w-6xl">
+    <div className="space-y-6">
 
-      {/* ====================================================================
-          OPERATION STATUS HEADER
-          ==================================================================== */}
-      <Card className="border-gray-200">
+      {/* ===================================================================
+          SUBSECTION 2.1: PROGRESS OVERVIEW CARD
+          =================================================================== */}
+      <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="text-xl flex items-center gap-2">
-                {/* Dynamic status icon */}
-                {isRunning && <Loader2 className="h-5 w-5 animate-spin text-blue-600" />}
-                {isComplete && <CheckCircle className="h-5 w-5 text-green-600" />}
-                {hasError && <XCircle className="h-5 w-5 text-red-600" />}
-
-                {/* Dynamic title based on phase */}
-                {currentPhase === "pre_check" ? "Pre-Check Validation" : "Upgrade Execution"}
-              </CardTitle>
-
-              <CardDescription>
-                {isRunning && "Processing validation checks..."}
-                {isComplete && "All checks completed successfully"}
-                {hasError && "Validation encountered errors"}
-              </CardDescription>
-            </div>
-
-            {/* Step counter badge */}
-            {totalSteps > 0 && (
-              <Badge variant="outline" className="text-sm px-3 py-1">
-                {completedSteps} / {totalSteps} Steps
-              </Badge>
-            )}
-          </div>
+          <CardTitle className="flex items-center justify-between">
+            <span>
+              {currentPhase === 'pre_check' ? 'Pre-Check Validation' : 'Upgrade Execution'}
+            </span>
+            {getStatusBadge()}
+          </CardTitle>
+          <CardDescription>
+            {currentPhase === 'pre_check'
+              ? 'Validating device readiness for upgrade'
+              : 'Executing device operating system upgrade'}
+          </CardDescription>
         </CardHeader>
-      </Card>
 
-      {/* ====================================================================
-          ENHANCED PROGRESS BAR
-          ==================================================================== */}
-      <Card className="border-gray-200">
-        <CardContent className="pt-6">
-          <EnhancedProgressBar
-            percentage={progress}
-            currentStep={latestStepMessage}
-            totalSteps={totalSteps}
-            completedSteps={completedSteps}
-            isRunning={isRunning}
-            isComplete={isComplete}
-            hasError={hasError}
-            animated={isRunning}
-            showStepCounter={true}
-            showPercentage={true}
-            compact={false}
-            variant={isComplete ? "success" : hasError ? "destructive" : "default"}
-          />
+        <CardContent className="space-y-4">
+          {/* Progress Bar */}
+          <div>
+            <div className="flex justify-between text-sm mb-2">
+              <span className="text-muted-foreground">Overall Progress</span>
+              <span className="font-medium">{progress}%</span>
+            </div>
+            <Progress value={progress} className="h-2" />
+          </div>
+
+          {/* Step Counter */}
+          {totalSteps > 0 && (
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">Steps Completed</span>
+              <span className="font-medium">{completedSteps} / {totalSteps}</span>
+            </div>
+          )}
+
+          {/* Latest Step Message */}
+          {latestStepMessage && (
+            <div className="pt-2 border-t">
+              <p className="text-sm text-muted-foreground mb-1">Current Step:</p>
+              <p className="text-sm font-medium">{latestStepMessage}</p>
+            </div>
+          )}
+
+          {/* DEBUG INFO */}
+          <div className="pt-2 border-t bg-yellow-50 p-2 rounded">
+            <p className="text-xs text-yellow-800">
+              <strong>Debug:</strong> Total messages: {jobOutput.length} |
+              Structured steps: {structuredSteps.length} |
+              Event types: {[...new Set(jobOutput.map(e => e.event_type))].join(', ')}
+            </p>
+          </div>
         </CardContent>
       </Card>
 
-      {/* ====================================================================
-          VALIDATION STEPS LOG
-          ==================================================================== */}
-      <Card className="border-gray-200">
+      {/* ===================================================================
+          SUBSECTION 2.2: STRUCTURED STEPS DISPLAY
+          =================================================================== */}
+      <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="text-lg">Validation Steps</CardTitle>
+            <div className="flex-1">
+              <CardTitle>Validation Steps</CardTitle>
               <CardDescription>
-                Real-time progress of pre-check validation
+                {structuredSteps.length === 0
+                  ? `Waiting for validation to begin... (${jobOutput.length} messages received)`
+                  : `${structuredSteps.length} step${structuredSteps.length !== 1 ? 's' : ''} processed`}
               </CardDescription>
             </div>
 
-            {/* Technical details toggle */}
+            {/* Toggle Technical Details Button - ALWAYS VISIBLE */}
             <Button
               variant="outline"
               size="sm"
               onClick={onToggleTechnicalDetails}
-              className="text-xs"
+              className="ml-4 flex-shrink-0"
             >
-              <Terminal className="w-3 h-3 mr-1" />
-              {showTechnicalDetails ? 'Hide' : 'Show'} Technical Details
+              {showTechnicalDetails ? (
+                <>
+                  <EyeOff className="h-4 w-4 mr-2" />
+                  Hide Details
+                </>
+              ) : (
+                <>
+                  <Eye className="h-4 w-4 mr-2" />
+                  Show Technical Details
+                </>
+              )}
             </Button>
           </div>
         </CardHeader>
 
         <CardContent>
-          <ScrollArea className="h-96">
-            <div ref={scrollAreaRef} className="space-y-2 pr-4">
+          <ScrollArea className="h-[500px] pr-4" ref={scrollAreaRef}>
 
-              {/* Empty state - waiting for messages */}
-              {jobOutput.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mb-3">
-                    <Loader2 className="h-6 w-6 text-gray-400 animate-spin" />
+            {/* ============================================================
+                USER-FRIENDLY STEP VIEW
+                ============================================================ */}
+            {!showTechnicalDetails && (
+              <div className="space-y-3">
+
+                {/* Loading State */}
+                {structuredSteps.length === 0 && isRunning && (
+                  <div className="text-center py-12 text-muted-foreground">
+                    <Loader2 className="h-8 w-8 animate-spin mx-auto mb-3" />
+                    <p className="text-sm font-medium">Starting validation...</p>
+                    <p className="text-xs mt-1">Connecting to device and initializing checks</p>
+                    <p className="text-xs mt-2 text-yellow-600">
+                      ({jobOutput.length} messages received - check Technical Details)
+                    </p>
                   </div>
-                  <p className="text-sm text-muted-foreground">
-                    {currentPhase === "pre_check"
-                      ? "Initializing pre-check validation..."
-                      : "Initializing upgrade process..."}
+                )}
+
+                {/* Empty state */}
+                {structuredSteps.length === 0 && !isRunning && (
+                  <div className="text-center py-12 text-muted-foreground">
+                    <PlayCircle className="h-8 w-8 mx-auto mb-3 text-gray-300" />
+                    <p className="text-sm font-medium">No validation steps yet</p>
+                    <p className="text-xs mt-1">Start a pre-check to see validation progress here</p>
+                  </div>
+                )}
+
+                {/* STEP DISPLAY */}
+                {structuredSteps.map((step, index) => {
+                  const isLastStep = index === structuredSteps.length - 1;
+                  const stepNumber = extractStepNumber(step.message, index);
+                  const icon = getStepIcon(step.message, isLastStep);
+
+                  let displayMessage = step.message
+                    .replace(/^Step \d+\/\d+:\s*/, '')
+                    .replace(/^Step \d+:\s*/, '');
+
+                  const statusClass = getStepStatusClass(step.message, isLastStep);
+
+                  return (
+                    <div
+                      key={index}
+                      className={`flex items-start gap-3 p-4 rounded-lg border transition-all ${statusClass}`}
+                    >
+                      <div className={`flex-shrink-0 w-8 h-8 rounded-full bg-white border-2 flex items-center justify-center text-sm font-bold shadow-sm ${
+                        isLastStep && isRunning
+                          ? 'border-blue-500 text-blue-600'
+                          : 'border-gray-300 text-gray-600'
+                      }`}>
+                        {stepNumber}
+                      </div>
+
+                      <div className="flex-shrink-0 mt-1">
+                        {icon}
+                      </div>
+
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm font-medium leading-relaxed ${
+                          isLastStep && isRunning ? 'text-blue-700' : ''
+                        }`}>
+                          {displayMessage}
+                        </p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <p className="text-xs text-muted-foreground">
+                            {new Date(step.timestamp).toLocaleTimeString('en-US', {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              second: '2-digit'
+                            })}
+                          </p>
+                          {isLastStep && isRunning && (
+                            <Badge variant="outline" className="text-xs py-0 px-1.5 h-5">
+                              In Progress
+                            </Badge>
+                          )}
+                          <Badge variant="outline" className="text-xs py-0 px-1.5 h-5">
+                            {step.event_type}
+                          </Badge>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+
+              </div>
+            )}
+
+            {/* ============================================================
+                TECHNICAL DETAILS VIEW
+                ============================================================ */}
+            {showTechnicalDetails && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 mb-3 pb-2 border-b sticky top-0 bg-white z-10">
+                  <AlertTriangle className="h-4 w-4 text-yellow-500" />
+                  <p className="text-xs font-medium text-muted-foreground">
+                    Technical Details - Advanced View ({allMessages.length} messages)
                   </p>
                 </div>
-              ) : (
-                /* Step messages display */
-                jobOutput
-                  .filter(log => showTechnicalDetails || !shouldFilterMessage(log))
-                  .map((log, index, filteredArray) => {
-                    // Determine step status
-                    let stepStatus = 'COMPLETE';
-                    const isLast = index === filteredArray.length - 1;
 
-                    if (isRunning && isLast) {
-                      stepStatus = 'IN_PROGRESS';
-                    } else if (log.level === 'error' || log.message?.includes('failed')) {
-                      stepStatus = 'FAILED';
+                {allMessages.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <p className="text-sm">No technical details available yet</p>
+                  </div>
+                ) : (
+                  allMessages.map((msg, index) => {
+                    let bgClass = 'bg-gray-50';
+                    let borderClass = 'border-gray-200';
+                    let textClass = 'text-gray-700';
+                    let levelBadge = null;
+
+                    if (msg.level === 'error' || msg.level === 'ERROR') {
+                      bgClass = 'bg-red-50';
+                      borderClass = 'border-red-200';
+                      textClass = 'text-red-700';
+                      levelBadge = <Badge variant="destructive" className="text-xs h-4 px-1">ERROR</Badge>;
+                    } else if (msg.level === 'warning' || msg.level === 'WARNING') {
+                      bgClass = 'bg-yellow-50';
+                      borderClass = 'border-yellow-200';
+                      textClass = 'text-yellow-700';
+                      levelBadge = <Badge variant="outline" className="text-xs h-4 px-1 border-yellow-400">WARN</Badge>;
+                    } else if (msg.event_type === 'STEP_COMPLETE') {
+                      bgClass = 'bg-blue-50';
+                      borderClass = 'border-blue-200';
+                      textClass = 'text-blue-700';
+                      levelBadge = <Badge variant="outline" className="text-xs h-4 px-1 border-blue-400">STEP</Badge>;
                     }
 
                     return (
                       <div
-                        key={`${log.timestamp}-${index}`}
-                        className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors"
+                        key={index}
+                        className={`p-2 rounded border ${bgClass} ${borderClass}`}
                       >
-                        {/* Status icon */}
-                        {stepStatus === 'COMPLETE' && (
-                          <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
-                        )}
-                        {stepStatus === 'IN_PROGRESS' && (
-                          <Loader2 className="w-5 h-5 animate-spin text-blue-600 flex-shrink-0" />
-                        )}
-                        {stepStatus === 'FAILED' && (
-                          <XCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
-                        )}
-
-                        {/* Message content */}
-                        <div className="flex-1 min-w-0">
-                          <div className={`text-sm ${stepStatus === 'COMPLETE' ? 'text-gray-700' :
-                              stepStatus === 'IN_PROGRESS' ? 'text-black font-medium' :
-                                'text-red-600 font-medium'
-                            }`}>
-                            {log.message}
-                          </div>
-
-                          {/* Timestamp */}
-                          {(stepStatus === 'COMPLETE' || showTechnicalDetails) && (
-                            <div className="text-xs text-gray-400 mt-0.5 font-mono">
-                              {new Date(log.timestamp).toLocaleTimeString()}
-                            </div>
-                          )}
-
-                          {/* Event type badge in technical mode */}
-                          {showTechnicalDetails && log.event_type && (
-                            <Badge variant="outline" className="mt-1 text-xs">
-                              {log.event_type}
-                            </Badge>
-                          )}
+                        <div className="flex items-start gap-2">
+                          <span className="text-xs font-mono text-muted-foreground flex-shrink-0">
+                            {new Date(msg.timestamp).toLocaleTimeString('en-US', {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              second: '2-digit'
+                            })}
+                          </span>
+                          <Badge variant="outline" className="text-xs h-4 px-1 flex-shrink-0">
+                            {msg.event_type}
+                          </Badge>
+                          {levelBadge}
+                          <span className={`text-xs font-mono ${textClass} break-all flex-1`}>
+                            {msg.message}
+                          </span>
                         </div>
                       </div>
                     );
                   })
-              )}
+                )}
+              </div>
+            )}
 
-              {/* Processing indicator while running */}
-              {isRunning && jobOutput.length > 0 && (
-                <div className="flex items-center gap-3 p-3 text-sm text-gray-500">
-                  <Loader2 className="w-5 h-5 animate-spin flex-shrink-0" />
-                  <span>Processing validation checks...</span>
-                </div>
-              )}
-            </div>
           </ScrollArea>
         </CardContent>
       </Card>
 
-      {/* ====================================================================
-          COMPLETION SUMMARY CARD
-          ==================================================================== */}
-      {!isRunning && jobOutput.length > 0 && (
-        <Card className={`border-2 ${isComplete ? 'border-green-200 bg-green-50' :
-            hasError ? 'border-red-200 bg-red-50' :
-              'border-gray-200'
-          }`}>
-          <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2">
-              {isComplete && (
-                <>
-                  <CheckCircle className="h-5 w-5 text-green-600" />
-                  Validation Complete
-                </>
+      {/* Status Summary */}
+      {(isComplete || hasError) && structuredSteps.length > 0 && (
+        <Card className={hasError ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'}>
+          <CardContent className="pt-6">
+            <div className="flex items-start gap-4">
+              {hasError ? (
+                <XCircle className="h-8 w-8 text-red-500 flex-shrink-0" />
+              ) : (
+                <CheckCircle className="h-8 w-8 text-green-500 flex-shrink-0" />
               )}
-              {hasError && (
-                <>
-                  <XCircle className="h-5 w-5 text-red-600" />
-                  Validation Failed
-                </>
-              )}
-            </CardTitle>
-            <CardDescription>
-              {isComplete && "All pre-check validations completed successfully"}
-              {hasError && "Some validations failed - review results before proceeding"}
-            </CardDescription>
-          </CardHeader>
 
-          <CardContent>
-            <div className="grid grid-cols-3 gap-4">
-              {/* Steps completed */}
-              <div className="text-center p-3 bg-white rounded-lg border">
-                <div className="text-2xl font-bold text-blue-600">
-                  {completedSteps}
-                </div>
-                <div className="text-xs text-gray-500 mt-1">Steps Completed</div>
-              </div>
-
-              {/* Progress percentage */}
-              <div className="text-center p-3 bg-white rounded-lg border">
-                <div className="text-2xl font-bold text-green-600">
-                  {progress}%
-                </div>
-                <div className="text-xs text-gray-500 mt-1">Progress</div>
-              </div>
-
-              {/* Total validation checks */}
-              <div className="text-center p-3 bg-white rounded-lg border">
-                <div className="text-2xl font-bold text-gray-600">
-                  {jobOutput.filter(log => !shouldFilterMessage(log)).length}
-                </div>
-                <div className="text-xs text-gray-500 mt-1">Validation Checks</div>
+              <div className="flex-1">
+                <h3 className={`text-lg font-semibold mb-1 ${hasError ? 'text-red-700' : 'text-green-700'}`}>
+                  {hasError ? 'Validation Failed' : 'Validation Completed'}
+                </h3>
+                <p className={`text-sm ${hasError ? 'text-red-600' : 'text-green-600'}`}>
+                  {hasError
+                    ? 'Pre-check validation encountered critical issues. Review the failed checks in the Review tab.'
+                    : 'Pre-check validation completed successfully. Proceed to the Review tab to see detailed results.'}
+                </p>
               </div>
             </div>
           </CardContent>
         </Card>
       )}
+
     </div>
   );
 }
