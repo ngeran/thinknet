@@ -6,11 +6,9 @@
  * Handles WebSocket message processing and state updates
  *
  * CRITICAL FIXES APPLIED:
- * 1. Implemented parsing logic for nested PRE_CHECK_COMPLETE JSON that is
- * incorrectly stringified and embedded in an ORCHESTRATOR_LOG message (e.g.,
- * 'PRE_CHECK_EVENT:{...}') directly in the main useEffect.
- * 2. Ensured the extracted PRE_CHECK_COMPLETE payload is passed to the specific
- * event handlers to correctly set the preCheckSummary state.
+ * 1. Fixed JSON parsing for STDOUT logs that aren't valid JSON
+ * 2. Added deduplication for OPERATION_COMPLETE events with safe ref access
+ * 3. Improved error handling and logging for nested JSON extraction
  *
  * @module hooks/useWebSocketMessages
  * @author nikos-geranios_vgi
@@ -30,7 +28,7 @@ import { TIMING } from '../constants/timing';
  *
  * RESPONSIBILITIES:
  * 1. Receives and parses WebSocket messages
- * 2. Extracts nested JSON from ORCHESTRATOR_LOG messages (including the critical fix)
+ * 2. Extracts nested JSON from ORCHESTRATOR_LOG messages
  * 3. Filters and deduplicates log entries
  * 4. Updates progress tracking
  * 5. Handles PRE_CHECK_COMPLETE to enable Review tab
@@ -70,24 +68,31 @@ export function useWebSocketMessages({
 
     const raw = lastMessage;
 
-    // ======================================================================
-    // RAW MESSAGE LOGGING (CONSOLE ONLY - NOT ADDED TO STATE)
-    // ======================================================================
+    // ===========================================================================
+    // SECTION 1: RAW MESSAGE PROCESSING
+    // ===========================================================================
+
+    // ===========================================================================
+    // SUBSECTION 1.1: RAW MESSAGE LOGGING (CONSOLE ONLY - NOT ADDED TO STATE)
+    // ===========================================================================
     console.log("[WEBSOCKET_RAW] ========================================");
     console.log("[WEBSOCKET_RAW] New message received");
     console.log("[WEBSOCKET_RAW] Length:", raw.length);
     console.log("[WEBSOCKET_RAW] Preview:", raw.substring(0, 500) + (raw.length > 500 ? '...' : ''));
     console.log("[WEBSOCKET_RAW] ========================================");
 
+    // ===========================================================================
+    // SUBSECTION 1.2: MESSAGE VALIDATION
+    // ===========================================================================
     // Validate message format
     if (typeof raw !== 'string' || (!raw.startsWith('{') && !raw.startsWith('['))) {
       console.debug("[WEBSOCKET] Ignoring non-JSON message");
       return;
     }
 
-    // ======================================================================
-    // INITIAL PARSING
-    // ======================================================================
+    // ===========================================================================
+    // SUBSECTION 1.3: INITIAL JSON PARSING
+    // ===========================================================================
     let parsed;
     try {
       parsed = JSON.parse(raw);
@@ -103,48 +108,60 @@ export function useWebSocketMessages({
       return;
     }
 
-    // ======================================================================
-    // CHANNEL FILTERING
-    // ======================================================================
+    // ===========================================================================
+    // SECTION 2: MESSAGE FILTERING AND EXTRACTION
+    // ===========================================================================
+
+    // ===========================================================================
+    // SUBSECTION 2.1: CHANNEL FILTERING
+    // ===========================================================================
     if (parsed.channel && wsChannel && !parsed.channel.includes(wsChannel)) {
       console.debug("[WEBSOCKET] Ignoring message for different channel:", parsed.channel);
       return;
     }
 
-    // ======================================================================
-    // NESTED DATA EXTRACTION (Handles standard nested structures)
-    // ======================================================================
+    // ===========================================================================
+    // SUBSECTION 2.2: NESTED DATA EXTRACTION (Standard nested structures)
+    // ===========================================================================
     const { payload: finalPayload, isNested } = extractNestedProgressData(parsed, setState);
     let eventToHandle = finalPayload;
 
-    // ======================================================================
-    // CRITICAL FIX: Extract PRE_CHECK_COMPLETE from ORCHESTRATOR_LOG string
-    // Now handles BOTH prefixed and non-prefixed JSON strings
-    // ======================================================================
+    // ===========================================================================
+    // SUBSECTION 2.3: CRITICAL FIX - NESTED JSON EXTRACTION FROM ORCHESTRATOR_LOG
+    // ===========================================================================
+    // Handles BOTH prefixed and non-prefixed JSON strings
+    // FIXED: Now properly handles [STDOUT] logs that aren't valid JSON
     if (eventToHandle.event_type === "ORCHESTRATOR_LOG" &&
       typeof eventToHandle.message === 'string') {
+
       let jsonStr = eventToHandle.message;
 
-      try {
-        // Strip prefix if present (legacy backend)
-        const PREFIX = "PRE_CHECK_EVENT:";
-        if (jsonStr.startsWith(PREFIX)) {
-          jsonStr = jsonStr.substring(PREFIX.length);
-          console.log("[WEBSOCKET_FIX] Stripped legacy prefix");
-        }
+      // Early detection of non-JSON messages (like [STDOUT] logs)
+      if (!jsonStr.trim().startsWith('{') && !jsonStr.trim().startsWith('[')) {
+        console.log("[WEBSOCKET_FIX] Skipping non-JSON message:", jsonStr.substring(0, 100));
+        // Continue with original eventToHandle - don't try to parse as JSON
+      } else {
+        try {
+          // Strip prefix if present (legacy backend)
+          const PREFIX = "PRE_CHECK_EVENT:";
+          if (jsonStr.startsWith(PREFIX)) {
+            jsonStr = jsonStr.substring(PREFIX.length);
+            console.log("[WEBSOCKET_FIX] Stripped legacy prefix");
+          }
 
-        const nestedPayload = JSON.parse(jsonStr);
+          const nestedPayload = JSON.parse(jsonStr);
 
-        // If successfully parsed and is the expected event, use it
-        if (nestedPayload && nestedPayload.event_type === "PRE_CHECK_COMPLETE") {
-          console.log("[WEBSOCKET_FIX] 🎯 Successfully extracted nested PRE_CHECK_COMPLETE event.");
-          eventToHandle = nestedPayload;
-        } else {
-          console.warn("[WEBSOCKET_FIX] Parsed nested payload, but it was not PRE_CHECK_COMPLETE.");
+          // If successfully parsed and is the expected event, use it
+          if (nestedPayload && nestedPayload.event_type === "PRE_CHECK_COMPLETE") {
+            console.log("[WEBSOCKET_FIX] 🎯 Successfully extracted nested PRE_CHECK_COMPLETE event.");
+            eventToHandle = nestedPayload;
+          } else {
+            console.log("[WEBSOCKET_FIX] Parsed nested payload, but it was not PRE_CHECK_COMPLETE:", nestedPayload.event_type);
+          }
+        } catch (e) {
+          console.log("[WEBSOCKET_FIX] Not a JSON message (expected for STDOUT logs):", jsonStr.substring(0, 200));
+          // This is normal for STDOUT logs - continue with original eventToHandle
         }
-      } catch (e) {
-        console.error("[WEBSOCKET_FIX] ❌ Failed to parse nested JSON:", e);
-        // Fall through to handle as normal log
       }
     }
 
@@ -155,16 +172,20 @@ export function useWebSocketMessages({
       currentPhase: currentPhase,
     });
 
-    // ======================================================================
-    // DEDUPLICATION LOGIC (Uses finalPayload for log signature)
-    // ======================================================================
+    // ===========================================================================
+    // SECTION 3: OUTPUT MANAGEMENT
+    // ===========================================================================
+
+    // ===========================================================================
+    // SUBSECTION 3.1: DEDUPLICATION LOGIC
+    // ===========================================================================
     const logSignature = createLogSignature(finalPayload);
     const shouldAddToOutput = !refs.loggedMessagesRef.current.has(logSignature);
     const shouldDisplay = !shouldFilterMessage(finalPayload);
 
-    // ======================================================================
-    // ADD TO JOB OUTPUT (WITH INFINITE LOOP PROTECTION)
-    // ======================================================================
+    // ===========================================================================
+    // SUBSECTION 3.2: ADD TO JOB OUTPUT (WITH INFINITE LOOP PROTECTION)
+    // ===========================================================================
     if (shouldAddToOutput && shouldDisplay) {
       refs.loggedMessagesRef.current.add(logSignature);
 
@@ -202,10 +223,10 @@ export function useWebSocketMessages({
       }
     }
 
-    // ======================================================================
-    // EVENT-SPECIFIC HANDLERS
-    // ======================================================================
-    // Pass the potentially extracted event
+    // ===========================================================================
+    // SECTION 4: EVENT PROCESSING
+    // ===========================================================================
+    // Pass the potentially extracted event to specific handlers
     handleSpecificEvents(eventToHandle, {
       currentPhase,
       preCheckSummary,
@@ -239,9 +260,13 @@ function handleSpecificEvents(payload, context) {
     refs
   } = context;
 
-  // ==========================================================================
-  // PRE_CHECK_RESULT
-  // ==========================================================================
+  // ===========================================================================
+  // SECTION 5: EVENT TYPE HANDLERS
+  // ===========================================================================
+
+  // ===========================================================================
+  // SUBSECTION 5.1: PRE_CHECK_RESULT HANDLER
+  // ===========================================================================
   if (payload.event_type === "PRE_CHECK_RESULT") {
     console.log("[PRE_CHECK] Individual result received:", {
       check_name: payload.check_name,
@@ -258,11 +283,11 @@ function handleSpecificEvents(payload, context) {
     });
   }
 
-  // ==========================================================================
-  // PRE_CHECK_COMPLETE - CRITICAL FOR REVIEW TAB
+  // ===========================================================================
+  // SUBSECTION 5.2: PRE_CHECK_COMPLETE HANDLER - CRITICAL FOR REVIEW TAB
+  // ===========================================================================
   // This handler is now guaranteed to receive the clean PRE_CHECK_COMPLETE
   // payload thanks to the fix in the useEffect block.
-  // ==========================================================================
   if (payload.event_type === "PRE_CHECK_COMPLETE" ||
     (payload.type === "PRE_CHECK_COMPLETE" && payload.data)) {
 
@@ -300,9 +325,9 @@ function handleSpecificEvents(payload, context) {
     }
   }
 
-  // ==========================================================================
-  // OPERATION_START
-  // ==========================================================================
+  // ===========================================================================
+  // SUBSECTION 5.3: OPERATION_START HANDLER
+  // ===========================================================================
   if (payload.event_type === "OPERATION_START" &&
     typeof payload.data?.total_steps === "number") {
 
@@ -317,16 +342,18 @@ function handleSpecificEvents(payload, context) {
     });
   }
 
-  // ==========================================================================
-  // STEP_COMPLETE
-  // ==========================================================================
+  // ===========================================================================
+  // SUBSECTION 5.4: STEP_COMPLETE HANDLER
+  // ===========================================================================
   if (payload.event_type === "STEP_COMPLETE" &&
     typeof payload.data?.step === "number") {
 
     const stepNum = payload.data.step;
 
-    if (!refs.processedStepsRef.current.has(stepNum)) {
-      refs.processedStepsRef.current.add(stepNum);
+    // SAFE REF ACCESS: Check if ref exists before using it
+    const processedStepsRef = refs?.processedStepsRef?.current;
+    if (processedStepsRef && !processedStepsRef.has(stepNum)) {
+      processedStepsRef.add(stepNum);
       console.log(`[PROGRESS] Step ${stepNum} completed`);
 
       setState(prevState => {
@@ -349,20 +376,40 @@ function handleSpecificEvents(payload, context) {
     }
   }
 
-  // ==========================================================================
-  // OPERATION_COMPLETE
-  // ==========================================================================
+  // ===========================================================================
+  // SUBSECTION 5.5: OPERATION_COMPLETE HANDLER (WITH SAFE DEDUPLICATION FIX)
+  // ===========================================================================
+  // FIXED: Added safe deduplication to prevent multiple handlers from processing same event
   if (payload.event_type === "OPERATION_COMPLETE" ||
     payload.type === "OPERATION_COMPLETE") {
 
-    handleOperationComplete(payload, {
-      currentPhase,
-      preCheckSummary,
-      totalSteps,
-      wsChannel,
-      sendMessage,
-      setState,
-    });
+    // SAFE REF ACCESS: Create fallback if ref doesn't exist
+    let processedTimestamps;
+    if (refs?.processedOperationCompleteRef?.current) {
+      processedTimestamps = refs.processedOperationCompleteRef.current;
+    } else {
+      // Fallback: create a temporary Set if ref doesn't exist
+      console.warn("[WEBSOCKET] processedOperationCompleteRef not found, using fallback deduplication");
+      processedTimestamps = new Set();
+    }
+
+    const eventTimestamp = payload.timestamp || JSON.stringify(payload);
+
+    if (!processedTimestamps.has(eventTimestamp)) {
+      processedTimestamps.add(eventTimestamp);
+      console.log(`[OPERATION_COMPLETE] Processing new operation complete event: ${eventTimestamp}`);
+
+      handleOperationComplete(payload, {
+        currentPhase,
+        preCheckSummary,
+        totalSteps,
+        wsChannel,
+        sendMessage,
+        setState,
+      });
+    } else {
+      console.log(`[OPERATION_COMPLETE] Skipping duplicate event: ${eventTimestamp}`);
+    }
   }
 }
 
@@ -393,9 +440,13 @@ function handleOperationComplete(payload, context) {
   console.log("[OPERATION] Phase:", currentPhase);
   console.log("[OPERATION] ========================================");
 
-  // ==========================================================================
-  // PRE-CHECK COMPLETION
-  // ==========================================================================
+  // ===========================================================================
+  // SECTION 6: OPERATION COMPLETION HANDLING
+  // ===========================================================================
+
+  // ===========================================================================
+  // SUBSECTION 6.1: PRE-CHECK COMPLETION
+  // ===========================================================================
   if (currentPhase === "pre_check" || operationType === "pre_check") {
     console.log("[PRE_CHECK] Operation complete - finalizing pre-check phase");
 
@@ -448,9 +499,9 @@ function handleOperationComplete(payload, context) {
     }, TIMING.TAB_TRANSITION_DELAY);
   }
 
-  // ==========================================================================
-  // UPGRADE COMPLETION
-  // ==========================================================================
+  // ===========================================================================
+  // SUBSECTION 6.2: UPGRADE COMPLETION
+  // ===========================================================================
   else if (currentPhase === "upgrade" || operationType === "upgrade") {
     console.log("[UPGRADE] Operation complete - finalizing upgrade phase");
 
