@@ -1,0 +1,179 @@
+# =============================================================================
+# PRE-CHECK CONFIGURATION FILE
+# =============================================================================
+#
+# Defines available pre-upgrade validation checks with metadata.
+# Used by backend to present options to frontend and execute selected checks.
+#
+# AUTHOR: nikos-geranios_vgi
+# DATE: 2025-11-10
+# VERSION: 1.0.0
+#
+# =============================================================================
+
+version: "1.0"
+last_updated: "2025-11-10"
+
+# =============================================================================
+# SECTION 1: AVAILABLE PRE-CHECKS
+# =============================================================================
+
+checks:
+  # ---------------------------------------------------------------------------
+  # Device Connectivity & Reachability
+  # ---------------------------------------------------------------------------
+  - id: "device_connectivity"
+    name: "Device Connectivity & Reachability"
+    description: "Verify device is reachable via SSH/NETCONF and credentials are valid"
+    category: "connectivity"
+    severity: "critical"
+    required: true
+    enabled_by_default: true
+    estimated_duration_seconds: 10
+    function_name: "check_device_connectivity"
+    tooltip: "Always required - validates basic device access"
+
+  # ---------------------------------------------------------------------------
+  # Version Compatibility
+  # ---------------------------------------------------------------------------
+  - id: "version_compatibility"
+    name: "Version Compatibility"
+    description: "Validate upgrade/downgrade path compatibility"
+    category: "compatibility"
+    severity: "critical"
+    required: true
+    enabled_by_default: true
+    estimated_duration_seconds: 5
+    function_name: "check_version_compatibility"
+    tooltip: "Always required - ensures safe upgrade path"
+
+  # ---------------------------------------------------------------------------
+  # Image Availability
+  # ---------------------------------------------------------------------------
+  - id: "image_availability"
+    name: "Software Image Availability"
+    description: "Verify target image exists on device storage"
+    category: "storage"
+    severity: "critical"
+    required: false
+    enabled_by_default: true
+    estimated_duration_seconds: 10
+    function_name: "check_image_availability"
+    tooltip: "Confirms the upgrade image is present on the device"
+
+  # ---------------------------------------------------------------------------
+  # Storage Space
+  # ---------------------------------------------------------------------------
+  - id: "storage_space"
+    name: "Storage Space"
+    description: "Validate sufficient disk space for upgrade operation"
+    category: "storage"
+    severity: "critical"
+    required: false
+    enabled_by_default: true
+    estimated_duration_seconds: 10
+    function_name: "check_storage_space"
+    tooltip: "Ensures adequate space for installation and temporary files"
+
+  # ---------------------------------------------------------------------------
+  # Hardware Health
+  # ---------------------------------------------------------------------------
+  - id: "hardware_health"
+    name: "Hardware Health"
+    description: "Check power supplies, fans, and temperature sensors"
+    category: "hardware"
+    severity: "warning"
+    required: false
+    enabled_by_default: true
+    estimated_duration_seconds: 15
+    function_name: "check_hardware_health"
+    tooltip: "Validates environmental conditions are optimal"
+
+  # ---------------------------------------------------------------------------
+  # BGP Stability
+  # ---------------------------------------------------------------------------
+  - id: "bgp_stability"
+    name: "BGP Protocol Stability"
+    description: "Verify BGP peer relationships are established"
+    category: "routing"
+    severity: "warning"
+    required: false
+    enabled_by_default: true
+    estimated_duration_seconds: 10
+    function_name: "check_bgp_stability"
+    tooltip: "Checks routing protocol health before upgrade"
+
+  # ---------------------------------------------------------------------------
+  # OSPF Stability (Future)
+  # ---------------------------------------------------------------------------
+  - id: "ospf_stability"
+    name: "OSPF Protocol Stability"
+    description: "Verify OSPF neighbor relationships are established"
+    category: "routing"
+    severity: "warning"
+    required: false
+    enabled_by_default: false
+    estimated_duration_seconds: 10
+    function_name: "check_ospf_stability"
+    tooltip: "Checks OSPF protocol health before upgrade"
+    available: false  # Not yet implemented
+
+  # ---------------------------------------------------------------------------
+  # Chassis Cluster (Future)
+  # ---------------------------------------------------------------------------
+  - id: "chassis_cluster"
+    name: "Chassis Cluster Health"
+    description: "Validate HA cluster status and redundancy"
+    category: "ha"
+    severity: "critical"
+    required: false
+    enabled_by_default: false
+    estimated_duration_seconds: 15
+    function_name: "check_chassis_cluster"
+    tooltip: "Ensures high availability cluster is healthy"
+    available: false  # Not yet implemented
+
+# =============================================================================
+# SECTION 2: CHECK CATEGORIES
+# =============================================================================
+
+categories:
+  connectivity:
+    display_name: "Connectivity"
+    icon: "network"
+    order: 1
+
+  compatibility:
+    display_name: "Compatibility"
+    icon: "check-circle"
+    order: 2
+
+  storage:
+    display_name: "Storage"
+    icon: "hard-drive"
+    order: 3
+
+  hardware:
+    display_name: "Hardware"
+    icon: "cpu"
+    order: 4
+
+  routing:
+    display_name: "Routing Protocols"
+    icon: "route"
+    order: 5
+
+  ha:
+    display_name: "High Availability"
+    icon: "shield"
+    order: 6
+
+# =============================================================================
+# SECTION 3: METADATA
+# =============================================================================
+
+metadata:
+  total_available: 8
+  total_implemented: 6
+  default_timeout_seconds: 300
+  max_parallel_checks: 5

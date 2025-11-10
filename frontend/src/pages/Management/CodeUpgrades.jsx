@@ -3,18 +3,15 @@
  * CODE UPGRADES COMPONENT - MAIN ORCHESTRATOR
  * =============================================================================
  *
- * @version 4.7.0 (Modular Refactoring)
- * @last_updated 2025-11-05
+ * @version 4.8.0 (Added Pre-Check Selection)
+ * @last_updated 2025-11-10 15:36:31 UTC
  * @author nikos-geranios_vgi
  *
- * 🎯 REFACTORING NOTES:
- * - Extracted state management to useUpgradeState hook
- * - Separated pre-check logic to usePreCheck hook
- * - Separated upgrade logic to useCodeUpgrade hook
- * - Extracted WebSocket processing to useWebSocketMessages hook
- * - Moved utilities to dedicated modules
- * - Split UI into focused tab components
- * - This file now serves as orchestrator only
+ * 🎯 UPDATES (v4.8.0):
+ * - Integrated pre-check selection functionality
+ * - Added selectedPreChecks state management
+ * - Updated ConfigurationTab props to include pre-check selection
+ * - Enhanced validation to include pre-check selection
  *
  * 🏗️ ARCHITECTURE:
  * - All business logic delegated to hooks
@@ -114,6 +111,10 @@ export default function CodeUpgrades() {
     canProceedWithUpgrade,
     setCanProceedWithUpgrade,
 
+    // Pre-check selection (NEW)
+    selectedPreChecks,
+    setSelectedPreChecks,
+
     // Statistics
     statistics,
     setStatistics,
@@ -130,17 +131,13 @@ export default function CodeUpgrades() {
 
   // ==========================================================================
   // STATE SETTER WRAPPER
-  // Provides a single function to update multiple state values at once
-  // Used by hooks to update state without needing individual setters
   // ==========================================================================
   const setState = useCallback((updates) => {
     if (typeof updates === 'function') {
-      // Handle functional updates
       console.warn('[STATE] Functional updates not yet implemented in setState wrapper');
       return;
     }
 
-    // Apply each update
     Object.entries(updates).forEach(([key, value]) => {
       switch (key) {
         case 'upgradeParams': setUpgradeParams(value); break;
@@ -160,6 +157,7 @@ export default function CodeUpgrades() {
         case 'preCheckSummary': setPreCheckSummary(value); break;
         case 'isRunningPreCheck': setIsRunningPreCheck(value); break;
         case 'canProceedWithUpgrade': setCanProceedWithUpgrade(value); break;
+        case 'selectedPreChecks': setSelectedPreChecks(value); break;
         case 'statistics': setStatistics(value); break;
         case 'processedStepsRef':
           if (value instanceof Set) {
@@ -180,8 +178,8 @@ export default function CodeUpgrades() {
     setShowTechnicalDetails, setProgress, setJobOutput, setCompletedSteps,
     setTotalSteps, setJobId, setWsChannel, setFinalResults,
     setPreCheckJobId, setPreCheckResults, setPreCheckSummary,
-    setIsRunningPreCheck, setCanProceedWithUpgrade, setStatistics,
-    processedStepsRef, loggedMessagesRef
+    setIsRunningPreCheck, setCanProceedWithUpgrade, setSelectedPreChecks,
+    setStatistics, processedStepsRef, loggedMessagesRef
   ]);
 
   // ==========================================================================
@@ -189,6 +187,7 @@ export default function CodeUpgrades() {
   // ==========================================================================
   const { startPreCheck } = usePreCheck({
     upgradeParams,
+    selectedPreChecks, // NEW: Pass selected checks
     isConnected,
     sendMessage,
     wsChannel,
@@ -254,97 +253,28 @@ export default function CodeUpgrades() {
   }, [setUpgradeParams]);
 
   /**
+   * Handles pre-check selection changes (NEW)
+   */
+  const handlePreCheckSelectionChange = useCallback((checkIds) => {
+    console.log(`[PRE_CHECK_SELECTION] Selected checks:`, checkIds);
+    setSelectedPreChecks(checkIds);
+  }, [setSelectedPreChecks]);
+
+  /**
    * Resets the entire workflow to initial state
    */
   const resetWorkflow = useCallback(() => {
     console.log("[WORKFLOW] ===== INITIATING COMPLETE RESET =====");
 
-    // Unsubscribe from WebSocket channel
     if (wsChannel) {
       console.log(`[WEBSOCKET] Unsubscribing from channel: ${wsChannel}`);
       sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
     }
 
-    // Reset all state using the centralized reset function
     resetState();
 
     console.log("[WORKFLOW] ✅ Reset complete - ready for new operation");
   }, [wsChannel, sendMessage, resetState]);
-
-  // ==========================================================================
-  // DEBUG UTILITIES
-  // ==========================================================================
-
-  /**
-   * Logs complete current state to console for debugging
-   */
-  const logCurrentState = useCallback(() => {
-    console.log("[DEBUG] ========================================");
-    console.log("[DEBUG] CURRENT COMPONENT STATE");
-    console.log("[DEBUG] ========================================");
-    console.log("[DEBUG] UI State:", {
-      activeTab,
-      currentPhase,
-      jobStatus,
-      showTechnicalDetails
-    });
-    console.log("[DEBUG] Pre-check State:", {
-      preCheckSummary: preCheckSummary !== null ? "SET" : "NULL",
-      canProceedWithUpgrade,
-      preCheckJobId,
-      isRunningPreCheck
-    });
-    console.log("[DEBUG] Job State:", {
-      jobId,
-      wsChannel,
-      isConnected,
-    });
-    console.log("[DEBUG] Progress:", {
-      progress,
-      completedSteps,
-      totalSteps,
-    });
-    console.log("[DEBUG] ========================================");
-  }, [
-    activeTab, currentPhase, jobStatus, showTechnicalDetails,
-    preCheckSummary, canProceedWithUpgrade, preCheckJobId, isRunningPreCheck,
-    jobId, wsChannel, isConnected, progress, completedSteps, totalSteps
-  ]);
-
-  /**
-   * Manually enables Review tab with test data for development
-   */
-  const forceReviewTab = useCallback(() => {
-    console.log("[DEBUG] ========================================");
-    console.log("[DEBUG] Manually forcing Review tab for testing");
-    console.log("[DEBUG] ========================================");
-
-    const testSummary = {
-      total_checks: 8,
-      passed: 7,
-      warnings: 1,
-      critical_failures: 0,
-      can_proceed: true,
-      results: [
-        { check_name: "Device Connectivity", severity: "pass", message: "Device is reachable" },
-        { check_name: "Storage Space", severity: "pass", message: "Sufficient storage available" },
-        { check_name: "System State", severity: "pass", message: "System is stable" },
-        { check_name: "Redundancy Status", severity: "pass", message: "Redundancy checks passed" },
-        { check_name: "Image Availability", severity: "pass", message: "Image is available" },
-        { check_name: "Version Compatibility", severity: "pass", message: "Version is compatible" },
-        { check_name: "Snapshot Availability", severity: "warning", message: "Snapshot may take longer" },
-        { check_name: "Resource Utilization", severity: "pass", message: "Resources are adequate" }
-      ]
-    };
-
-    setPreCheckSummary(testSummary);
-    setCanProceedWithUpgrade(true);
-    setActiveTab("review");
-    setCurrentPhase("review");
-    setJobStatus("success");
-
-    console.log("[DEBUG] ✅ Review tab manually enabled with test data");
-  }, [setPreCheckSummary, setCanProceedWithUpgrade, setActiveTab, setCurrentPhase, setJobStatus]);
 
   // ==========================================================================
   // DERIVED STATE
@@ -435,7 +365,8 @@ export default function CodeUpgrades() {
             isFormValid={isFormValid}
             isRunning={isRunning}
             isConnected={isConnected}
-            jobOutput={jobOutput}
+            selectedPreChecks={selectedPreChecks}
+            onPreCheckSelectionChange={handlePreCheckSelectionChange}
           />
         </TabsContent>
 
@@ -466,9 +397,11 @@ export default function CodeUpgrades() {
           <ReviewTab
             preCheckSummary={preCheckSummary}
             isConnected={isConnected}
+            jobStatus={jobStatus}
+            isRunningPreCheck={isRunningPreCheck}
             onProceedWithUpgrade={startUpgradeExecution}
             onCancel={resetWorkflow}
-            onForceReview={forceReviewTab}
+            onForceReview={() => {}} // Remove debug handler or keep for dev
           />
         </TabsContent>
 
@@ -501,51 +434,3 @@ export default function CodeUpgrades() {
     </div>
   );
 }
-
-/**
- * =============================================================================
- * IMPLEMENTATION NOTES FOR v4.7.0
- * =============================================================================
- *
- * 🎯 MODULAR REFACTORING BENEFITS:
- *
- * 1. MAINTAINABILITY:
- *    - Each module has single, clear responsibility
- *    - Easy to locate and fix bugs
- *    - Changes isolated to specific files
- *
- * 2. TESTABILITY:
- *    - Hooks can be tested independently
- *    - Components can be tested in isolation
- *    - Utilities are pure functions
- *
- * 3. REUSABILITY:
- *    - Hooks can be used in other components
- *    - Utilities can be shared across features
- *    - Components can be composed differently
- *
- * 4. READABILITY:
- *    - Main component is < 400 lines (was 2500+)
- *    - Clear separation of concerns
- *    - Easy to understand workflow
- *
- * 5. SCALABILITY:
- *    - Easy to add new features
- *    - Simple to extend functionality
- *    - Clear structure for new developers
- *
- * =============================================================================
- * FILE ORGANIZATION:
- * =============================================================================
- *
- * /hooks - Business logic (4 files)
- * /utils - Pure functions (5 files)
- * /constants - Configuration (3 files)
- * /components/tabs - Main UI (4 files)
- * /components/review - Review sub-components (4 files)
- * /components/debug - Debug tools (2 files)
- *
- * Total: 22 focused, maintainable files vs 1 monolithic file
- *
- * =============================================================================
- */

@@ -5,13 +5,20 @@
  *
  * Centralized state management for the entire upgrade workflow
  *
+ * VERSION: 2.0.0 - Added Pre-Check Selection State
+ * AUTHOR: nikos-geranios_vgi
+ * DATE: 2025-11-05
+ * LAST UPDATED: 2025-11-10 15:36:31 UTC
+ *
+ * UPDATES:
+ * - Added selectedPreChecks state for managing pre-check selections
+ * - Updated reset function to include pre-check state
+ *
  * @module hooks/useUpgradeState
- * @author nikos-geranios_vgi
- * @date 2025-11-05
  */
- 
+
 import { useState, useRef } from 'react';
- 
+
 /**
  * Custom hook for managing upgrade workflow state
  *
@@ -19,19 +26,11 @@ import { useState, useRef } from 'react';
  * - Upgrade parameters
  * - Job tracking (IDs, status, progress)
  * - Pre-check results
+ * - Pre-check selection
  * - UI state (tabs, phases)
  * - Execution logs
  *
  * @returns {Object} State and state setters
- *
- * @example
- * const {
- *   upgradeParams,
- *   setUpgradeParams,
- *   jobStatus,
- *   setJobStatus,
- *   // ... other state
- * } = useUpgradeState();
  */
 export function useUpgradeState() {
   // ==========================================================================
@@ -47,7 +46,7 @@ export function useUpgradeState() {
     target_version: "",
     image_filename: ""
   });
- 
+
   // ==========================================================================
   // UI STATE
   // ==========================================================================
@@ -55,7 +54,7 @@ export function useUpgradeState() {
   const [jobStatus, setJobStatus] = useState("idle");
   const [currentPhase, setCurrentPhase] = useState("config");
   const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
- 
+
   // ==========================================================================
   // PROGRESS TRACKING STATE
   // ==========================================================================
@@ -63,14 +62,14 @@ export function useUpgradeState() {
   const [jobOutput, setJobOutput] = useState([]);
   const [completedSteps, setCompletedSteps] = useState(0);
   const [totalSteps, setTotalSteps] = useState(0);
- 
+
   // ==========================================================================
   // JOB IDENTIFIERS STATE
   // ==========================================================================
   const [jobId, setJobId] = useState(null);
   const [wsChannel, setWsChannel] = useState(null);
   const [finalResults, setFinalResults] = useState(null);
- 
+
   // ==========================================================================
   // PRE-CHECK STATE
   // ==========================================================================
@@ -79,7 +78,12 @@ export function useUpgradeState() {
   const [preCheckSummary, setPreCheckSummary] = useState(null);
   const [isRunningPreCheck, setIsRunningPreCheck] = useState(false);
   const [canProceedWithUpgrade, setCanProceedWithUpgrade] = useState(false);
- 
+
+  // ==========================================================================
+  // PRE-CHECK SELECTION STATE (NEW)
+  // ==========================================================================
+  const [selectedPreChecks, setSelectedPreChecks] = useState([]);
+
   // ==========================================================================
   // STATISTICS STATE
   // ==========================================================================
@@ -88,7 +92,7 @@ export function useUpgradeState() {
     succeeded: 0,
     failed: 0
   });
- 
+
   // ==========================================================================
   // REFS FOR PERSISTENT VALUES
   // ==========================================================================
@@ -96,11 +100,11 @@ export function useUpgradeState() {
   const latestStepMessageRef = useRef("");
   const loggedMessagesRef = useRef(new Set());
   const scrollAreaRef = useRef(null);
- 
+
   // ==========================================================================
   // RESET FUNCTION
   // ==========================================================================
- 
+
   /**
    * Resets all state to initial values
    * Call this when starting a new upgrade workflow
@@ -123,21 +127,26 @@ export function useUpgradeState() {
     setIsRunningPreCheck(false);
     setCanProceedWithUpgrade(false);
     setShowTechnicalDetails(false);
- 
+
+    // Note: We DON'T reset selectedPreChecks here
+    // User's check selection should persist across workflow resets
+    // If you want to reset it, uncomment the line below:
+    // setSelectedPreChecks([]);
+
     processedStepsRef.current.clear();
     latestStepMessageRef.current = "";
     loggedMessagesRef.current.clear();
   };
- 
+
   // ==========================================================================
   // RETURN STATE AND SETTERS
   // ==========================================================================
- 
+
   return {
     // Upgrade parameters
     upgradeParams,
     setUpgradeParams,
- 
+
     // UI state
     activeTab,
     setActiveTab,
@@ -147,7 +156,7 @@ export function useUpgradeState() {
     setCurrentPhase,
     showTechnicalDetails,
     setShowTechnicalDetails,
- 
+
     // Progress tracking
     progress,
     setProgress,
@@ -157,7 +166,7 @@ export function useUpgradeState() {
     setCompletedSteps,
     totalSteps,
     setTotalSteps,
- 
+
     // Job identifiers
     jobId,
     setJobId,
@@ -165,7 +174,7 @@ export function useUpgradeState() {
     setWsChannel,
     finalResults,
     setFinalResults,
- 
+
     // Pre-check state
     preCheckJobId,
     setPreCheckJobId,
@@ -177,17 +186,21 @@ export function useUpgradeState() {
     setIsRunningPreCheck,
     canProceedWithUpgrade,
     setCanProceedWithUpgrade,
- 
+
+    // Pre-check selection (NEW)
+    selectedPreChecks,
+    setSelectedPreChecks,
+
     // Statistics
     statistics,
     setStatistics,
- 
+
     // Refs
     processedStepsRef,
     latestStepMessageRef,
     loggedMessagesRef,
     scrollAreaRef,
- 
+
     // Utility functions
     resetState,
   };
