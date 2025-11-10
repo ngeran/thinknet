@@ -75,64 +75,7 @@ checks:
     function_name: "check_storage_space"
     tooltip: "Ensures adequate space for installation and temporary files"
 
-  # ---------------------------------------------------------------------------
-  # Hardware Health
-  # ---------------------------------------------------------------------------
-  - id: "hardware_health"
-    name: "Hardware Health"
-    description: "Check power supplies, fans, and temperature sensors"
-    category: "hardware"
-    severity: "warning"
-    required: false
-    enabled_by_default: true
-    estimated_duration_seconds: 15
-    function_name: "check_hardware_health"
-    tooltip: "Validates environmental conditions are optimal"
-
-  # ---------------------------------------------------------------------------
-  # BGP Stability
-  # ---------------------------------------------------------------------------
-  - id: "bgp_stability"
-    name: "BGP Protocol Stability"
-    description: "Verify BGP peer relationships are established"
-    category: "routing"
-    severity: "warning"
-    required: false
-    enabled_by_default: true
-    estimated_duration_seconds: 10
-    function_name: "check_bgp_stability"
-    tooltip: "Checks routing protocol health before upgrade"
-
-  # ---------------------------------------------------------------------------
-  # OSPF Stability (Future)
-  # ---------------------------------------------------------------------------
-  - id: "ospf_stability"
-    name: "OSPF Protocol Stability"
-    description: "Verify OSPF neighbor relationships are established"
-    category: "routing"
-    severity: "warning"
-    required: false
-    enabled_by_default: false
-    estimated_duration_seconds: 10
-    function_name: "check_ospf_stability"
-    tooltip: "Checks OSPF protocol health before upgrade"
-    available: false  # Not yet implemented
-
-  # ---------------------------------------------------------------------------
-  # Chassis Cluster (Future)
-  # ---------------------------------------------------------------------------
-  - id: "chassis_cluster"
-    name: "Chassis Cluster Health"
-    description: "Validate HA cluster status and redundancy"
-    category: "ha"
-    severity: "critical"
-    required: false
-    enabled_by_default: false
-    estimated_duration_seconds: 15
-    function_name: "check_chassis_cluster"
-    tooltip: "Ensures high availability cluster is healthy"
-    available: false  # Not yet implemented
-
+  
 # =============================================================================
 # SECTION 2: CHECK CATEGORIES
 # =============================================================================

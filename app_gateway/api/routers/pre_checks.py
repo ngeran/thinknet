@@ -7,7 +7,7 @@ PRE-CHECK CONFIGURATION API ROUTER
 Provides available pre-check options to frontend for user selection.
 Reads configuration from shared/data/pre-checks/pre-checks.yaml
 
-AUTHOR: nikos-geranios_vgi
+AUTHOR: nikos
 DATE: 2025-11-10
 LAST UPDATED: 2025-11-10 15:23:08 UTC
 VERSION: 1.0.0
@@ -125,7 +125,9 @@ class PreCheckConfigLoader:
     _cached_config: Optional[Dict[str, Any]] = None
 
     @classmethod
-    def load_config(cls, config_path: Path, force_reload: bool = False) -> Dict[str, Any]:
+    def load_config(
+        cls, config_path: Path, force_reload: bool = False
+    ) -> Dict[str, Any]:
         """
         Load and parse pre-check configuration from YAML file.
 
@@ -152,7 +154,9 @@ class PreCheckConfigLoader:
 
             # Validate basic structure
             if not config or "checks" not in config:
-                raise ValueError("Invalid configuration structure: missing 'checks' key")
+                raise ValueError(
+                    "Invalid configuration structure: missing 'checks' key"
+                )
 
             if not isinstance(config["checks"], list):
                 raise ValueError("Invalid configuration: 'checks' must be a list")
@@ -206,7 +210,9 @@ class PreCheckConfigLoader:
         logger.debug("Pre-check configuration cache cleared")
 
     @classmethod
-    def get_check_by_id(cls, config: Dict[str, Any], check_id: str) -> Optional[Dict[str, Any]]:
+    def get_check_by_id(
+        cls, config: Dict[str, Any], check_id: str
+    ) -> Optional[Dict[str, Any]]:
         """
         Get specific check configuration by ID.
 

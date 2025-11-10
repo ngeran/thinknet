@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: PyNaCl
-Version: 1.6.0
+Version: 1.6.1
 Summary: Python binding to the Networking and Cryptography (NaCl) library
 Home-page: https://github.com/pyca/pynacl/
 Author-email: The PyNaCl developers <cryptography-dev@python.org>
@@ -22,8 +22,8 @@ Classifier: Programming Language :: Python :: 3.13
 Classifier: Programming Language :: Python :: 3.14
 Requires-Python: >=3.8
 License-File: LICENSE
-Requires-Dist: cffi>=1.4.1; platform_python_implementation != "PyPy" and python_version < "3.14"
-Requires-Dist: cffi>=2.0.0; platform_python_implementation != "PyPy" and python_version >= "3.14"
+Requires-Dist: cffi>=1.4.1; platform_python_implementation != "PyPy" and python_version < "3.9"
+Requires-Dist: cffi>=2.0.0; platform_python_implementation != "PyPy" and python_version >= "3.9"
 Provides-Extra: tests
 Requires-Dist: pytest>=7.4.0; extra == "tests"
 Requires-Dist: pytest-cov>=2.10.1; extra == "tests"
@@ -118,8 +118,20 @@ distribution, you can disable the bundled copy during install by running:
     are built on a baseline linux environment based on Centos 5.11
     and should work on most x86 and x86_64 glibc based linux environments.
 
+GNU Make (gmake) may be required for newer versions of PyNaCl. You can
+set the binary to use by setting the ``MAKE`` environment variable:
+
+.. code-block:: console
+
+    $ MAKE=gmake pip install pynacl
+
 Changelog
 =========
+
+1.6.1 (2025-11-10)
+------------------
+* The ``MAKE`` environment variable can now be used to specify the ``make``
+  binary that should be used in the build process.
 
 1.6.0 (2025-09-11)
 ------------------

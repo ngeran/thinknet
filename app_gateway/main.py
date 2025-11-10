@@ -33,6 +33,7 @@ from app_gateway.api.routers import (
     jsnapy_runner,  # Dedicated JSNapy job runner
     file_uploader,  # File upload handling
     code_upgrade,  # Device code upgrade operations with pre-check
+    pre_checks,  # PreChecks for code upgrade validation
 )
 
 from .core.config import settings
@@ -106,7 +107,9 @@ app.add_middleware(
         # "http://localhost", # If testing directly from localhost without a specific port
     ],
     allow_credentials=True,  # Allow cookies and HTTP authentication headers to be sent.
-    allow_methods=["*"],  # Allow all HTTP methods (GET, POST, PUT, DELETE, OPTIONS, etc.).
+    allow_methods=[
+        "*"
+    ],  # Allow all HTTP methods (GET, POST, PUT, DELETE, OPTIONS, etc.).
     allow_headers=["*"],  # Allow all request headers.
 )
 
@@ -141,9 +144,13 @@ try:
     elif hasattr(code_upgrade, "router"):
         # Fallback to a generic 'router' alias if found, assuming it also defines its prefix.
         app.include_router(code_upgrade.router)
-        logger.info("✅ Registered generic 'router' alias for code_upgrade without an additional prefix.")
+        logger.info(
+            "✅ Registered generic 'router' alias for code_upgrade without an additional prefix."
+        )
     else:
-        logger.warning("⚠️ No specific code upgrade router ('code_upgrade_router' or 'router') found for registration.")
+        logger.warning(
+            "⚠️ No specific code upgrade router ('code_upgrade_router' or 'router') found for registration."
+        )
 except Exception as e:
     logger.error(f"❌ Failed to register code upgrade router due to an exception: {e}")
 
@@ -178,6 +185,9 @@ logger.info("✅ Registered configuration_deployment router with prefix /api")
 app.include_router(file_uploader.router, prefix="/api")
 logger.info("✅ Registered file_uploader router with prefix /api")
 
+app.include_router(pre_checks.router, prefix="/api")
+logger.info("✅ Registered pre_checks router with prefix /api")
+
 logger.info("🎉 All specified routers have been processed for registration.")
 
 
@@ -204,9 +214,13 @@ async def debug_routes():
         route_info = {
             "path": getattr(route, "path", None),
             "name": getattr(route, "name", None),
-            "methods": list(getattr(route, "methods", [])) if hasattr(route, "methods") else None,
+            "methods": list(getattr(route, "methods", []))
+            if hasattr(route, "methods")
+            else None,
         }
-        if route_info["path"] is not None: # Filter out non-endpoint routes like Swagger UI assets
+        if (
+            route_info["path"] is not None
+        ):  # Filter out non-endpoint routes like Swagger UI assets
             routes.append(route_info)
 
     # Sort routes by path for easier readability and debugging.
@@ -264,9 +278,13 @@ def health_check():
 # =============================================================================
 # APPLICATION STARTUP COMPLETE
 # =============================================================================
-logger.info("🚀 FastAPI application initialization complete. Gateway is ready to serve requests.")
+logger.info(
+    "🚀 FastAPI application initialization complete. Gateway is ready to serve requests."
+)
 logger.info("📚 API Documentation available at: http://localhost:8000/docs")
-logger.info("💡 Interactive API Explorer (ReDoc) available at: http://localhost:8000/redoc")
+logger.info(
+    "💡 Interactive API Explorer (ReDoc) available at: http://localhost:8000/redoc"
+)
 logger.info("🔧 Debug routes endpoint available at: http://localhost:8000/debug/routes")
 
 # =============================================================================
