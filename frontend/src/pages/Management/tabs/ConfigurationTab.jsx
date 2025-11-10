@@ -17,8 +17,6 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { CheckCircle, Shield, ArrowRight, Loader2, AlertTriangle } from 'lucide-react';
 import CodeUpgradeForm from '@/forms/CodeUpgradeForm';
 import SelectImageRelease from '@/forms/SelectImageRelease';
-import DebugPanel from '../debug/DebugPanel';
-import WebSocketInspector from '../debug/WebSocketInspector';
  
 /**
  * Configuration Tab Component
@@ -47,8 +45,6 @@ export default function ConfigurationTab({
   isFormValid,
   isRunning,
   isConnected,
-  debugState,
-  debugHandlers,
   jobOutput,
 }) {
   return (
@@ -170,22 +166,6 @@ export default function ConfigurationTab({
             )}
           </CardContent>
         </Card>
- 
-        {/* ==================================================================
-            DEBUG PANEL
-            ================================================================== */}
-        <DebugPanel
-          state={debugState}
-          onLogState={debugHandlers.onLogState}
-          onForceReview={debugHandlers.onForceReview}
-          onNavigateReview={debugHandlers.onNavigateReview}
-          onCheckWebSocket={debugHandlers.onCheckWebSocket}
-        />
- 
-        {/* ==================================================================
-            WEBSOCKET MESSAGE INSPECTOR
-            ================================================================== */}
-        <WebSocketInspector jobOutput={jobOutput} />
  
       </div>
     </div>

@@ -5,19 +5,25 @@
  *
  * Pre-check results review interface.
  *
- * CRITICAL FIX: The loading state now checks if the job is finished but failed
- * (using isRunningPreCheck and jobStatus) to display a failure message,
- * preventing the UI from being stuck on the spinner.
+ * VERSION: 2.2.0 - Simplified Error Display with Original Format
+ * AUTHOR: nikos-geranios_vgi
+ * DATE: 2025-11-05
+ * LAST UPDATED: 2025-11-10
+ *
+ * CRITICAL FIXES (v2.2.0):
+ * - Maintained original three-column layout for success cases
+ * - Simplified error display without troubleshooting guides
+ * - Enhanced error handling for connection failures
+ * - Added support for error_occurred flag in summary
  *
  * @module components/tabs/ReviewTab
- * @author nikos-geranios_vgi
- * @date 2025-11-05
  */
 
 import React from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Loader2, Bug, XCircle } from 'lucide-react'; // Added XCircle for error
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Loader2, Bug, XCircle, AlertCircle } from 'lucide-react';
 
 import ReviewHeader from "./ReviewHeader";
 import CriticalIssuesColumn from "../review/CriticalIssuesColumn";
@@ -42,16 +48,18 @@ import ReviewActions from "../review/ReviewActions";
 export default function ReviewTab({
   preCheckSummary,
   isConnected,
-  jobStatus, // <-- NEW PROP for robust state checking
-  isRunningPreCheck, // <-- NEW PROP for robust state checking
+  jobStatus,
+  isRunningPreCheck,
   onProceedWithUpgrade,
   onCancel,
   onForceReview,
 }) {
+
   // ========================================================================
-  // CASE 1: Pre-check summary is available (SUCCESS or partial FAILURE results)
+  // CASE 1: Pre-check summary is available (SUCCESS or FAILURE with results)
+  // Uses original three-column layout
   // ========================================================================
-  if (preCheckSummary) {
+  if (preCheckSummary && !preCheckSummary.error_occurred) {
     // Categorize results by severity
     const criticalChecks = preCheckSummary.results.filter(r => r.severity === 'critical');
     const warningChecks = preCheckSummary.results.filter(r => r.severity === 'warning');
@@ -82,74 +90,150 @@ export default function ReviewTab({
   }
 
   // ========================================================================
-  // CASE 2: Job FAILED and no summary received
-  // This handles the state where OPERATION_COMPLETE (FAILED) is received,
-  // isRunningPreCheck is false, but preCheckSummary is null, preventing the
-  // stuck loading spinner issue.
+  // CASE 2: ERROR STATE - Job FAILED with error summary
+  // This handles connection failures, reachability issues, and timeouts.
+  // Simplified display without troubleshooting steps.
   // ========================================================================
-  if (!isRunningPreCheck && jobStatus === 'failed') {
-    return (
-      <Card>
-        <CardContent className="pt-6">
-          <div className="text-center py-12">
-            <XCircle className="h-12 w-12 mx-auto text-red-500 mb-4" />
-            <p className="text-lg font-semibold text-red-700 mb-2">
-              Pre-check Job Failed Unexpectedly
-            </p>
-            <p className="text-muted-foreground mb-4">
-              The pre-check operation terminated with an error before compiling the final results.
-              Please check the **Monitor** tab for detailed logs to troubleshoot the issue.
-            </p>
+  if (
+    (preCheckSummary?.error_occurred) ||
+    (!isRunningPreCheck && jobStatus === 'failed' && !preCheckSummary) ||
+    (!isRunningPreCheck && jobStatus === 'failed' && preCheckSummary?.error_occurred)
+  ) {
+    const errorType = preCheckSummary?.error_type || "UNKNOWN_ERROR";
+    const isTimeoutError = errorType === "TIMEOUT";
+    const isConnectionError = errorType === "CONNECTION_ERROR";
+    const errorResult = preCheckSummary?.results?.[0];
 
-            {/* Action buttons to only allow Cancel/Reset or Debugging */}
-            <ReviewActions
-              summary={{ can_proceed: false, warnings: 0, results: [] }} // Dummy summary to force CANCEL/failure state in ReviewActions
-              isConnected={isConnected}
-              onCancel={onCancel}
-              onProceed={onProceedWithUpgrade}
-            />
-            {/* Debug button for testing */}
-            <Button
-              onClick={onForceReview}
-              variant="outline"
-              className="mt-4"
-              size="sm"
-            >
-              <Bug className="h-3 w-3 mr-2" />
-              Debug: Force Load Test Results
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+    return (
+      <div className="space-y-6 max-w-4xl mx-auto">
+
+        {/* ================================================================
+            ERROR DISPLAY CARD
+            ================================================================ */}
+        <Card className="border-red-200">
+          <CardContent className="pt-6">
+            <div className="text-center py-8">
+              <XCircle className="h-16 w-16 mx-auto text-red-500 mb-4" />
+              <h2 className="text-2xl font-bold text-red-700 mb-2">
+                {isTimeoutError && "Pre-Check Operation Timed Out"}
+                {isConnectionError && "Device Connection Failed"}
+                {!isTimeoutError && !isConnectionError && "Pre-Check Operation Failed"}
+              </h2>
+              <p className="text-muted-foreground mb-6">
+                The pre-check validation could not complete successfully.
+              </p>
+
+              {/* ============================================================
+                  ERROR DETAILS SECTION
+                  ============================================================ */}
+              {errorResult && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-5 mb-6 text-left max-w-2xl mx-auto">
+                  <div className="flex items-start gap-4">
+                    <AlertCircle className="h-6 w-6 text-red-600 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <h3 className="font-semibold text-red-900 text-lg mb-2">
+                        {errorResult.check_name}
+                      </h3>
+                      <p className="text-sm text-red-800 mb-3 leading-relaxed">
+                        {errorResult.message}
+                      </p>
+                      {errorResult.details && (
+                        <div className="bg-white/60 border border-red-200 rounded p-3">
+                          <p className="text-xs text-red-700 leading-relaxed">
+                            <strong>Details:</strong> {errorResult.details}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ============================================================
+                  GENERIC ERROR MESSAGE (when no specific error result)
+                  ============================================================ */}
+              {!errorResult && (
+                <Alert variant="destructive" className="mb-6 max-w-2xl mx-auto text-left">
+                  <XCircle className="h-4 w-4" />
+                  <AlertTitle>Operation Failed</AlertTitle>
+                  <AlertDescription>
+                    The pre-check operation terminated unexpectedly without providing detailed error information.
+                    Please check the Execution tab for logs and technical details.
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {/* ============================================================
+                  ACTION BUTTONS
+                  ============================================================ */}
+              <div className="max-w-2xl mx-auto">
+                <ReviewActions
+                  summary={{ can_proceed: false, warnings: 0, results: [] }}
+                  isConnected={isConnected}
+                  onCancel={onCancel}
+                  onProceed={onProceedWithUpgrade}
+                />
+              </div>
+
+              {/* Debug button for testing (only in development) */}
+              {process.env.NODE_ENV === 'development' && (
+                <div className="mt-6">
+                  <Button
+                    onClick={onForceReview}
+                    variant="outline"
+                    size="sm"
+                  >
+                    <Bug className="h-3 w-3 mr-2" />
+                    Debug: Force Load Test Results
+                  </Button>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     );
   }
 
-
   // ========================================================================
-  // CASE 3: Loading (still running or waiting for first message)
+  // CASE 3: LOADING STATE - Still running or waiting for first message
   // ========================================================================
   return (
     <Card>
       <CardContent className="pt-6">
         <div className="text-center py-12">
           <Loader2 className="h-12 w-12 animate-spin mx-auto text-muted-foreground mb-4" />
-          <p className="text-muted-foreground mb-4">
+          <p className="text-lg font-medium text-muted-foreground mb-2">
             Loading pre-check results...
           </p>
-          <p className="text-sm text-gray-500 mb-4">
-            If results don't appear, check the WebSocket Message Inspector in the Configuration tab
+          <p className="text-sm text-gray-500 mb-6">
+            Waiting for validation to complete and results to be compiled.
           </p>
 
-          {/* Debug button for testing */}
-          <Button
-            onClick={onForceReview}
-            variant="outline"
-            className="mt-4"
-            size="sm"
-          >
-            <Bug className="h-3 w-3 mr-2" />
-            Debug: Force Load Test Results
-          </Button>
+          {/* Help text for troubleshooting loading issues */}
+          <div className="max-w-md mx-auto bg-gray-50 border border-gray-200 rounded-lg p-4">
+            <p className="text-xs text-gray-600 mb-2">
+              <strong>If results don't appear:</strong>
+            </p>
+            <ul className="text-xs text-left text-gray-600 space-y-1">
+              <li>• Check the <strong>Execution Tab</strong> for progress updates</li>
+              <li>• Verify WebSocket connection status in Configuration tab</li>
+              <li>• Results should appear within 1-2 minutes</li>
+            </ul>
+          </div>
+
+          {/* Debug button for testing (only in development) */}
+          {process.env.NODE_ENV === 'development' && (
+            <Button
+              onClick={onForceReview}
+              variant="outline"
+              className="mt-6"
+              size="sm"
+            >
+              <Bug className="h-3 w-3 mr-2" />
+              Debug: Force Load Test Results
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>

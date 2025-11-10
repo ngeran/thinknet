@@ -368,35 +368,6 @@ export default function CodeUpgrades() {
   }, [upgradeParams]);
 
   // ==========================================================================
-  // DEBUG HANDLERS FOR COMPONENTS
-  // ==========================================================================
-
-  const debugHandlers = {
-    onLogState: logCurrentState,
-    onForceReview: forceReviewTab,
-    onNavigateReview: () => setActiveTab("review"),
-    onCheckWebSocket: () => {
-      console.log("[DEBUG] WebSocket Status:", {
-        isConnected,
-        wsChannel,
-        jobId,
-        lastMessageLength: lastMessage?.length
-      });
-    },
-  };
-
-  const debugState = {
-    preCheckSummary,
-    isConnected,
-    activeTab,
-    currentPhase,
-    jobStatus,
-    canProceedWithUpgrade,
-    jobId,
-    wsChannel,
-  };
-
-  // ==========================================================================
   // RENDER
   // ==========================================================================
 
@@ -464,8 +435,6 @@ export default function CodeUpgrades() {
             isFormValid={isFormValid}
             isRunning={isRunning}
             isConnected={isConnected}
-            debugState={debugState}
-            debugHandlers={debugHandlers}
             jobOutput={jobOutput}
           />
         </TabsContent>

@@ -1,12 +1,18 @@
 /**
  * =============================================================================
- * EXECUTION TAB - FIXED EVENT DETECTION
+ * EXECUTION TAB - ENHANCED ERROR VISIBILITY
  * =============================================================================
  *
- * VERSION: 2.2.0 - Fixed Event Type Detection
- * AUTHOR: nikos-geranios_vgi
+ * VERSION: 2.3.0 - Enhanced Error Display and Visibility
+ * AUTHOR: nikos
  * DATE: 2025-11-07
- * LAST UPDATED: 2025-11-07 16:10:57 UTC
+ * LAST UPDATED: 2025-11-10
+ *
+ * CRITICAL UPDATES (v2.3.0):
+ * - Added prominent error summary card at top
+ * - Enhanced error message display with filtering
+ * - Improved visual hierarchy for failed operations
+ * - Added quick navigation to technical details
  */
 
 import React, { useEffect } from 'react';
@@ -62,12 +68,12 @@ export default function ExecutionTab({
   }, [jobOutput.length]);
 
   // ===========================================================================
-  // SUBSECTION 1.2: FILTER STRUCTURED STEPS (FIXED)
+  // SUBSECTION 1.2: FILTER STRUCTURED STEPS
   // ===========================================================================
 
   /**
-   * CRITICAL FIX: Show ALL messages that have useful content
-   * Don't filter by event_type since we're seeing OPERATION_COMPLETE but not STEP_COMPLETE
+   * Show ALL messages that have useful content.
+   * Includes STEP_COMPLETE, OPERATION_START, OPERATION_COMPLETE, and LOG_MESSAGE with step info.
    */
   const structuredSteps = jobOutput.filter(entry => {
     // Include any message that looks like a step
@@ -96,6 +102,13 @@ export default function ExecutionTab({
    */
   const allMessages = jobOutput;
 
+  /**
+   * Extract error messages for prominent display
+   */
+  const errorMessages = jobOutput.filter(
+    msg => msg.level === 'error' || msg.level === 'ERROR'
+  );
+
   // ===========================================================================
   // SUBSECTION 1.3: DEBUG LOG FILTERED RESULTS
   // ===========================================================================
@@ -105,7 +118,10 @@ export default function ExecutionTab({
     if (structuredSteps.length > 0) {
       console.log("[EXECUTION_TAB] First structured step:", structuredSteps[0]);
     }
-  }, [structuredSteps.length]);
+    if (errorMessages.length > 0) {
+      console.log("[EXECUTION_TAB] Error messages count:", errorMessages.length);
+    }
+  }, [structuredSteps.length, errorMessages.length]);
 
   // ===========================================================================
   // SUBSECTION 1.4: AUTO-SCROLL EFFECT
@@ -222,7 +238,83 @@ export default function ExecutionTab({
     <div className="space-y-6">
 
       {/* ===================================================================
-          SUBSECTION 2.1: PROGRESS OVERVIEW CARD
+          SUBSECTION 2.1: ERROR SUMMARY CARD (NEW - v2.3.0)
+          =================================================================== */}
+      {hasError && errorMessages.length > 0 && (
+        <Card className="border-red-200 bg-red-50 shadow-md">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-red-700">
+              <XCircle className="h-5 w-5" />
+              Operation Failed - Error Details
+            </CardTitle>
+            <CardDescription className="text-red-600">
+              The {currentPhase === 'pre_check' ? 'pre-check validation' : 'upgrade operation'}
+              encountered critical errors and could not complete.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {errorMessages.slice(-3).map((msg, i) => (
+                <div
+                  key={i}
+                  className="bg-white border-2 border-red-300 rounded-lg p-4 shadow-sm"
+                >
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-2">
+                        <p className="text-xs text-red-500 font-medium">
+                          {new Date(msg.timestamp).toLocaleTimeString('en-US', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            second: '2-digit'
+                          })}
+                        </p>
+                        <Badge variant="destructive" className="text-xs h-5">
+                          {msg.event_type}
+                        </Badge>
+                      </div>
+                      <p className="text-sm text-red-800 font-mono break-words leading-relaxed">
+                        {msg.message}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+
+              {errorMessages.length > 3 && (
+                <p className="text-xs text-red-600 text-center">
+                  Showing {Math.min(3, errorMessages.length)} of {errorMessages.length} error messages
+                </p>
+              )}
+
+              <div className="pt-2 flex gap-2">
+                <Button
+                  onClick={onToggleTechnicalDetails}
+                  variant="outline"
+                  size="sm"
+                  className="border-red-300 hover:bg-red-100"
+                >
+                  {showTechnicalDetails ? (
+                    <>
+                      <EyeOff className="h-4 w-4 mr-2" />
+                      Hide Full Log
+                    </>
+                  ) : (
+                    <>
+                      <Eye className="h-4 w-4 mr-2" />
+                      View Full Technical Log
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ===================================================================
+          SUBSECTION 2.2: PROGRESS OVERVIEW CARD
           =================================================================== */}
       <Card>
         <CardHeader>
@@ -266,18 +358,21 @@ export default function ExecutionTab({
           )}
 
           {/* DEBUG INFO */}
-          <div className="pt-2 border-t bg-yellow-50 p-2 rounded">
-            <p className="text-xs text-yellow-800">
-              <strong>Debug:</strong> Total messages: {jobOutput.length} |
-              Structured steps: {structuredSteps.length} |
-              Event types: {[...new Set(jobOutput.map(e => e.event_type))].join(', ')}
-            </p>
-          </div>
+          {process.env.NODE_ENV === 'development' && (
+            <div className="pt-2 border-t bg-yellow-50 p-2 rounded">
+              <p className="text-xs text-yellow-800">
+                <strong>Debug:</strong> Total messages: {jobOutput.length} |
+                Structured steps: {structuredSteps.length} |
+                Errors: {errorMessages.length} |
+                Event types: {[...new Set(jobOutput.map(e => e.event_type))].join(', ')}
+              </p>
+            </div>
+          )}
         </CardContent>
       </Card>
 
       {/* ===================================================================
-          SUBSECTION 2.2: STRUCTURED STEPS DISPLAY
+          SUBSECTION 2.3: STRUCTURED STEPS DISPLAY
           =================================================================== */}
       <Card>
         <CardHeader>
@@ -328,9 +423,11 @@ export default function ExecutionTab({
                     <Loader2 className="h-8 w-8 animate-spin mx-auto mb-3" />
                     <p className="text-sm font-medium">Starting validation...</p>
                     <p className="text-xs mt-1">Connecting to device and initializing checks</p>
-                    <p className="text-xs mt-2 text-yellow-600">
-                      ({jobOutput.length} messages received - check Technical Details)
-                    </p>
+                    {process.env.NODE_ENV === 'development' && (
+                      <p className="text-xs mt-2 text-yellow-600">
+                        ({jobOutput.length} messages received - check Technical Details)
+                      </p>
+                    )}
                   </div>
                 )}
 
@@ -475,7 +572,9 @@ export default function ExecutionTab({
         </CardContent>
       </Card>
 
-      {/* Status Summary */}
+      {/* ===================================================================
+          SUBSECTION 2.4: STATUS SUMMARY (Success/Failure)
+          =================================================================== */}
       {(isComplete || hasError) && structuredSteps.length > 0 && (
         <Card className={hasError ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'}>
           <CardContent className="pt-6">
