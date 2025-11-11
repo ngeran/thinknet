@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * PRE-CHECK SELECTOR COMPONENT (REUSABLE)
+ * PRE-CHECK SELECTOR COMPONENT - MODERN REDESIGN
  * =============================================================================
  *
  * Reusable checkbox group for selecting pre-upgrade validation checks.
@@ -9,19 +9,16 @@
  * LOCATION: /src/shared/PreCheckSelector.jsx
  * AUTHOR: nikos-geranios_vgi
  * DATE: 2025-11-10
- * VERSION: 1.0.0
+ * VERSION: 2.1.0 - Added Collapsible Categories
  *
- * FEATURES:
- * - Dynamic check loading from backend API
- * - Grouped by category with visual organization
- * - Required checks are pre-selected and disabled
- * - Tooltips for user guidance
- * - Loading and error states
- * - Fully reusable across forms
+ * UPDATES:
+ * - Added collapsible category sections (default closed)
+ * - Show selection count per category when collapsed
+ * - Modern black & white design matching ConfigurationTab
+ * - Compact, space-efficient layout
  *
  * =============================================================================
  */
-
 import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -41,54 +38,42 @@ import {
   Lock,
   Clock,
   CheckCircle2,
-  XCircle
+  XCircle,
+  Layers,
+  ChevronDown,
+  ChevronRight
 } from 'lucide-react';
 
 // =============================================================================
-// SECTION 1: MAIN COMPONENT
+// MAIN COMPONENT
 // =============================================================================
 
-/**
- * PreCheckSelector Component
- *
- * @param {Object} props
- * @param {Array<string>} props.selectedChecks - Array of selected check IDs
- * @param {Function} props.onChange - Callback when selection changes (checkIds: string[])
- * @param {boolean} props.disabled - Disable all checkboxes
- * @param {string} props.className - Additional CSS classes
- */
 export default function PreCheckSelector({
   selectedChecks = [],
   onChange,
   disabled = false,
   className = '',
 }) {
-
   // ===========================================================================
-  // SUBSECTION 1.1: STATE MANAGEMENT
+  // STATE MANAGEMENT
   // ===========================================================================
-
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [config, setConfig] = useState(null);
   const [groupedChecks, setGroupedChecks] = useState({});
+  const [expandedCategories, setExpandedCategories] = useState({});
 
   // ===========================================================================
-  // SUBSECTION 1.2: FETCH CONFIGURATION
+  // FETCH CONFIGURATION
   // ===========================================================================
-
   useEffect(() => {
     fetchPreCheckConfig();
   }, []);
 
-  /**
-   * Fetch pre-check configuration from backend
-   */
   const fetchPreCheckConfig = async () => {
     try {
       setLoading(true);
       setError(null);
-
       const response = await fetch('/api/pre-checks/config', {
         credentials: 'include',
       });
@@ -104,6 +89,13 @@ export default function PreCheckSelector({
       const grouped = groupChecksByCategory(data.checks, data.categories);
       setGroupedChecks(grouped);
 
+      // Initialize all categories as collapsed
+      const initialExpanded = {};
+      Object.keys(grouped).forEach(categoryId => {
+        initialExpanded[categoryId] = false;
+      });
+      setExpandedCategories(initialExpanded);
+
       // Initialize selection with required checks and defaults
       const initialSelection = data.checks
         .filter(check => check.required || check.enabled_by_default)
@@ -112,7 +104,6 @@ export default function PreCheckSelector({
       if (onChange && selectedChecks.length === 0) {
         onChange(initialSelection);
       }
-
     } catch (err) {
       console.error('[PRE_CHECK_SELECTOR] Failed to fetch config:', err);
       setError(err.message);
@@ -121,13 +112,8 @@ export default function PreCheckSelector({
     }
   };
 
-  /**
-   * Group checks by category for organized display
-   */
   const groupChecksByCategory = (checks, categories) => {
     const grouped = {};
-
-    // Sort categories by order
     const sortedCategories = Object.entries(categories || {})
       .sort(([, a], [, b]) => a.order - b.order);
 
@@ -142,12 +128,34 @@ export default function PreCheckSelector({
   };
 
   // ===========================================================================
-  // SUBSECTION 1.3: SELECTION HANDLERS
+  // CATEGORY COLLAPSE HANDLERS
   // ===========================================================================
+  const toggleCategory = (categoryId) => {
+    setExpandedCategories(prev => ({
+      ...prev,
+      [categoryId]: !prev[categoryId]
+    }));
+  };
 
-  /**
-   * Handle check selection toggle
-   */
+  const expandAll = () => {
+    const allExpanded = {};
+    Object.keys(groupedChecks).forEach(categoryId => {
+      allExpanded[categoryId] = true;
+    });
+    setExpandedCategories(allExpanded);
+  };
+
+  const collapseAll = () => {
+    const allCollapsed = {};
+    Object.keys(groupedChecks).forEach(categoryId => {
+      allCollapsed[categoryId] = false;
+    });
+    setExpandedCategories(allCollapsed);
+  };
+
+  // ===========================================================================
+  // SELECTION HANDLERS
+  // ===========================================================================
   const handleCheckToggle = (checkId, isRequired) => {
     if (disabled || isRequired) return;
 
@@ -158,90 +166,75 @@ export default function PreCheckSelector({
     onChange(newSelection);
   };
 
-  /**
-   * Select all available checks
-   */
   const handleSelectAll = () => {
     if (disabled) return;
-
     const allCheckIds = config.checks
       .filter(check => check.available)
       .map(check => check.id);
-
     onChange(allCheckIds);
   };
 
-  /**
-   * Select only required checks
-   */
   const handleSelectRequired = () => {
     if (disabled) return;
-
     const requiredCheckIds = config.checks
       .filter(check => check.required)
       .map(check => check.id);
-
     onChange(requiredCheckIds);
   };
 
   // ===========================================================================
-  // SUBSECTION 1.4: HELPER FUNCTIONS
+  // HELPER FUNCTIONS
   // ===========================================================================
-
-  /**
-   * Get severity badge styling
-   */
   const getSeverityBadge = (severity) => {
     const styles = {
-      critical: { variant: 'destructive', icon: XCircle },
-      warning: { variant: 'outline', icon: AlertTriangle, className: 'border-yellow-500 text-yellow-700' },
-      pass: { variant: 'outline', icon: CheckCircle2, className: 'border-green-500 text-green-700' },
+      critical: { icon: XCircle, className: 'bg-black text-white border-black' },
+      warning: { icon: AlertTriangle, className: 'bg-gray-200 text-gray-900 border-gray-400' },
+      pass: { icon: CheckCircle2, className: 'bg-gray-100 text-gray-700 border-gray-300' },
     };
-
     const style = styles[severity] || styles.pass;
     const Icon = style.icon;
-
     return (
-      <Badge variant={style.variant} className={`text-xs ${style.className || ''}`}>
+      <Badge variant="outline" className={`text-xs font-medium ${style.className}`}>
         <Icon className="h-3 w-3 mr-1" />
         {severity.toUpperCase()}
       </Badge>
     );
   };
 
-  /**
-   * Calculate total estimated duration
-   */
   const getTotalDuration = () => {
     if (!config) return 0;
-
     return config.checks
       .filter(check => selectedChecks.includes(check.id))
       .reduce((total, check) => total + check.estimated_duration_seconds, 0);
   };
 
+  const getCategoryStats = (category) => {
+    const totalInCategory = category.checks.length;
+    const selectedInCategory = category.checks.filter(c =>
+      selectedChecks.includes(c.id)
+    ).length;
+    return { total: totalInCategory, selected: selectedInCategory };
+  };
+
   // =============================================================================
-  // SECTION 2: RENDER STATES
+  // RENDER STATES
   // =============================================================================
 
-  // ===========================================================================
-  // SUBSECTION 2.1: LOADING STATE
-  // ===========================================================================
-
+  // Loading State
   if (loading) {
     return (
-      <Card className={className}>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
+      <Card className={`border-2 border-gray-200 ${className}`}>
+        <CardHeader className="pb-4">
+          <CardTitle className="flex items-center gap-2 text-lg">
             <Loader2 className="h-5 w-5 animate-spin" />
-            Loading Pre-Check Options...
+            Loading Validation Checks
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-3">
           {[1, 2, 3].map(i => (
             <div key={i} className="space-y-2">
-              <Skeleton className="h-4 w-32" />
-              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-4 w-32 bg-gray-200" />
+              <Skeleton className="h-16 w-full bg-gray-100" />
             </div>
           ))}
         </CardContent>
@@ -249,17 +242,14 @@ export default function PreCheckSelector({
     );
   }
 
-  // ===========================================================================
-  // SUBSECTION 2.2: ERROR STATE
-  // ===========================================================================
-
+  // Error State
   if (error) {
     return (
-      <Card className={className}>
+      <Card className={`border-2 border-black ${className}`}>
         <CardContent className="pt-6">
-          <Alert variant="destructive">
+          <Alert variant="destructive" className="border-2 border-black">
             <AlertTriangle className="h-4 w-4" />
-            <AlertDescription>
+            <AlertDescription className="font-medium">
               {error}
             </AlertDescription>
           </Alert>
@@ -268,163 +258,208 @@ export default function PreCheckSelector({
     );
   }
 
-  // ===========================================================================
-  // SUBSECTION 2.3: MAIN RENDER
-  // ===========================================================================
-
+  // Main Render
   const totalDuration = getTotalDuration();
   const selectedCount = selectedChecks.length;
   const totalCount = config?.checks.filter(c => c.available).length || 0;
+  const requiredCount = config?.checks.filter(c => c.required).length || 0;
 
   return (
-    <Card className={className}>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <CheckCircle2 className="h-5 w-5 text-blue-600" />
-              Pre-Check Validation Selection
+    <Card className={`border-2 border-black shadow-lg ${className}`}>
+      <CardHeader className="pb-4 bg-gradient-to-r from-gray-50 to-white border-b-2 border-gray-200">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex-1">
+            <CardTitle className="flex items-center gap-2 text-xl font-bold tracking-tight mb-2">
+              <div className="p-1.5 bg-black rounded">
+                <Layers className="h-5 w-5 text-white" />
+              </div>
+              Validation Checks
             </CardTitle>
-            <CardDescription>
-              Choose which validation checks to run before upgrade
+            <CardDescription className="text-sm">
+              Select pre-upgrade validations to ensure system readiness
             </CardDescription>
           </div>
-          <div className="text-right">
-            <div className="text-sm font-medium">
-              {selectedCount} / {totalCount} selected
+
+          {/* Stats Panel */}
+          <div className="flex gap-3">
+            <div className="text-center px-4 py-2 bg-white border-2 border-black rounded-lg">
+              <div className="text-2xl font-bold">{selectedCount}</div>
+              <div className="text-xs text-gray-600 uppercase tracking-wide">Selected</div>
             </div>
             {totalDuration > 0 && (
-              <div className="text-xs text-muted-foreground flex items-center gap-1">
-                <Clock className="h-3 w-3" />
-                ~{totalDuration}s estimated
+              <div className="text-center px-4 py-2 bg-gray-900 text-white border-2 border-black rounded-lg">
+                <div className="text-2xl font-bold">~{totalDuration}s</div>
+                <div className="text-xs uppercase tracking-wide opacity-80">Duration</div>
               </div>
             )}
           </div>
         </div>
 
         {/* Quick Actions */}
-        <div className="flex gap-2 pt-2">
+        <div className="flex items-center gap-3 mt-4 pt-4 border-t border-gray-200">
+          <span className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Quick:</span>
           <button
             onClick={handleSelectAll}
             disabled={disabled}
-            className="text-xs text-blue-600 hover:text-blue-800 underline disabled:opacity-50"
+            className="text-xs font-semibold px-3 py-1 bg-white border-2 border-black rounded hover:bg-black hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            Select All
+            All ({totalCount})
           </button>
-          <span className="text-xs text-muted-foreground">•</span>
           <button
             onClick={handleSelectRequired}
             disabled={disabled}
-            className="text-xs text-blue-600 hover:text-blue-800 underline disabled:opacity-50"
+            className="text-xs font-semibold px-3 py-1 bg-white border-2 border-black rounded hover:bg-black hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            Required Only
+            Required ({requiredCount})
+          </button>
+          <div className="flex-1" />
+          <button
+            onClick={expandAll}
+            className="text-xs font-semibold px-3 py-1 bg-white border border-gray-300 rounded hover:border-black transition-colors"
+          >
+            Expand All
+          </button>
+          <button
+            onClick={collapseAll}
+            className="text-xs font-semibold px-3 py-1 bg-white border border-gray-300 rounded hover:border-black transition-colors"
+          >
+            Collapse All
           </button>
         </div>
       </CardHeader>
 
-      <CardContent>
+      <CardContent className="pt-6">
         <TooltipProvider>
-          <div className="space-y-6">
-
+          <div className="space-y-3">
             {/* ============================================================
-                CATEGORY GROUPS
+                COLLAPSIBLE CATEGORY GROUPS
                 ============================================================ */}
             {Object.entries(groupedChecks).map(([categoryId, category]) => {
               if (category.checks.length === 0) return null;
 
+              const { total, selected } = getCategoryStats(category);
+              const isExpanded = expandedCategories[categoryId];
+
               return (
-                <div key={categoryId} className="space-y-3">
-                  {/* Category Header */}
-                  <div className="flex items-center gap-2 pb-2 border-b">
-                    <h4 className="font-semibold text-sm text-muted-foreground">
-                      {category.display_name}
-                    </h4>
-                    <Badge variant="outline" className="text-xs">
-                      {category.checks.length}
-                    </Badge>
-                  </div>
+                <div key={categoryId} className="border-2 border-gray-300 rounded-lg overflow-hidden">
+                  {/* Category Header - Clickable */}
+                  <button
+                    onClick={() => toggleCategory(categoryId)}
+                    className="w-full flex items-center justify-between p-4 bg-gradient-to-r from-gray-50 to-white hover:from-gray-100 hover:to-gray-50 transition-colors"
+                  >
+                    <div className="flex items-center gap-3">
+                      {isExpanded ? (
+                        <ChevronDown className="h-5 w-5 text-gray-700" />
+                      ) : (
+                        <ChevronRight className="h-5 w-5 text-gray-700" />
+                      )}
+                      <h4 className="font-bold text-sm uppercase tracking-wider text-gray-900">
+                        {category.display_name}
+                      </h4>
+                    </div>
 
-                  {/* Category Checks */}
-                  <div className="space-y-2">
-                    {category.checks.map(check => {
-                      const isSelected = selectedChecks.includes(check.id);
-                      const isDisabled = disabled || check.required || !check.available;
+                    <div className="flex items-center gap-2">
+                      <Badge
+                        variant="outline"
+                        className={`text-xs font-bold border-2 ${selected === total
+                            ? 'bg-black text-white border-black'
+                            : selected > 0
+                              ? 'bg-gray-900 text-white border-gray-900'
+                              : 'bg-white text-gray-700 border-gray-400'
+                          }`}
+                      >
+                        {selected} / {total}
+                      </Badge>
+                      {!isExpanded && selected > 0 && (
+                        <CheckCircle2 className="h-4 w-4 text-gray-700" />
+                      )}
+                    </div>
+                  </button>
 
-                      return (
-                        <div
-                          key={check.id}
-                          className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
-                            isSelected
-                              ? 'bg-blue-50 border-blue-200'
-                              : 'bg-gray-50 border-gray-200'
-                          } ${isDisabled ? 'opacity-60' : 'hover:border-blue-300'}`}
-                        >
-                          {/* Checkbox */}
-                          <div className="flex items-center h-5 mt-0.5">
-                            <Checkbox
-                              id={check.id}
-                              checked={isSelected}
-                              onCheckedChange={() => handleCheckToggle(check.id, check.required)}
-                              disabled={isDisabled}
-                            />
-                          </div>
+                  {/* Category Checks - Expandable Content */}
+                  {isExpanded && (
+                    <div className="p-4 bg-white border-t-2 border-gray-200">
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                        {category.checks.map(check => {
+                          const isSelected = selectedChecks.includes(check.id);
+                          const isDisabled = disabled || check.required || !check.available;
 
-                          {/* Check Details */}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-1">
-                              <label
-                                htmlFor={check.id}
-                                className={`text-sm font-medium cursor-pointer ${
-                                  isDisabled ? 'cursor-not-allowed' : ''
-                                }`}
-                              >
-                                {check.name}
-                              </label>
+                          return (
+                            <div
+                              key={check.id}
+                              className={`relative p-3 rounded-lg border-2 transition-all ${isSelected
+                                  ? 'bg-black text-white border-black shadow-md'
+                                  : 'bg-white border-gray-300 hover:border-gray-400'
+                                } ${isDisabled ? 'opacity-50' : 'cursor-pointer'}`}
+                              onClick={() => !isDisabled && handleCheckToggle(check.id, check.required)}
+                            >
+                              {/* Checkbox */}
+                              <div className="flex items-start gap-3">
+                                <div className="flex items-center h-5 mt-0.5">
+                                  <Checkbox
+                                    id={check.id}
+                                    checked={isSelected}
+                                    onCheckedChange={() => handleCheckToggle(check.id, check.required)}
+                                    disabled={isDisabled}
+                                    className={isSelected ? 'border-white' : ''}
+                                  />
+                                </div>
 
-                              {check.required && (
-                                <Tooltip>
-                                  <TooltipTrigger>
-                                    <Lock className="h-3 w-3 text-orange-600" />
-                                  </TooltipTrigger>
-                                  <TooltipContent>Required check - cannot be disabled</TooltipContent>
-                                </Tooltip>
-                              )}
+                                {/* Check Details */}
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <label
+                                      htmlFor={check.id}
+                                      className={`text-sm font-bold ${isDisabled ? 'cursor-not-allowed' : 'cursor-pointer'
+                                        }`}
+                                    >
+                                      {check.name}
+                                    </label>
+                                    {check.required && (
+                                      <Tooltip>
+                                        <TooltipTrigger>
+                                          <Lock className={`h-3 w-3 ${isSelected ? 'text-white' : 'text-gray-900'}`} />
+                                        </TooltipTrigger>
+                                        <TooltipContent>Required - cannot be disabled</TooltipContent>
+                                      </Tooltip>
+                                    )}
+                                    {!check.available && (
+                                      <Badge variant="outline" className="text-xs border-gray-400">
+                                        Soon
+                                      </Badge>
+                                    )}
+                                  </div>
 
-                              {!check.available && (
-                                <Badge variant="outline" className="text-xs">
-                                  Coming Soon
-                                </Badge>
-                              )}
+                                  <p className={`text-xs mb-2 ${isSelected ? 'text-gray-300' : 'text-gray-600'}`}>
+                                    {check.description}
+                                  </p>
+
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    {!isSelected && getSeverityBadge(check.severity)}
+                                    <span className={`text-xs flex items-center gap-1 font-medium ${isSelected ? 'text-gray-300' : 'text-gray-600'
+                                      }`}>
+                                      <Clock className="h-3 w-3" />
+                                      {check.estimated_duration_seconds}s
+                                    </span>
+                                    {check.tooltip && (
+                                      <Tooltip>
+                                        <TooltipTrigger>
+                                          <Info className={`h-3 w-3 ${isSelected ? 'text-white' : 'text-gray-500'}`} />
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                          <p className="text-xs max-w-xs">{check.tooltip}</p>
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
                             </div>
-
-                            <p className="text-xs text-muted-foreground mb-2">
-                              {check.description}
-                            </p>
-
-                            <div className="flex items-center gap-2 flex-wrap">
-                              {getSeverityBadge(check.severity)}
-
-                              <span className="text-xs text-muted-foreground flex items-center gap-1">
-                                <Clock className="h-3 w-3" />
-                                ~{check.estimated_duration_seconds}s
-                              </span>
-
-                              {check.tooltip && (
-                                <Tooltip>
-                                  <TooltipTrigger>
-                                    <Info className="h-3 w-3 text-blue-500" />
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    <p className="text-xs max-w-xs">{check.tooltip}</p>
-                                  </TooltipContent>
-                                </Tooltip>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -433,15 +468,22 @@ export default function PreCheckSelector({
                 SUMMARY INFO
                 ============================================================ */}
             {selectedCount > 0 && (
-              <Alert>
+              <Alert className="border-2 border-black bg-gray-50">
                 <Info className="h-4 w-4" />
-                <AlertDescription className="text-sm">
-                  <strong>{selectedCount} validation check{selectedCount !== 1 ? 's' : ''}</strong> will be performed.
-                  Estimated duration: <strong>~{totalDuration} seconds</strong>
+                <AlertDescription className="text-sm font-medium">
+                  <strong className="font-bold">{selectedCount} check{selectedCount !== 1 ? 's' : ''}</strong> will run in approximately <strong className="font-bold">{totalDuration} seconds</strong>
                 </AlertDescription>
               </Alert>
             )}
 
+            {selectedCount === 0 && (
+              <Alert className="border-2 border-gray-300 bg-gray-50">
+                <AlertTriangle className="h-4 w-4 text-gray-600" />
+                <AlertDescription className="text-sm font-medium text-gray-700">
+                  No checks selected. Please select at least one validation check to continue.
+                </AlertDescription>
+              </Alert>
+            )}
           </div>
         </TooltipProvider>
       </CardContent>

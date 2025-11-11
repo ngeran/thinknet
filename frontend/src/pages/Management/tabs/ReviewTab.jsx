@@ -5,12 +5,14 @@
  *
  * Pre-check results review interface.
  *
- * VERSION: 2.2.0 - Simplified Error Display with Original Format
+ * VERSION: 2.2.1 - Enhanced Backend Error Handling
  * AUTHOR: nikos-geranios_vgi
  * DATE: 2025-11-05
- * LAST UPDATED: 2025-11-10
+ * LAST UPDATED: 2025-11-11
  *
- * CRITICAL FIXES (v2.2.0):
+ * CRITICAL FIXES (v2.2.1):
+ * - Added specific handling for backend API mismatch errors
+ * - Enhanced error type detection for Python function signature errors
  * - Maintained original three-column layout for success cases
  * - Simplified error display without troubleshooting guides
  * - Enhanced error handling for connection failures
@@ -23,7 +25,7 @@ import React from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Loader2, Bug, XCircle, AlertCircle } from 'lucide-react';
+import { Loader2, Bug, XCircle, AlertCircle, Code } from 'lucide-react';
 
 import ReviewHeader from "./ReviewHeader";
 import CriticalIssuesColumn from "../review/CriticalIssuesColumn";
@@ -35,6 +37,7 @@ import ReviewActions from "../review/ReviewActions";
  * Review Tab Component
  *
  * Displays comprehensive pre-check validation results or job failure state.
+ * Handles three main states: Success with results, Error states, and Loading.
  *
  * @param {Object} props
  * @param {Object} props.preCheckSummary - Pre-check summary data (Non-null indicates results are ready)
@@ -56,11 +59,11 @@ export default function ReviewTab({
 }) {
 
   // ========================================================================
-  // CASE 1: Pre-check summary is available (SUCCESS or FAILURE with results)
-  // Uses original three-column layout
+  // CASE 1: SUCCESS STATE - Pre-check summary available with valid results
+  // Uses original three-column layout for comprehensive results display
   // ========================================================================
   if (preCheckSummary && !preCheckSummary.error_occurred) {
-    // Categorize results by severity
+    // Categorize results by severity for column distribution
     const criticalChecks = preCheckSummary.results.filter(r => r.severity === 'critical');
     const warningChecks = preCheckSummary.results.filter(r => r.severity === 'warning');
     const passedChecks = preCheckSummary.results.filter(r => r.severity === 'pass');
@@ -68,17 +71,17 @@ export default function ReviewTab({
     return (
       <div className="space-y-6 max-w-7xl">
 
-        {/* Summary Header */}
+        {/* Summary Header with visual status and statistics */}
         <ReviewHeader summary={preCheckSummary} />
 
-        {/* Three-column detailed results */}
+        {/* Three-column detailed results layout */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <CriticalIssuesColumn criticalChecks={criticalChecks} />
           <WarningsColumn warningChecks={warningChecks} />
           <PassedChecksColumn passedChecks={passedChecks} />
         </div>
 
-        {/* Action buttons and alerts */}
+        {/* Action buttons and connection status alerts */}
         <ReviewActions
           summary={preCheckSummary}
           isConnected={isConnected}
@@ -91,8 +94,8 @@ export default function ReviewTab({
 
   // ========================================================================
   // CASE 2: ERROR STATE - Job FAILED with error summary
-  // This handles connection failures, reachability issues, and timeouts.
-  // Simplified display without troubleshooting steps.
+  // Handles connection failures, backend API errors, timeouts, and generic failures
+  // Enhanced to detect specific backend function signature mismatches
   // ========================================================================
   if (
     (preCheckSummary?.error_occurred) ||
@@ -104,35 +107,94 @@ export default function ReviewTab({
     const isConnectionError = errorType === "CONNECTION_ERROR";
     const errorResult = preCheckSummary?.results?.[0];
 
+    // Enhanced backend error detection - looks for Python function signature mismatches
+    const isBackendApiError = errorResult?.message?.includes('unexpected keyword argument') ||
+      errorResult?.message?.includes('got an unexpected keyword argument');
+    const isBackendError = isBackendApiError || errorType === "BACKEND_ERROR";
+
     return (
       <div className="space-y-6 max-w-4xl mx-auto">
 
         {/* ================================================================
             ERROR DISPLAY CARD
+            Unified error container with specific error type handling
             ================================================================ */}
         <Card className="border-red-200">
           <CardContent className="pt-6">
             <div className="text-center py-8">
-              <XCircle className="h-16 w-16 mx-auto text-red-500 mb-4" />
+
+              {/* Error Icon - Dynamic based on error type */}
+              {isBackendError ? (
+                <Code className="h-16 w-16 mx-auto text-amber-500 mb-4" />
+              ) : (
+                <XCircle className="h-16 w-16 mx-auto text-red-500 mb-4" />
+              )}
+
+              {/* Error Title - Context-specific messaging */}
               <h2 className="text-2xl font-bold text-red-700 mb-2">
+                {isBackendError && "Backend Configuration Error"}
                 {isTimeoutError && "Pre-Check Operation Timed Out"}
                 {isConnectionError && "Device Connection Failed"}
-                {!isTimeoutError && !isConnectionError && "Pre-Check Operation Failed"}
+                {!isBackendError && !isTimeoutError && !isConnectionError && "Pre-Check Operation Failed"}
               </h2>
+
+              {/* Error Description - Tailored to error type */}
               <p className="text-muted-foreground mb-6">
-                The pre-check validation could not complete successfully.
+                {isBackendError
+                  ? "There is a configuration issue with the upgrade system."
+                  : "The pre-check validation could not complete successfully."
+                }
               </p>
 
               {/* ============================================================
-                  ERROR DETAILS SECTION
+                  BACKEND API ERROR SPECIFIC DISPLAY
+                  Handles Python function signature mismatches and backend issues
                   ============================================================ */}
-              {errorResult && (
+              {isBackendError && errorResult && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-5 mb-6 text-left max-w-2xl mx-auto">
+                  <div className="flex items-start gap-4">
+                    <Code className="h-6 w-6 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <h3 className="font-semibold text-amber-900 text-lg mb-2">
+                        Backend API Compatibility Issue
+                      </h3>
+                      <p className="text-sm text-amber-800 mb-3 leading-relaxed">
+                        The frontend and backend versions are incompatible. The system is attempting to use parameters
+                        that the current backend doesn't support.
+                      </p>
+
+                      {/* Technical details for development troubleshooting */}
+                      {errorResult.message && (
+                        <div className="bg-white/60 border border-amber-200 rounded p-3 mb-3">
+                          <p className="text-xs text-amber-700 leading-relaxed font-mono">
+                            <strong>Technical Error:</strong> {errorResult.message}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Resolution guidance */}
+                      <div className="mt-3 p-3 bg-amber-100 border border-amber-300 rounded">
+                        <p className="text-xs text-amber-900">
+                          <strong>Resolution Required:</strong> This is a system configuration issue that requires
+                          backend development attention. Please contact the development team with the error details above.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ============================================================
+                  STANDARD ERROR DISPLAY 
+                  For connection issues, timeouts, and generic failures
+                  ============================================================ */}
+              {!isBackendError && errorResult && (
                 <div className="bg-red-50 border border-red-200 rounded-lg p-5 mb-6 text-left max-w-2xl mx-auto">
                   <div className="flex items-start gap-4">
                     <AlertCircle className="h-6 w-6 text-red-600 flex-shrink-0 mt-0.5" />
                     <div className="flex-1">
                       <h3 className="font-semibold text-red-900 text-lg mb-2">
-                        {errorResult.check_name}
+                        {errorResult.check_name || "Operation Failed"}
                       </h3>
                       <p className="text-sm text-red-800 mb-3 leading-relaxed">
                         {errorResult.message}
@@ -150,7 +212,8 @@ export default function ReviewTab({
               )}
 
               {/* ============================================================
-                  GENERIC ERROR MESSAGE (when no specific error result)
+                  GENERIC ERROR MESSAGE 
+                  Fallback when no specific error result is available
                   ============================================================ */}
               {!errorResult && (
                 <Alert variant="destructive" className="mb-6 max-w-2xl mx-auto text-left">
@@ -165,6 +228,7 @@ export default function ReviewTab({
 
               {/* ============================================================
                   ACTION BUTTONS
+                  Consistent action interface across all error types
                   ============================================================ */}
               <div className="max-w-2xl mx-auto">
                 <ReviewActions
@@ -175,7 +239,10 @@ export default function ReviewTab({
                 />
               </div>
 
-              {/* Debug button for testing (only in development) */}
+              {/* ============================================================
+                  DEBUG TOOLS
+                  Development-only utilities for testing and troubleshooting
+                  ============================================================ */}
               {process.env.NODE_ENV === 'development' && (
                 <div className="mt-6">
                   <Button
@@ -197,12 +264,17 @@ export default function ReviewTab({
 
   // ========================================================================
   // CASE 3: LOADING STATE - Still running or waiting for first message
+  // Provides user feedback during pre-check execution
   // ========================================================================
   return (
     <Card>
       <CardContent className="pt-6">
         <div className="text-center py-12">
+
+          {/* Animated loading indicator */}
           <Loader2 className="h-12 w-12 animate-spin mx-auto text-muted-foreground mb-4" />
+
+          {/* Loading status message */}
           <p className="text-lg font-medium text-muted-foreground mb-2">
             Loading pre-check results...
           </p>

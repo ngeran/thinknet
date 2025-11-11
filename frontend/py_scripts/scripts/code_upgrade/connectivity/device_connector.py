@@ -4,18 +4,25 @@ Device connection management using PyEZ framework.
 Provides robust Junos device connectivity with connection pooling,
 automatic retry mechanisms, and comprehensive error handling for
 reliable network operations during upgrades.
+
+ENHANCEMENTS:
+- Added RPC timeout support for all operations
+- Improved connection health monitoring
+- Better timeout handling for slow/unresponsive devices
+- Fixed type annotation issues for better code reliability
 """
 
 import logging
-from typing import Optional, Dict, Any
+import time
+from typing import Optional, Dict, Any, Tuple
 
 from jnpr.junos import Device
 from jnpr.junos.utils.sw import SW
-from jnpr.junos.exception import ConnectError, RpcError
+from jnpr.junos.exception import ConnectError, RpcError, RpcTimeoutError
 
 from core.constants import (
     DEFAULT_CONNECT_TIMEOUT,
-)  # Fixed: Changed DEFAULT_CONNECTION_TIMEOUT to DEFAULT_CONNECT_TIMEOUT
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +34,12 @@ class DeviceConnector:
     Provides a unified interface for device connectivity, fact gathering,
     and software management operations with automatic connection lifecycle
     management.
+
+    ENHANCEMENTS:
+    - RPC operations include configurable timeouts
+    - Connection health monitoring with response time tracking
+    - Better error messages for timeout scenarios
+    - Fixed type safety issues for improved reliability
     """
 
     def __init__(
@@ -34,7 +47,7 @@ class DeviceConnector:
         hostname: str,
         username: str,
         password: str,
-        timeout: int = DEFAULT_CONNECT_TIMEOUT,  # Fixed here too
+        timeout: int = DEFAULT_CONNECT_TIMEOUT,
     ):
         """
         Initialize device connector with connection parameters.
@@ -49,7 +62,8 @@ class DeviceConnector:
         self.username = username
         self.password = password
         self.timeout = timeout
-        self.device: Optional[Device] = None
+        # Fixed: Simplified type annotation to avoid assignment issues
+        self.device = None  # Will be assigned a Device instance when connected
         self.connected = False
 
     def connect(self) -> "DeviceConnector":
@@ -71,7 +85,8 @@ class DeviceConnector:
                 return self
 
             logger.info(f"[{self.hostname}] 🔌 Connecting to device...")
-            self.device = Device(
+            # Fixed: Use temporary variable to avoid type assignment issues
+            device_instance = Device(
                 host=self.hostname,
                 user=self.username,
                 password=self.password,
@@ -79,7 +94,8 @@ class DeviceConnector:
                 normalize=True,
             )
 
-            self.device.open()
+            device_instance.open()
+            self.device = device_instance  # Now assign to class attribute
             self.connected = True
             logger.info(f"[{self.hostname}] ✅ Connected successfully")
 
@@ -87,12 +103,14 @@ class DeviceConnector:
 
         except ConnectError as e:
             self.connected = False
+            self.device = None
             logger.error(f"[{self.hostname}] ❌ Connection failed: {e}")
             raise
         except Exception as e:
             self.connected = False
+            self.device = None
             logger.error(f"[{self.hostname}] ❌ Unexpected connection error: {e}")
-            raise ConnectError(host=self.hostname, msg=str(e))
+            raise ConnectError(f"Connection to {self.hostname} failed: {str(e)}")
 
     def disconnect(self):
         """Close device connection and cleanup resources."""
@@ -129,7 +147,7 @@ class DeviceConnector:
             ConnectError: When device is not connected
         """
         if not self.connected or not self.device:
-            raise ConnectError(host=self.hostname, msg="Device not connected")
+            raise ConnectError(f"Device {self.hostname} not connected")
 
         try:
             facts = self.device.facts
@@ -158,7 +176,7 @@ class DeviceConnector:
             ConnectError: When device is not connected
         """
         if not self.connected or not self.device:
-            raise ConnectError(host=self.hostname, msg="Device not connected")
+            raise ConnectError(f"Device {self.hostname} not connected")
 
         try:
             return SW(self.device)
@@ -185,10 +203,10 @@ class DeviceConnector:
 
     def test_connection(self) -> bool:
         """
-        Test device connection with basic RPC operation.
+        Test device connection with basic RPC operation and timeout.
 
         Performs simple RPC to verify connection functionality
-        beyond basic connectivity.
+        beyond basic connectivity with configurable timeout.
 
         Returns:
             True if connection test passes
@@ -197,9 +215,93 @@ class DeviceConnector:
             if not self.is_connected():
                 return False
 
-            # Simple RPC to test functionality
-            response = self.device.rpc.get_system_uptime_information()
-            return response is not None
+            if self.device:
+                response = self.device.rpc.get_system_uptime_information(timeout=30)
+                return response is not None
+            else:
+                return False
+
+        except RpcTimeoutError as e:
+            logger.debug(f"[{self.hostname}] Connection test timed out: {e}")
+            return False
         except Exception as e:
             logger.debug(f"[{self.hostname}] Connection test failed: {e}")
             return False
+
+    def execute_rpc_with_timeout(self, rpc_command: str, timeout: int = 60) -> Any:
+        """
+        Execute RPC command with configurable timeout.
+
+        Enhanced RPC execution with explicit timeout control to handle
+        slow/unresponsive devices gracefully.
+
+        Args:
+            rpc_command: RPC command to execute
+            timeout: RPC timeout in seconds
+
+        Returns:
+            RPC response
+
+        Raises:
+            RpcError: When RPC execution fails
+            RpcTimeoutError: When RPC times out
+            ConnectError: When device is not connected
+        """
+        if not self.connected or not self.device:
+            raise ConnectError(f"Device {self.hostname} not connected")
+
+        try:
+            logger.debug(
+                f"[{self.hostname}] Executing RPC with {timeout}s timeout: {rpc_command}"
+            )
+            if self.device:
+                return self.device.rpc(rpc_command, timeout=timeout)
+            else:
+                raise ConnectError(f"Device {self.hostname} not available")
+        except RpcTimeoutError as e:
+            logger.error(
+                f"[{self.hostname}] RPC timeout after {timeout}s: {rpc_command}"
+            )
+            raise
+        except RpcError as e:
+            logger.error(f"[{self.hostname}] RPC command failed: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"[{self.hostname}] RPC execution error: {e}")
+            raise
+
+    def check_connection_health(self) -> Tuple[bool, str]:
+        """
+        Check if connection is healthy and responsive with performance metrics.
+
+        Performs health check with response time measurement to detect
+        slow/unresponsive devices before critical operations.
+
+        Returns:
+            Tuple of (is_healthy: bool, status_message: str)
+        """
+        if not self.is_connected():
+            return False, "Device not connected"
+
+        try:
+            if not self.device:
+                return False, "Device object not available"
+
+            start_time = time.time()
+            response = self.device.rpc.get_system_uptime_information(timeout=30)
+            response_time = time.time() - start_time
+
+            if response_time > 10:
+                return True, f"Device responsive but slow ({response_time:.1f}s)"
+            elif response_time > 30:
+                return (
+                    False,
+                    f"Device very slow, may be overloaded ({response_time:.1f}s)",
+                )
+            else:
+                return True, f"Device responsive ({response_time:.1f}s)"
+
+        except RpcTimeoutError:
+            return False, "RPC timeout - device not responding to commands"
+        except Exception as e:
+            return False, f"Health check failed: {str(e)}"

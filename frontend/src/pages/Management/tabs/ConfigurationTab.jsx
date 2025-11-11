@@ -1,19 +1,19 @@
 /**
  * =============================================================================
- * CONFIGURATION TAB COMPONENT
+ * CONFIGURATION TAB COMPONENT - MODERN REDESIGN
  * =============================================================================
  *
  * Device configuration and image selection interface
  *
- * VERSION: 2.0.0 - Added Pre-Check Selection
+ * VERSION: 3.0.0 - Modern UI Redesign
  * AUTHOR: nikos-geranios_vgi
- * DATE: 2025-11-05
- * LAST UPDATED: 2025-11-10 15:36:31 UTC
+ * DATE: 2025-11-10
  *
  * UPDATES:
- * - Added PreCheckSelector component integration
- * - Enhanced validation to include pre-check selection
- * - Updated layout to accommodate new selector
+ * - Modern black & white design with improved contrast
+ * - Space-efficient compact layout
+ * - Enhanced visual hierarchy
+ * - Streamlined validation feedback
  *
  * @module components/tabs/ConfigurationTab
  */
@@ -22,7 +22,7 @@ import React from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { CheckCircle, Shield, ArrowRight, Loader2, AlertTriangle } from 'lucide-react';
+import { CheckCircle, Shield, ArrowRight, Loader2, AlertTriangle, Image, Server, Lock, Package } from 'lucide-react';
 import CodeUpgradeForm from '@/forms/CodeUpgradeForm';
 import SelectImageRelease from '@/forms/SelectImageRelease';
 import PreCheckSelector from '@/shared/PreCheckSelector';
@@ -65,24 +65,113 @@ export default function ConfigurationTab({
   const hasPreChecksSelected = selectedPreChecks && selectedPreChecks.length > 0;
   const canStartPreCheck = isFormValid && hasPreChecksSelected && !isRunning && isConnected;
 
+  // ===========================================================================
+  // STATUS INDICATORS
+  // ===========================================================================
+
+  const configStatus = [
+    {
+      icon: Image,
+      label: 'Image',
+      value: upgradeParams.image_filename,
+      isValid: !!upgradeParams.image_filename,
+    },
+    {
+      icon: Package,
+      label: 'Version',
+      value: upgradeParams.target_version,
+      isValid: !!upgradeParams.target_version,
+    },
+    {
+      icon: Server,
+      label: 'Device',
+      value: upgradeParams.hostname || (upgradeParams.inventory_file ? 'Inventory' : null),
+      isValid: !!(upgradeParams.hostname || upgradeParams.inventory_file),
+    },
+    {
+      icon: Lock,
+      label: 'Auth',
+      value: upgradeParams.username ? '••••••' : null,
+      isValid: !!(upgradeParams.username && upgradeParams.password),
+    },
+    {
+      icon: Shield,
+      label: 'Pre-Checks',
+      value: hasPreChecksSelected ? `${selectedPreChecks.length} selected` : null,
+      isValid: hasPreChecksSelected,
+    },
+  ];
+
+  const validCount = configStatus.filter(s => s.isValid).length;
+  const totalCount = configStatus.length;
+  const isFullyConfigured = canStartPreCheck;
+
   return (
-    <div className="space-y-6 max-w-7xl">
+    <div className="space-y-4 max-w-7xl">
 
       {/* ====================================================================
-          SECTION 1: IMAGE SELECTION & DEVICE CONFIGURATION
+          PROGRESS HEADER
           ==================================================================== */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+      <div className="bg-gradient-to-r from-gray-900 to-black text-white rounded-xl p-6 shadow-lg border border-gray-800">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-2xl font-bold tracking-tight">Configuration</h2>
+            <p className="text-gray-400 text-sm mt-1">
+              Set up your upgrade parameters and validation checks
+            </p>
+          </div>
+          <div className="text-right">
+            <div className="text-3xl font-bold">{validCount}/{totalCount}</div>
+            <div className="text-xs text-gray-400 uppercase tracking-wider">Complete</div>
+          </div>
+        </div>
 
-        {/* LEFT COLUMN: IMAGE SELECTION */}
-        <div className="xl:col-span-1">
+        {/* Mini Status Grid */}
+        <div className="grid grid-cols-5 gap-3">
+          {configStatus.map((status, idx) => {
+            const Icon = status.icon;
+            return (
+              <div
+                key={idx}
+                className={`relative overflow-hidden rounded-lg p-3 transition-all ${status.isValid
+                    ? 'bg-white/10 border border-white/20'
+                    : 'bg-white/5 border border-white/10'
+                  }`}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <Icon className={`h-4 w-4 ${status.isValid ? 'text-white' : 'text-gray-500'}`} />
+                  {status.isValid && (
+                    <CheckCircle className="h-3 w-3 text-green-400 ml-auto" />
+                  )}
+                </div>
+                <div className={`text-xs font-medium ${status.isValid ? 'text-white' : 'text-gray-500'}`}>
+                  {status.label}
+                </div>
+                {status.value && (
+                  <div className="text-xs text-gray-400 truncate mt-1">
+                    {status.value}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ====================================================================
+          MAIN CONFIGURATION FORMS
+          ==================================================================== */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Image Selection - Compact */}
+        <div className="lg:col-span-1">
           <SelectImageRelease
             parameters={upgradeParams}
             onParamChange={onParamChange}
           />
         </div>
 
-        {/* RIGHT COLUMN: DEVICE CONFIGURATION */}
-        <div className="xl:col-span-2">
+        {/* Device Configuration - Wider */}
+        <div className="lg:col-span-2">
           <CodeUpgradeForm
             parameters={upgradeParams}
             onParamChange={onParamChange}
@@ -91,7 +180,7 @@ export default function ConfigurationTab({
       </div>
 
       {/* ====================================================================
-          SECTION 2: PRE-CHECK SELECTION
+          PRE-CHECK SELECTION
           ==================================================================== */}
       <PreCheckSelector
         selectedChecks={selectedPreChecks}
@@ -100,115 +189,82 @@ export default function ConfigurationTab({
       />
 
       {/* ====================================================================
-          SECTION 3: PRE-CHECK ACTION CARD
+          ACTION PANEL
           ==================================================================== */}
-      <Card>
-        <CardContent className="pt-6">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+      <Card className="border-2 border-black shadow-lg">
+        <CardContent className="p-6">
+          {/* Connection Warning - Top Priority */}
+          {!isConnected && (
+            <Alert className="mb-4 border-2 border-black bg-white">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle className="font-bold">Connection Issue</AlertTitle>
+              <AlertDescription className="text-sm">
+                WebSocket disconnected. Real-time updates unavailable.
+              </AlertDescription>
+            </Alert>
+          )}
 
-            {/* Status Information */}
-            <div className="flex-1">
-              <h4 className="text-lg font-semibold mb-2 flex items-center gap-2">
-                <Shield className="h-5 w-5 text-blue-600" />
-                Ready for Pre-Check Validation
-              </h4>
-
-              <div className="space-y-1 text-sm text-gray-600">
-                {/* Display configured parameters */}
-                {upgradeParams.image_filename && (
-                  <p className="flex items-center gap-2">
-                    <CheckCircle className="h-4 w-4 text-green-600" />
-                    <span className="font-medium">
-                      Image: {upgradeParams.image_filename}
-                    </span>
+          <div className="flex flex-col sm:flex-row items-center gap-4">
+            {/* Status Section */}
+            <div className="flex-1 w-full">
+              <div className="flex items-center gap-3 mb-3">
+                <div className={`p-2 rounded-lg ${isFullyConfigured ? 'bg-black' : 'bg-gray-200'}`}>
+                  <Shield className={`h-6 w-6 ${isFullyConfigured ? 'text-white' : 'text-gray-600'}`} />
+                </div>
+                <div>
+                  <h4 className="text-lg font-bold tracking-tight">
+                    {isFullyConfigured ? 'Ready to Validate' : 'Configuration Required'}
+                  </h4>
+                  <p className="text-sm text-gray-600">
+                    {isFullyConfigured
+                      ? 'All parameters configured. Start pre-check validation.'
+                      : 'Complete the configuration to continue.'}
                   </p>
-                )}
-
-                {upgradeParams.target_version && (
-                  <p className="flex items-center gap-2">
-                    <CheckCircle className="h-4 w-4 text-green-600" />
-                    <span>
-                      Target Version: <strong>{upgradeParams.target_version}</strong>
-                    </span>
-                  </p>
-                )}
-
-                {upgradeParams.hostname && (
-                  <p className="flex items-center gap-2">
-                    <CheckCircle className="h-4 w-4 text-green-600" />
-                    <span>Device: {upgradeParams.hostname}</span>
-                  </p>
-                )}
-
-                {/* Pre-check selection status */}
-                {hasPreChecksSelected && (
-                  <p className="flex items-center gap-2">
-                    <CheckCircle className="h-4 w-4 text-green-600" />
-                    <span>
-                      Pre-Checks: <strong>{selectedPreChecks.length} selected</strong>
-                    </span>
-                  </p>
-                )}
-
-                {/* Validation errors - show what's missing */}
-                {!isFormValid && (
-                  <div className="text-orange-600 text-sm mt-2 space-y-1">
-                    {!upgradeParams.image_filename && (
-                      <p>• Select a software image</p>
-                    )}
-                    {!upgradeParams.target_version && (
-                      <p>• Target version will be auto-extracted from image</p>
-                    )}
-                    {!upgradeParams.hostname && !upgradeParams.inventory_file && (
-                      <p>• Configure device target</p>
-                    )}
-                    {(!upgradeParams.username || !upgradeParams.password) && (
-                      <p>• Provide authentication credentials</p>
-                    )}
-                  </div>
-                )}
-
-                {/* Pre-check validation errors */}
-                {isFormValid && !hasPreChecksSelected && (
-                  <div className="text-orange-600 text-sm mt-2">
-                    <p>• Select at least one pre-check validation</p>
-                  </div>
-                )}
+                </div>
               </div>
+
+              {/* Validation Messages - Compact */}
+              {!isFormValid && (
+                <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                  <p className="text-xs font-semibold text-gray-700 mb-2">Missing:</p>
+                  <div className="space-y-1 text-xs text-gray-600">
+                    {!upgradeParams.image_filename && <p>• Software image selection</p>}
+                    {!upgradeParams.hostname && !upgradeParams.inventory_file && <p>• Device target</p>}
+                    {(!upgradeParams.username || !upgradeParams.password) && <p>• Authentication credentials</p>}
+                  </div>
+                </div>
+              )}
+
+              {isFormValid && !hasPreChecksSelected && (
+                <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                  <p className="text-xs text-gray-700">• Select at least one pre-check validation</p>
+                </div>
+              )}
             </div>
 
-            {/* Start Pre-Check Button */}
+            {/* Action Button */}
             <Button
               onClick={onStartPreCheck}
               disabled={!canStartPreCheck}
               size="lg"
-              className="w-full sm:w-auto"
+              className={`w-full sm:w-auto px-8 h-12 text-base font-semibold transition-all ${canStartPreCheck
+                  ? 'bg-black hover:bg-gray-800 text-white shadow-lg hover:shadow-xl'
+                  : 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                }`}
             >
               {isRunning ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  Running...
+                  <Loader2 className="h-5 w-5 animate-spin mr-2" />
+                  Running
                 </>
               ) : (
                 <>
-                  <Shield className="h-4 w-4 mr-2" />
                   Start Pre-Check
-                  <ArrowRight className="h-4 w-4 ml-2" />
+                  <ArrowRight className="h-5 w-5 ml-2" />
                 </>
               )}
             </Button>
           </div>
-
-          {/* WebSocket Connection Warning */}
-          {!isConnected && (
-            <Alert className="mt-4" variant="destructive">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertTitle>WebSocket Disconnected</AlertTitle>
-              <AlertDescription>
-                Real-time progress updates are unavailable. Please check your connection.
-              </AlertDescription>
-            </Alert>
-          )}
         </CardContent>
       </Card>
     </div>

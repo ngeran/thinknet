@@ -3,16 +3,16 @@
  * EXECUTION TAB - ENHANCED ERROR VISIBILITY
  * =============================================================================
  *
- * VERSION: 2.3.0 - Enhanced Error Display and Visibility
+ * VERSION: 2.4.0 - Enhanced User Experience and Black/White Theme
  * AUTHOR: nikos
  * DATE: 2025-11-07
  * LAST UPDATED: 2025-11-10
  *
- * CRITICAL UPDATES (v2.3.0):
- * - Added prominent error summary card at top
- * - Enhanced error message display with filtering
- * - Improved visual hierarchy for failed operations
- * - Added quick navigation to technical details
+ * CRITICAL UPDATES (v2.4.0):
+ * - Removed "Current Step" display for cleaner UI
+ * - Added cleanStepMessage() for user-friendly validation steps
+ * - Updated to black and white color scheme
+ * - Improved message formatting and readability
  */
 
 import React, { useEffect } from 'react';
@@ -81,15 +81,26 @@ export default function ExecutionTab({
     if (entry.event_type === 'OPERATION_START') return true;
     if (entry.event_type === 'OPERATION_COMPLETE') return true;
 
-    // Also include LOG_MESSAGE if it contains step information
-    if (entry.event_type === 'LOG_MESSAGE' && entry.message) {
-      // Check if message contains step patterns
+    // Also include LOG_MESSAGE or INFO messages if they contain step information
+    if (entry.message) {
+      const msg = entry.message.toLowerCase();
+
+      // Check if message contains step patterns (be more inclusive)
       if (entry.message.includes('Step ') ||
-          entry.message.includes('✅') ||
-          entry.message.includes('❌') ||
-          entry.message.includes('Checking') ||
-          entry.message.includes('Validating') ||
-          entry.message.includes('Retrieving')) {
+        entry.message.match(/step\s+\d+/i) ||
+        entry.message.includes('✅') ||
+        entry.message.includes('❌') ||
+        entry.message.includes('⚠️') ||
+        msg.includes('checking') ||
+        msg.includes('validating') ||
+        msg.includes('retrieving') ||
+        msg.includes('verifying') ||
+        msg.includes('connecting') ||
+        msg.includes('connected') ||
+        msg.includes('starting') ||
+        msg.includes('completed') ||
+        msg.includes('failed') ||
+        msg.includes('success')) {
         return true;
       }
     }
@@ -117,6 +128,8 @@ export default function ExecutionTab({
     console.log("[EXECUTION_TAB] Structured steps count:", structuredSteps.length);
     if (structuredSteps.length > 0) {
       console.log("[EXECUTION_TAB] First structured step:", structuredSteps[0]);
+      console.log("[EXECUTION_TAB] All structured steps messages:",
+        structuredSteps.map((s, i) => `${i}: ${s.message.substring(0, 100)}`));
     }
     if (errorMessages.length > 0) {
       console.log("[EXECUTION_TAB] Error messages count:", errorMessages.length);
@@ -143,33 +156,68 @@ export default function ExecutionTab({
   // ===========================================================================
 
   /**
+   * Clean and format step message for user-friendly display
+   */
+  const cleanStepMessage = (message) => {
+    // Remove timestamp and logging prefixes like "2025-11-11 00:11:04,669 - __main__ - INFO - [run.py:470] -"
+    let cleaned = message
+      .replace(/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d+\s+-\s+\S+\s+-\s+\w+\s+-\s+\[.*?\]\s+-\s*/, '')
+      .replace(/^Step \d+\/\d+:\s*/, '')
+      .replace(/^Step \d+:\s*/, '')
+      .replace(/^[\[<].*?[\]>]\s*/, '') // Remove [timestamp] or <tag> prefixes
+      .replace(/^INFO:\s*/i, '')
+      .replace(/^DEBUG:\s*/i, '')
+      .replace(/^WARNING:\s*/i, '')
+      .replace(/^ERROR:\s*/i, '')
+      .trim();
+
+    // Remove emojis at the start
+    cleaned = cleaned.replace(/^[✅❌⚠️⊘]\s*/, '');
+
+    // Clean up common technical patterns
+    cleaned = cleaned
+      .replace(/\s+/g, ' ') // Normalize whitespace
+      .replace(/^[-•]\s*/, '') // Remove bullet points
+      .trim();
+
+    // Capitalize first letter if not already
+    if (cleaned.length > 0 && cleaned[0] === cleaned[0].toLowerCase()) {
+      cleaned = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+    }
+
+    return cleaned;
+  };
+
+  /**
    * Get icon for step based on message content and position
    */
   const getStepIcon = (message, isLastStep) => {
     if (message.includes('❌')) {
-      return <XCircle className="h-5 w-5 text-red-500" />;
+      return <XCircle className="h-5 w-5 text-gray-700" />;
     } else if (message.includes('✅')) {
-      return <CheckCircle className="h-5 w-5 text-green-500" />;
+      return <CheckCircle className="h-5 w-5 text-gray-900" />;
     } else if (message.includes('⚠️')) {
-      return <AlertCircle className="h-5 w-5 text-yellow-500" />;
+      return <AlertCircle className="h-5 w-5 text-gray-600" />;
     } else if (message.includes('⊘')) {
       return <Circle className="h-5 w-5 text-gray-300" />;
     } else if (isLastStep && isRunning) {
-      return <Loader2 className="h-5 w-5 text-blue-500 animate-spin" />;
+      return <Loader2 className="h-5 w-5 text-gray-900 animate-spin" />;
     } else {
-      return <Circle className="h-5 w-5 text-blue-500 fill-blue-500" />;
+      return <Circle className="h-5 w-5 text-gray-800 fill-gray-800" />;
     }
   };
 
   /**
-   * Extract step number from message
+   * Extract step number from message (before cleaning)
+   * Returns null if no step number found (for non-step messages)
    */
-  const extractStepNumber = (message, fallbackIndex) => {
-    const match = message.match(/Step (\d+)[/:]/);
+  const extractStepNumber = (message) => {
+    // Try to match "Step X/Y:" or "Step X:" format
+    const match = message.match(/Step\s+(\d+)(?:\/\d+)?[:\s]/i);
     if (match) {
       return parseInt(match[1]);
     }
-    return fallbackIndex + 1;
+    return null; // Return null instead of fallback
   };
 
   /**
@@ -178,7 +226,7 @@ export default function ExecutionTab({
   const getStatusBadge = () => {
     if (isRunning) {
       return (
-        <Badge variant="default" className="bg-blue-500">
+        <Badge variant="default" className="bg-gray-900">
           <Loader2 className="h-3 w-3 mr-1 animate-spin" />
           In Progress
         </Badge>
@@ -187,7 +235,7 @@ export default function ExecutionTab({
 
     if (isComplete) {
       return (
-        <Badge variant="default" className="bg-green-500">
+        <Badge variant="default" className="bg-gray-800">
           <CheckCircle className="h-3 w-3 mr-1" />
           Completed
         </Badge>
@@ -196,7 +244,7 @@ export default function ExecutionTab({
 
     if (hasError) {
       return (
-        <Badge variant="destructive">
+        <Badge variant="destructive" className="bg-gray-700">
           <XCircle className="h-3 w-3 mr-1" />
           Failed
         </Badge>
@@ -216,17 +264,17 @@ export default function ExecutionTab({
    */
   const getStepStatusClass = (message, isLastStep) => {
     if (message.includes('❌')) {
-      return 'border-red-200 bg-red-50';
+      return 'border-gray-400 bg-gray-100';
     } else if (message.includes('✅')) {
-      return 'border-green-200 bg-green-50';
+      return 'border-gray-800 bg-gray-50';
     } else if (message.includes('⚠️')) {
-      return 'border-yellow-200 bg-yellow-50';
+      return 'border-gray-400 bg-gray-100';
     } else if (message.includes('⊘')) {
-      return 'border-gray-200 bg-gray-50 opacity-60';
+      return 'border-gray-200 bg-white opacity-60';
     } else if (isLastStep && isRunning) {
-      return 'border-blue-300 bg-blue-100 shadow-sm';
+      return 'border-gray-900 bg-gray-100 shadow-sm';
     } else {
-      return 'border-blue-200 bg-blue-50';
+      return 'border-gray-300 bg-gray-50';
     }
   };
 
@@ -238,16 +286,16 @@ export default function ExecutionTab({
     <div className="space-y-6">
 
       {/* ===================================================================
-          SUBSECTION 2.1: ERROR SUMMARY CARD (NEW - v2.3.0)
+          SUBSECTION 2.1: ERROR SUMMARY CARD (v2.3.0)
           =================================================================== */}
       {hasError && errorMessages.length > 0 && (
-        <Card className="border-red-200 bg-red-50 shadow-md">
+        <Card className="border-gray-400 bg-gray-100 shadow-md">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-red-700">
+            <CardTitle className="flex items-center gap-2 text-gray-900">
               <XCircle className="h-5 w-5" />
               Operation Failed - Error Details
             </CardTitle>
-            <CardDescription className="text-red-600">
+            <CardDescription className="text-gray-700">
               The {currentPhase === 'pre_check' ? 'pre-check validation' : 'upgrade operation'}
               encountered critical errors and could not complete.
             </CardDescription>
@@ -257,24 +305,24 @@ export default function ExecutionTab({
               {errorMessages.slice(-3).map((msg, i) => (
                 <div
                   key={i}
-                  className="bg-white border-2 border-red-300 rounded-lg p-4 shadow-sm"
+                  className="bg-white border-2 border-gray-500 rounded-lg p-4 shadow-sm"
                 >
                   <div className="flex items-start gap-3">
-                    <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+                    <AlertCircle className="h-5 w-5 text-gray-800 flex-shrink-0 mt-0.5" />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-2">
-                        <p className="text-xs text-red-500 font-medium">
+                        <p className="text-xs text-gray-600 font-medium">
                           {new Date(msg.timestamp).toLocaleTimeString('en-US', {
                             hour: '2-digit',
                             minute: '2-digit',
                             second: '2-digit'
                           })}
                         </p>
-                        <Badge variant="destructive" className="text-xs h-5">
+                        <Badge variant="outline" className="text-xs h-5 border-gray-600">
                           {msg.event_type}
                         </Badge>
                       </div>
-                      <p className="text-sm text-red-800 font-mono break-words leading-relaxed">
+                      <p className="text-sm text-gray-900 font-mono break-words leading-relaxed">
                         {msg.message}
                       </p>
                     </div>
@@ -283,7 +331,7 @@ export default function ExecutionTab({
               ))}
 
               {errorMessages.length > 3 && (
-                <p className="text-xs text-red-600 text-center">
+                <p className="text-xs text-gray-700 text-center">
                   Showing {Math.min(3, errorMessages.length)} of {errorMessages.length} error messages
                 </p>
               )}
@@ -293,7 +341,7 @@ export default function ExecutionTab({
                   onClick={onToggleTechnicalDetails}
                   variant="outline"
                   size="sm"
-                  className="border-red-300 hover:bg-red-100"
+                  className="border-gray-400 hover:bg-gray-200"
                 >
                   {showTechnicalDetails ? (
                     <>
@@ -346,14 +394,6 @@ export default function ExecutionTab({
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">Steps Completed</span>
               <span className="font-medium">{completedSteps} / {totalSteps}</span>
-            </div>
-          )}
-
-          {/* Latest Step Message */}
-          {latestStepMessage && (
-            <div className="pt-2 border-t">
-              <p className="text-sm text-muted-foreground mb-1">Current Step:</p>
-              <p className="text-sm font-medium">{latestStepMessage}</p>
             </div>
           )}
 
@@ -443,36 +483,49 @@ export default function ExecutionTab({
                 {/* STEP DISPLAY */}
                 {structuredSteps.map((step, index) => {
                   const isLastStep = index === structuredSteps.length - 1;
-                  const stepNumber = extractStepNumber(step.message, index);
-                  const icon = getStepIcon(step.message, isLastStep);
 
-                  let displayMessage = step.message
-                    .replace(/^Step \d+\/\d+:\s*/, '')
-                    .replace(/^Step \d+:\s*/, '');
+                  // Extract step number and label from ORIGINAL message (before cleaning)
+                  const stepLabelMatch = step.message.match(/(Step\s+\d+(?:\/\d+)?)/i);
+                  const stepLabel = stepLabelMatch ? stepLabelMatch[1] : null;
 
+                  const displayMessage = cleanStepMessage(step.message);
                   const statusClass = getStepStatusClass(step.message, isLastStep);
+
+                  // Determine status icon for the circle
+                  let circleIcon;
+                  let circleClass;
+
+                  if (step.message.includes('❌') || step.message.toLowerCase().includes('failed')) {
+                    circleIcon = <XCircle className="h-5 w-5 text-gray-800" />;
+                    circleClass = 'bg-gray-200 border-gray-400';
+                  } else if (step.message.includes('✅') || step.message.toLowerCase().includes('success')) {
+                    circleIcon = <CheckCircle className="h-5 w-5 text-gray-900" />;
+                    circleClass = 'bg-white border-gray-800';
+                  } else if (step.message.includes('⚠️') || step.message.toLowerCase().includes('warning')) {
+                    circleIcon = <AlertCircle className="h-5 w-5 text-gray-700" />;
+                    circleClass = 'bg-gray-100 border-gray-500';
+                  } else if (isLastStep && isRunning) {
+                    circleIcon = <Loader2 className="h-5 w-5 text-gray-900 animate-spin" />;
+                    circleClass = 'bg-white border-gray-900';
+                  } else {
+                    circleIcon = <CheckCircle className="h-5 w-5 text-gray-700" />;
+                    circleClass = 'bg-white border-gray-600';
+                  }
 
                   return (
                     <div
                       key={index}
                       className={`flex items-start gap-3 p-4 rounded-lg border transition-all ${statusClass}`}
                     >
-                      <div className={`flex-shrink-0 w-8 h-8 rounded-full bg-white border-2 flex items-center justify-center text-sm font-bold shadow-sm ${
-                        isLastStep && isRunning
-                          ? 'border-blue-500 text-blue-600'
-                          : 'border-gray-300 text-gray-600'
-                      }`}>
-                        {stepNumber}
-                      </div>
-
-                      <div className="flex-shrink-0 mt-1">
-                        {icon}
+                      {/* Status icon circle */}
+                      <div className={`flex-shrink-0 w-10 h-10 rounded-full border-2 flex items-center justify-center shadow-sm ${circleClass}`}>
+                        {circleIcon}
                       </div>
 
                       <div className="flex-1 min-w-0">
-                        <p className={`text-sm font-medium leading-relaxed ${
-                          isLastStep && isRunning ? 'text-blue-700' : ''
-                        }`}>
+                        <p className={`text-sm font-medium leading-relaxed ${isLastStep && isRunning ? 'text-gray-900' : 'text-gray-800'
+                          }`}>
+                          {stepLabel && <span className="font-semibold">{stepLabel}: </span>}
                           {displayMessage}
                         </p>
                         <div className="flex items-center gap-2 mt-1">
@@ -506,7 +559,7 @@ export default function ExecutionTab({
             {showTechnicalDetails && (
               <div className="space-y-2">
                 <div className="flex items-center gap-2 mb-3 pb-2 border-b sticky top-0 bg-white z-10">
-                  <AlertTriangle className="h-4 w-4 text-yellow-500" />
+                  <AlertTriangle className="h-4 w-4 text-gray-600" />
                   <p className="text-xs font-medium text-muted-foreground">
                     Technical Details - Advanced View ({allMessages.length} messages)
                   </p>
@@ -524,20 +577,20 @@ export default function ExecutionTab({
                     let levelBadge = null;
 
                     if (msg.level === 'error' || msg.level === 'ERROR') {
-                      bgClass = 'bg-red-50';
-                      borderClass = 'border-red-200';
-                      textClass = 'text-red-700';
-                      levelBadge = <Badge variant="destructive" className="text-xs h-4 px-1">ERROR</Badge>;
+                      bgClass = 'bg-gray-100';
+                      borderClass = 'border-gray-600';
+                      textClass = 'text-gray-900';
+                      levelBadge = <Badge variant="outline" className="text-xs h-4 px-1 border-gray-600">ERROR</Badge>;
                     } else if (msg.level === 'warning' || msg.level === 'WARNING') {
-                      bgClass = 'bg-yellow-50';
-                      borderClass = 'border-yellow-200';
-                      textClass = 'text-yellow-700';
-                      levelBadge = <Badge variant="outline" className="text-xs h-4 px-1 border-yellow-400">WARN</Badge>;
+                      bgClass = 'bg-gray-50';
+                      borderClass = 'border-gray-400';
+                      textClass = 'text-gray-800';
+                      levelBadge = <Badge variant="outline" className="text-xs h-4 px-1 border-gray-400">WARN</Badge>;
                     } else if (msg.event_type === 'STEP_COMPLETE') {
-                      bgClass = 'bg-blue-50';
-                      borderClass = 'border-blue-200';
-                      textClass = 'text-blue-700';
-                      levelBadge = <Badge variant="outline" className="text-xs h-4 px-1 border-blue-400">STEP</Badge>;
+                      bgClass = 'bg-gray-50';
+                      borderClass = 'border-gray-300';
+                      textClass = 'text-gray-800';
+                      levelBadge = <Badge variant="outline" className="text-xs h-4 px-1 border-gray-500">STEP</Badge>;
                     }
 
                     return (
@@ -576,20 +629,20 @@ export default function ExecutionTab({
           SUBSECTION 2.4: STATUS SUMMARY (Success/Failure)
           =================================================================== */}
       {(isComplete || hasError) && structuredSteps.length > 0 && (
-        <Card className={hasError ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'}>
+        <Card className={hasError ? 'border-gray-400 bg-gray-100' : 'border-gray-800 bg-gray-50'}>
           <CardContent className="pt-6">
             <div className="flex items-start gap-4">
               {hasError ? (
-                <XCircle className="h-8 w-8 text-red-500 flex-shrink-0" />
+                <XCircle className="h-8 w-8 text-gray-700 flex-shrink-0" />
               ) : (
-                <CheckCircle className="h-8 w-8 text-green-500 flex-shrink-0" />
+                <CheckCircle className="h-8 w-8 text-gray-900 flex-shrink-0" />
               )}
 
               <div className="flex-1">
-                <h3 className={`text-lg font-semibold mb-1 ${hasError ? 'text-red-700' : 'text-green-700'}`}>
+                <h3 className={`text-lg font-semibold mb-1 ${hasError ? 'text-gray-900' : 'text-gray-900'}`}>
                   {hasError ? 'Validation Failed' : 'Validation Completed'}
                 </h3>
-                <p className={`text-sm ${hasError ? 'text-red-600' : 'text-green-600'}`}>
+                <p className={`text-sm ${hasError ? 'text-gray-700' : 'text-gray-700'}`}>
                   {hasError
                     ? 'Pre-check validation encountered critical issues. Review the failed checks in the Review tab.'
                     : 'Pre-check validation completed successfully. Proceed to the Review tab to see detailed results.'}
