@@ -549,7 +549,7 @@ def execute_pre_check_phase(args, upgrader) -> bool:
                     )
 
                 # Pass selected checks to upgrader for selective execution
-                success = upgrader.run_pre_checks(selected_checks=selected_checks)
+                success = upgrader.run_pre_checks(selected_check_ids=selected_checks)
 
                 # =======================================================
                 # STEP 9: Pre-Checks Completed

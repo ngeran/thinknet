@@ -4,7 +4,7 @@ Main device upgrader class orchestrating the complete upgrade process.
 
 import time
 import logging
-from typing import Tuple
+from typing import Optional, List, Tuple
 
 from jnpr.junos.exception import ConnectError, RpcError
 
@@ -122,7 +122,7 @@ class DeviceUpgrader:
             logger.error(f"[{self.hostname}] ❌ Failed to get current version: {e}")
             raise
 
-    def run_pre_checks(self) -> bool:
+    def run_pre_checks(self, selected_check_ids: Optional[List[str]] = None) -> bool:
         """
         Execute comprehensive pre-upgrade validation checks.
 
@@ -134,6 +134,10 @@ class DeviceUpgrader:
             True if checks pass or warnings only, False if critical failures
             and force_upgrade is disabled
         """
+        logger.info(
+            f"DEBUG: run_pre_checks called with selected_check_ids: {selected_check_ids}"
+        )
+
         try:
             self.status.update_phase(
                 UpgradePhase.PRE_CHECK, "Running pre-upgrade validation checks"
@@ -146,7 +150,10 @@ class DeviceUpgrader:
             engine = EnhancedPreCheckEngine(
                 self.connector.device, self.hostname, self.image_filename
             )
-            pre_check_summary = engine.run_all_checks()
+            # Pass the selected checks to the engine
+            pre_check_summary = engine.run_all_checks(
+                selected_check_ids=selected_check_ids
+            )
             self.status.pre_check_summary = pre_check_summary
 
             # Display results to user
