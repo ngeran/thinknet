@@ -6,23 +6,6 @@ DESCRIPTION:        Enhanced FastAPI router with pre-check support
 VERSION:            4.0 - Added comprehensive pre-check phase
 NEW FEATURES:       ✅ Pre-check endpoint, ✅ Upgrade approval workflow
 ================================================================================
-
-ARCHITECTURE:
-    Two-Phase Upgrade Process:
-    1. Pre-Check Phase: Validates device readiness (new)
-    2. Upgrade Phase: Executes actual upgrade (existing + enhanced)
-
-ENDPOINTS:
-    POST /api/operations/pre-check   - Run pre-upgrade validation
-    POST /api/operations/execute     - Execute upgrade (enhanced)
-    GET  /api/operations/health      - Service health check
-
-PRE-CHECK FLOW:
-    1. User submits pre-check request
-    2. System runs comprehensive device validation
-    3. Results returned with pass/warn/fail categorization
-    4. User reviews and approves/cancels
-    5. If approved, upgrade proceeds with pre-check context
 """
 
 import json
@@ -119,8 +102,6 @@ class UpgradePhase(str, Enum):
 class PreCheckRequestModel(BaseModel):
     """
     Request model for pre-upgrade validation checks.
-
-    This initiates a comprehensive device readiness assessment before upgrade.
     """
 
     hostname: Optional[str] = Field(
@@ -168,15 +149,14 @@ class PreCheckRequestModel(BaseModel):
         examples=["junos-install-srxsme-mips-64-24.4R2-S1.7.tgz"],
     )
 
-    # NEW: Pre-check selection field to match frontend
+    # Pre-check selection field
     pre_check_selection: Optional[str] = Field(
-        default=None,
-        description="Specific pre-check tests to run (e.g., 'health', 'bgp', 'storage')",
+        default=None, description="Specific pre-check tests to run"
     )
 
     # Advanced pre-check options
     skip_storage_check: bool = Field(
-        default=False, description="Skip storage space validation (use with caution)"
+        default=False, description="Skip storage space validation"
     )
     skip_snapshot_check: bool = Field(
         default=False, description="Skip snapshot availability check"
@@ -213,28 +193,12 @@ class PreCheckResponseModel(BaseModel):
     )
 
 
-class PreCheckSummaryModel(BaseModel):
-    """Summary of all pre-check results"""
-
-    total_checks: int = Field(..., description="Total number of checks performed")
-    passed: int = Field(..., description="Number of checks passed")
-    warnings: int = Field(..., description="Number of warnings")
-    critical_failures: int = Field(..., description="Number of critical failures")
-    can_proceed: bool = Field(..., description="Whether upgrade can proceed")
-    results: List[PreCheckResultModel] = Field(
-        ..., description="Individual check results"
-    )
-    timestamp: str = Field(..., description="Completion timestamp")
-
-
 # ================================================================================
-# 📦 REQUEST/RESPONSE MODELS - UPGRADE (ENHANCED)
+# 📦 REQUEST/RESPONSE MODELS - UPGRADE
 # ================================================================================
 class CodeUpgradeRequestModel(BaseModel):
     """
     Enhanced request model for code upgrade operations.
-
-    Now supports pre-check context for informed upgrade decisions.
     """
 
     command: str = Field(
@@ -263,21 +227,19 @@ class CodeUpgradeRequestModel(BaseModel):
         ..., description="Upgrade image filename (REQUIRED)", min_length=1
     )
 
-    # NEW: Pre-check selection field to match frontend
+    # Pre-check selection field
     pre_check_selection: Optional[str] = Field(
         default=None, description="Pre-check selection type from frontend"
     )
 
     # Pre-check integration
     pre_check_job_id: Optional[str] = Field(
-        None, description="Job ID from completed pre-check (provides context)"
+        None, description="Job ID from completed pre-check"
     )
-    skip_pre_check: bool = Field(
-        default=False, description="Skip inline pre-check (not recommended)"
-    )
+    skip_pre_check: bool = Field(default=False, description="Skip inline pre-check")
     force_upgrade: bool = Field(
         default=False,
-        description="Force upgrade even with warnings (use with extreme caution)",
+        description="Force upgrade even with warnings",
     )
 
     class Config:
@@ -294,9 +256,6 @@ class CodeUpgradeResponseModel(BaseModel):
     timestamp: str = Field(..., description="ISO timestamp")
     phase: UpgradePhase = Field(
         default=UpgradePhase.UPGRADE, description="Current phase"
-    )
-    pre_check_summary: Optional[Dict[str, Any]] = Field(
-        None, description="Pre-check results if inline check was performed"
     )
 
 
@@ -317,8 +276,6 @@ code_upgrade_router = APIRouter(
 # ================================================================================
 # 🛡️ VALIDATION & HELPER FUNCTIONS
 # ================================================================================
-
-
 def validate_upgrade_parameters(
     hostname: Optional[str],
     inventory_file: Optional[str],
@@ -329,31 +286,28 @@ def validate_upgrade_parameters(
 ) -> Optional[str]:
     """
     Comprehensive validation of upgrade parameters.
-
-    Returns:
-        Optional[str]: Error message if validation fails, None if validation passes
     """
     # Target specification
     if not hostname and not inventory_file:
-        return "❌ Either 'hostname' or 'inventory_file' must be specified"
+        return "Either 'hostname' or 'inventory_file' must be specified"
 
     if hostname and inventory_file:
-        return "❌ Specify either 'hostname' OR 'inventory_file', not both"
+        return "Specify either 'hostname' OR 'inventory_file', not both"
 
     # Authentication
     if not username.strip():
-        return "❌ Username cannot be empty"
+        return "Username cannot be empty"
 
     if not password.strip():
-        return "❌ Password cannot be empty"
+        return "Password cannot be empty"
 
     # Target version
     if not target_version.strip():
-        return "❌ Target version cannot be empty"
+        return "Target version cannot be empty"
 
     # Image
     if not image_filename.strip():
-        return "❌ Image filename cannot be empty"
+        return "Image filename cannot be empty"
 
     return None
 
@@ -373,22 +327,6 @@ def build_script_arguments(
 ) -> List[str]:
     """
     Build command line arguments for the upgrade script.
-
-    Args:
-        hostname: Target device hostname
-        inventory_file: Path to inventory file
-        username: Device username
-        password: Device password
-        vendor: Device vendor
-        platform: Device platform
-        target_version: Target software version
-        image_filename: Upgrade image filename
-        phase: Operation phase (pre_check or upgrade)
-        pre_check_options: Pre-check specific options
-        pre_check_selection: Specific tests to run
-
-    Returns:
-        List[str]: Command line arguments
     """
     args = []
 
@@ -427,7 +365,7 @@ def build_script_arguments(
         if pre_check_options.get("require_snapshot"):
             args.append("--require-snapshot")
 
-    # NEW: Pre-check test selection
+    # Pre-check test selection
     if phase == UpgradePhase.PRE_CHECK and pre_check_selection:
         # Map frontend selection to backend test names
         selection_mapping = {
@@ -440,95 +378,60 @@ def build_script_arguments(
         }
 
         selected_test = selection_mapping.get(pre_check_selection.lower())
-        if selected_test:
+        if selected_test and selected_test != "all":
             args.extend(["--tests", selected_test])
-            logger.info(f"🎯 Running specific pre-check test: {selected_test}")
+            logger.info(f"Running specific pre-check test: {selected_test}")
 
     # Upgrade phase options
     if phase == UpgradePhase.UPGRADE:
         args.extend(["--allow-downgrade"])
 
-    logger.debug(f"🛠️ Built {phase.value} arguments: {args}")
+    logger.debug(f"Built {phase.value} arguments: {args}")
     return args
 
 
 # ================================================================================
-# 🎯 PRE-CHECK ENDPOINT (ENHANCED)
+# 🎯 PRE-CHECK ENDPOINT
 # ================================================================================
 @code_upgrade_router.post(
     "/pre-check",
     response_model=PreCheckResponseModel,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Run Pre-Upgrade Validation Checks",
-    description="""
-    🔍 Perform comprehensive pre-upgrade validation before proceeding with upgrade.
-    
-    This endpoint validates device readiness through multiple checks:
-    
-    CRITICAL CHECKS (Must Pass):
-    - Device connectivity and authentication
-    - Storage space availability (minimum 30% free on /var)
-    - System state (no critical alarms, config committed)
-    - Redundancy status (for HA systems)
-    - Image availability and integrity
-    
-    WARNING CHECKS (Generate Warnings):
-    - Version compatibility analysis
-    - Snapshot availability
-    - Resource utilization levels
-    - Configuration complexity assessment
-    
-    The pre-check results guide whether to proceed with the upgrade.
-    Critical failures block upgrade; warnings require acknowledgment.
-    
-    🔄 WORKFLOW:
-    1. Submit pre-check request
-    2. Monitor progress via WebSocket (ws_channel)
-    3. Review detailed results
-    4. Decide: Cancel or Proceed with Upgrade
-    5. If proceeding, reference pre_check_job_id in upgrade request
-    """,
     responses={
-        202: {"description": "✅ Pre-check job accepted and queued"},
-        400: {"description": "❌ Invalid parameters"},
-        503: {"description": "🔴 Backend services unavailable"},
+        202: {"description": "Pre-check job accepted and queued"},
+        400: {"description": "Invalid parameters"},
+        503: {"description": "Backend services unavailable"},
     },
 )
 async def run_pre_check(request: PreCheckRequestModel) -> PreCheckResponseModel:
     """
-    🎯 ENDPOINT: Run pre-upgrade validation checks.
-
-    Performs comprehensive device readiness assessment before upgrade.
-    Results help users make informed decisions about proceeding.
+    Run pre-upgrade validation checks.
     """
     logger.info(
-        f"🔍 Pre-Check Request Received - "
+        f"Pre-Check Request Received - "
         f"Target: {request.hostname or request.inventory_file}, "
         f"Image: {request.image_filename}, "
         f"Target Version: {request.target_version}, "
         f"Pre-check Selection: {request.pre_check_selection}"
     )
 
-    # ======================================================================
-    # SERVICE AVAILABILITY CHECKS
-    # ======================================================================
+    # Service availability checks
     if not redis_client or not redis_client.ping():
-        logger.error("❌ Redis unavailable - cannot queue pre-check")
+        logger.error("Redis unavailable - cannot queue pre-check")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Job queue service temporarily unavailable",
         )
 
     if not SCRIPT_PATH.is_file():
-        logger.error(f"❌ Script not found: {SCRIPT_PATH}")
+        logger.error(f"Script not found: {SCRIPT_PATH}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Pre-check service configuration error",
         )
 
-    # ======================================================================
-    # PARAMETER VALIDATION
-    # ======================================================================
+    # Parameter validation
     validation_error = validate_upgrade_parameters(
         hostname=request.hostname,
         inventory_file=request.inventory_file,
@@ -539,16 +442,14 @@ async def run_pre_check(request: PreCheckRequestModel) -> PreCheckResponseModel:
     )
 
     if validation_error:
-        logger.warning(f"❌ Validation failed: {validation_error}")
+        logger.warning(f"Validation failed: {validation_error}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=validation_error
         )
 
-    # ======================================================================
-    # JOB INITIALIZATION
-    # ======================================================================
+    # Job initialization
     job_id = f"pre-check-{uuid.uuid4()}"
-    logger.info(f"🆕 Initializing pre-check job: {job_id}")
+    logger.info(f"Initializing pre-check job: {job_id}")
 
     try:
         # Build pre-check options
@@ -595,11 +496,9 @@ async def run_pre_check(request: PreCheckRequestModel) -> PreCheckResponseModel:
 
         # Queue job
         redis_client.lpush(REDIS_JOB_QUEUE, json.dumps(job_payload))
-        logger.info(f"✅ Pre-check job {job_id} queued successfully")
+        logger.info(f"Pre-check job {job_id} queued successfully")
 
-        # ======================================================================
-        # SUCCESS RESPONSE
-        # ======================================================================
+        # Success response
         target_desc = (
             request.hostname
             if request.hostname
@@ -617,9 +516,8 @@ async def run_pre_check(request: PreCheckRequestModel) -> PreCheckResponseModel:
 
     except HTTPException:
         raise
-
     except Exception as e:
-        logger.error(f"💥 Unexpected error in pre-check: {str(e)}", exc_info=True)
+        logger.error(f"Unexpected error in pre-check: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Unexpected error during pre-check submission",
@@ -627,77 +525,49 @@ async def run_pre_check(request: PreCheckRequestModel) -> PreCheckResponseModel:
 
 
 # ================================================================================
-# 🎯 UPGRADE ENDPOINT (ENHANCED)
+# 🎯 UPGRADE ENDPOINT
 # ================================================================================
 @code_upgrade_router.post(
     "/execute",
     response_model=CodeUpgradeResponseModel,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Execute Code Upgrade on Network Device",
-    description="""
-    🚀 Execute operating system code upgrade on network devices.
-    
-    ENHANCED WORKFLOW:
-    - Can reference completed pre-check via pre_check_job_id
-    - Optionally runs inline pre-check if skip_pre_check=False
-    - Respects pre-check warnings and critical failures
-    - force_upgrade=True overrides warnings (not recommended)
-    
-    RECOMMENDED FLOW:
-    1. Run /pre-check endpoint first
-    2. Review results in UI
-    3. If acceptable, call /execute with pre_check_job_id
-    4. System proceeds with informed upgrade execution
-    
-    The upgrade includes:
-    - Pre-flight validation (if not skipped)
-    - Image transfer and verification
-    - Software installation with progress tracking
-    - Automatic reboot and connectivity monitoring
-    - Post-upgrade version verification
-    - Rollback capability (via snapshot if available)
-    """,
     responses={
-        202: {"description": "✅ Upgrade job accepted and queued"},
-        400: {"description": "❌ Invalid parameters or failed pre-checks"},
-        503: {"description": "🔴 Backend services unavailable"},
+        202: {"description": "Upgrade job accepted and queued"},
+        400: {"description": "Invalid parameters or failed pre-checks"},
+        503: {"description": "Backend services unavailable"},
     },
 )
 async def execute_code_upgrade(
     request: CodeUpgradeRequestModel,
 ) -> CodeUpgradeResponseModel:
     """
-    🎯 ENDPOINT: Execute code upgrade with enhanced pre-check integration.
+    Execute code upgrade with enhanced pre-check integration.
     """
     logger.info(
-        f"📄 Upgrade Request Received - "
+        f"Upgrade Request Received - "
         f"Target: {request.hostname or request.inventory_file}, "
         f"Image: {request.image_filename}, "
         f"Pre-Check ID: {request.pre_check_job_id or 'None'}, "
-        f"Skip Pre-Check: {request.skip_pre_check}, "
-        f"Pre-check Selection: {request.pre_check_selection}"
+        f"Skip Pre-Check: {request.skip_pre_check}"
     )
 
-    # ======================================================================
-    # SERVICE AVAILABILITY CHECKS
-    # ======================================================================
+    # Service availability
     if not redis_client or not redis_client.ping():
-        logger.error("❌ Redis unavailable")
+        logger.error("Redis unavailable")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Job queue service unavailable",
         )
 
     if not SCRIPT_PATH.is_file():
-        logger.error(f"❌ Script not found: {SCRIPT_PATH}")
+        logger.error(f"Script not found: {SCRIPT_PATH}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Upgrade service configuration error",
         )
 
-    # ======================================================================
-    # PARAMETER VALIDATION
-    # ======================================================================
+    # Parameter validation
     validation_error = validate_upgrade_parameters(
         hostname=request.hostname,
         inventory_file=request.inventory_file,
@@ -708,16 +578,14 @@ async def execute_code_upgrade(
     )
 
     if validation_error:
-        logger.warning(f"❌ Validation failed: {validation_error}")
+        logger.warning(f"Validation failed: {validation_error}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=validation_error
         )
 
-    # ======================================================================
-    # JOB INITIALIZATION
-    # ======================================================================
+    # Job initialization
     job_id = f"code-upgrade-{uuid.uuid4()}"
-    logger.info(f"🆕 Initializing upgrade job: {job_id}")
+    logger.info(f"Initializing upgrade job: {job_id}")
 
     try:
         # Build command arguments
@@ -736,12 +604,12 @@ async def execute_code_upgrade(
         # Add skip-pre-check flag if requested
         if request.skip_pre_check:
             cmd_args.append("--skip-pre-check")
-            logger.warning(f"⚠️ Pre-check will be SKIPPED for job {job_id}")
+            logger.warning(f"Pre-check will be SKIPPED for job {job_id}")
 
         # Add force flag if requested
         if request.force_upgrade:
             cmd_args.append("--force")
-            logger.warning(f"⚠️ Force upgrade enabled for job {job_id}")
+            logger.warning(f"Force upgrade enabled for job {job_id}")
 
         # Construct job payload
         job_payload = {
@@ -757,7 +625,6 @@ async def execute_code_upgrade(
                 "vendor": request.vendor,
                 "platform": request.platform,
                 "username": request.username,
-                "pre_check_selection": request.pre_check_selection,
                 "pre_check_job_id": request.pre_check_job_id,
                 "skip_pre_check": request.skip_pre_check,
                 "force_upgrade": request.force_upgrade,
@@ -767,11 +634,9 @@ async def execute_code_upgrade(
 
         # Queue job
         redis_client.lpush(REDIS_JOB_QUEUE, json.dumps(job_payload))
-        logger.info(f"✅ Upgrade job {job_id} queued successfully")
+        logger.info(f"Upgrade job {job_id} queued successfully")
 
-        # ======================================================================
-        # SUCCESS RESPONSE
-        # ======================================================================
+        # Success response
         target_desc = (
             request.hostname
             if request.hostname
@@ -789,9 +654,8 @@ async def execute_code_upgrade(
 
     except HTTPException:
         raise
-
     except Exception as e:
-        logger.error(f"💥 Unexpected error: {str(e)}", exc_info=True)
+        logger.error(f"Unexpected error: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Unexpected error during upgrade submission",
@@ -824,13 +688,6 @@ async def health_check() -> HealthCheckResponseModel:
         "timestamp": datetime.utcnow().isoformat() + "Z",
     }
 
-    if all([health_status["redis_connected"], health_status["script_exists"]]):
-        logger.info("✅ Health Check: ALL SYSTEMS OPERATIONAL")
-    else:
-        logger.warning(
-            f"⚠️ Health Check Issues - Redis: {health_status['redis_connected']}, Script: {health_status['script_exists']}"
-        )
-
     return HealthCheckResponseModel(**health_status)
 
 
@@ -847,14 +704,14 @@ def get_router() -> APIRouter:
 
 async def cleanup_on_shutdown():
     """Cleanup operations during application shutdown."""
-    logger.info("🛑 Code Upgrade Service: Shutting down...")
+    logger.info("Code Upgrade Service: Shutting down...")
 
     if redis_client:
         try:
             redis_client.close()
-            logger.info("✅ Redis connection closed")
+            logger.info("Redis connection closed")
         except Exception as e:
-            logger.error(f"❌ Error closing Redis: {e}")
+            logger.error(f"Error closing Redis: {e}")
 
 
 # Export public interface
