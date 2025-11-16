@@ -9,12 +9,12 @@
  * @author nikos-geranios_vgi
  * @date 2025-11-05
  */
- 
+
 import { useCallback } from 'react';
 import { API_URL, ENDPOINTS } from '../constants/api';
 import { validateUpgradeParameters, validateWebSocketConnection } from '../utils/validation';
 import { prepareApiPayload } from '../utils/payloadPreparation';
- 
+
 /**
  * Custom hook for pre-check validation operations
  *
@@ -34,7 +34,7 @@ export function usePreCheck({
   wsChannel,
   setState
 }) {
- 
+
   /**
    * Initiates pre-check validation operation
    *
@@ -50,9 +50,9 @@ export function usePreCheck({
    */
   const startPreCheck = useCallback(async (e) => {
     e.preventDefault();
- 
+
     console.log("[PRE_CHECK] ===== PRE-CHECK VALIDATION INITIATED =====");
- 
+
     // ======================================================================
     // VALIDATION
     // ======================================================================
@@ -69,7 +69,7 @@ export function usePreCheck({
       });
       return;
     }
- 
+
     const wsValidation = validateWebSocketConnection(isConnected);
     if (!wsValidation.valid) {
       console.error("[PRE_CHECK] ❌ WebSocket not connected");
@@ -83,7 +83,7 @@ export function usePreCheck({
       });
       return;
     }
- 
+
     // ======================================================================
     // CLEANUP
     // ======================================================================
@@ -91,7 +91,7 @@ export function usePreCheck({
       console.log(`[PRE_CHECK] Unsubscribing from previous channel: ${wsChannel}`);
       sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
     }
- 
+
     // ======================================================================
     // STATE RESET
     // ======================================================================
@@ -106,20 +106,21 @@ export function usePreCheck({
       preCheckSummary: null,
       canProceedWithUpgrade: false,
     });
- 
+
     // Clear refs
     setState({
       processedStepsRef: new Set(),
       loggedMessagesRef: new Set(),
     });
- 
+
     // ======================================================================
     // API CALL
     // ======================================================================
     const payload = prepareApiPayload(upgradeParams, 'pre-check');
- 
+
     console.log("[PRE_CHECK] Submitting to API endpoint:", `${API_URL}${ENDPOINTS.PRE_CHECK}`);
- 
+    console.log("[PRE_CHECK] Payload being sent:", payload);
+
     try {
       const response = await fetch(`${API_URL}${ENDPOINTS.PRE_CHECK}`, {
         method: 'POST',
@@ -129,9 +130,9 @@ export function usePreCheck({
         credentials: 'include',
         body: JSON.stringify(payload),
       });
- 
+
       console.log("[PRE_CHECK] Response status:", response.status);
- 
+
       if (!response.ok) {
         let errorMessage;
         try {
@@ -141,27 +142,27 @@ export function usePreCheck({
           const errorText = await response.text();
           errorMessage = errorText || `HTTP ${response.status}`;
         }
- 
+
         throw new Error(`API error: ${errorMessage}`);
       }
- 
+
       const data = await response.json();
       console.log("[PRE_CHECK] ✅ Job queued successfully:", {
         job_id: data.job_id,
         ws_channel: data.ws_channel,
         phase: data.phase
       });
- 
+
       setState({
         preCheckJobId: data.job_id,
         jobId: data.job_id,
         wsChannel: data.ws_channel,
       });
- 
+
       // Subscribe to WebSocket updates
       console.log(`[WEBSOCKET] Subscribing to channel: ${data.ws_channel}`);
       sendMessage({ type: 'SUBSCRIBE', channel: data.ws_channel });
- 
+
       setState({
         jobOutput: prev => [...prev, {
           timestamp: new Date().toISOString(),
@@ -170,10 +171,10 @@ export function usePreCheck({
           event_type: 'JOB_STARTED'
         }]
       });
- 
+
     } catch (error) {
       console.error("[PRE_CHECK] ❌ API Call Failed:", error);
- 
+
       setState({
         jobOutput: prev => [...prev, {
           timestamp: new Date().toISOString(),
@@ -186,7 +187,7 @@ export function usePreCheck({
       });
     }
   }, [upgradeParams, isConnected, sendMessage, wsChannel, setState]);
- 
+
   return {
     startPreCheck,
   };

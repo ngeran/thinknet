@@ -168,6 +168,12 @@ class PreCheckRequestModel(BaseModel):
         examples=["junos-install-srxsme-mips-64-24.4R2-S1.7.tgz"],
     )
 
+    # NEW: Pre-check selection field to match frontend
+    pre_check_selection: Optional[str] = Field(
+        default=None,
+        description="Specific pre-check tests to run (e.g., 'health', 'bgp', 'storage')",
+    )
+
     # Advanced pre-check options
     skip_storage_check: bool = Field(
         default=False, description="Skip storage space validation (use with caution)"
@@ -257,7 +263,12 @@ class CodeUpgradeRequestModel(BaseModel):
         ..., description="Upgrade image filename (REQUIRED)", min_length=1
     )
 
-    # NEW: Pre-check integration
+    # NEW: Pre-check selection field to match frontend
+    pre_check_selection: Optional[str] = Field(
+        default=None, description="Pre-check selection type from frontend"
+    )
+
+    # Pre-check integration
     pre_check_job_id: Optional[str] = Field(
         None, description="Job ID from completed pre-check (provides context)"
     )
@@ -306,6 +317,8 @@ code_upgrade_router = APIRouter(
 # ================================================================================
 # 🛡️ VALIDATION & HELPER FUNCTIONS
 # ================================================================================
+
+
 def validate_upgrade_parameters(
     hostname: Optional[str],
     inventory_file: Optional[str],
@@ -314,8 +327,12 @@ def validate_upgrade_parameters(
     target_version: str,
     image_filename: str,
 ) -> Optional[str]:
-    """Comprehensive validation of upgrade parameters."""
+    """
+    Comprehensive validation of upgrade parameters.
 
+    Returns:
+        Optional[str]: Error message if validation fails, None if validation passes
+    """
     # Target specification
     if not hostname and not inventory_file:
         return "❌ Either 'hostname' or 'inventory_file' must be specified"
@@ -352,10 +369,30 @@ def build_script_arguments(
     image_filename: str,
     phase: UpgradePhase = UpgradePhase.UPGRADE,
     pre_check_options: Optional[Dict[str, Any]] = None,
+    pre_check_selection: Optional[str] = None,
 ) -> List[str]:
+    """
+    Build command line arguments for the upgrade script.
+
+    Args:
+        hostname: Target device hostname
+        inventory_file: Path to inventory file
+        username: Device username
+        password: Device password
+        vendor: Device vendor
+        platform: Device platform
+        target_version: Target software version
+        image_filename: Upgrade image filename
+        phase: Operation phase (pre_check or upgrade)
+        pre_check_options: Pre-check specific options
+        pre_check_selection: Specific tests to run
+
+    Returns:
+        List[str]: Command line arguments
+    """
     args = []
 
-    # Phase selector (NEW)
+    # Phase selector
     args.extend(["--phase", phase.value])
 
     # Target specification
@@ -368,9 +405,9 @@ def build_script_arguments(
     args.extend(["--username", username])
     args.extend(["--password", password])
 
-    # 🛠️ FIX THESE TWO LINES - CHANGE UNDERSCORES TO HYPHENS:
-    args.extend(["--image-filename", image_filename])  # ✅ FIXED
-    args.extend(["--target-version", target_version])  # ✅ FIXED
+    # Upgrade parameters
+    args.extend(["--image-filename", image_filename])
+    args.extend(["--target-version", target_version])
 
     # Optional parameters
     if vendor:
@@ -390,6 +427,23 @@ def build_script_arguments(
         if pre_check_options.get("require_snapshot"):
             args.append("--require-snapshot")
 
+    # NEW: Pre-check test selection
+    if phase == UpgradePhase.PRE_CHECK and pre_check_selection:
+        # Map frontend selection to backend test names
+        selection_mapping = {
+            "health": "health",
+            "bgp": "bgp",
+            "storage": "storage",
+            "compatibility": "compatibility",
+            "snapshot": "snapshot",
+            "all": "all",
+        }
+
+        selected_test = selection_mapping.get(pre_check_selection.lower())
+        if selected_test:
+            args.extend(["--tests", selected_test])
+            logger.info(f"🎯 Running specific pre-check test: {selected_test}")
+
     # Upgrade phase options
     if phase == UpgradePhase.UPGRADE:
         args.extend(["--allow-downgrade"])
@@ -399,7 +453,7 @@ def build_script_arguments(
 
 
 # ================================================================================
-# 🎯 PRE-CHECK ENDPOINT (NEW)
+# 🎯 PRE-CHECK ENDPOINT (ENHANCED)
 # ================================================================================
 @code_upgrade_router.post(
     "/pre-check",
@@ -451,10 +505,13 @@ async def run_pre_check(request: PreCheckRequestModel) -> PreCheckResponseModel:
         f"🔍 Pre-Check Request Received - "
         f"Target: {request.hostname or request.inventory_file}, "
         f"Image: {request.image_filename}, "
-        f"Target Version: {request.target_version}"
+        f"Target Version: {request.target_version}, "
+        f"Pre-check Selection: {request.pre_check_selection}"
     )
 
-    # Service availability checks
+    # ======================================================================
+    # SERVICE AVAILABILITY CHECKS
+    # ======================================================================
     if not redis_client or not redis_client.ping():
         logger.error("❌ Redis unavailable - cannot queue pre-check")
         raise HTTPException(
@@ -469,7 +526,9 @@ async def run_pre_check(request: PreCheckRequestModel) -> PreCheckResponseModel:
             detail="Pre-check service configuration error",
         )
 
-    # Parameter validation
+    # ======================================================================
+    # PARAMETER VALIDATION
+    # ======================================================================
     validation_error = validate_upgrade_parameters(
         hostname=request.hostname,
         inventory_file=request.inventory_file,
@@ -485,7 +544,9 @@ async def run_pre_check(request: PreCheckRequestModel) -> PreCheckResponseModel:
             status_code=status.HTTP_400_BAD_REQUEST, detail=validation_error
         )
 
-    # Job initialization
+    # ======================================================================
+    # JOB INITIALIZATION
+    # ======================================================================
     job_id = f"pre-check-{uuid.uuid4()}"
     logger.info(f"🆕 Initializing pre-check job: {job_id}")
 
@@ -509,6 +570,7 @@ async def run_pre_check(request: PreCheckRequestModel) -> PreCheckResponseModel:
             image_filename=request.image_filename,
             phase=UpgradePhase.PRE_CHECK,
             pre_check_options=pre_check_options,
+            pre_check_selection=request.pre_check_selection,
         )
 
         # Construct job payload
@@ -525,6 +587,7 @@ async def run_pre_check(request: PreCheckRequestModel) -> PreCheckResponseModel:
                 "vendor": request.vendor,
                 "platform": request.platform,
                 "username": request.username,
+                "pre_check_selection": request.pre_check_selection,
                 "pre_check_options": pre_check_options,
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             },
@@ -534,7 +597,9 @@ async def run_pre_check(request: PreCheckRequestModel) -> PreCheckResponseModel:
         redis_client.lpush(REDIS_JOB_QUEUE, json.dumps(job_payload))
         logger.info(f"✅ Pre-check job {job_id} queued successfully")
 
-        # Success response
+        # ======================================================================
+        # SUCCESS RESPONSE
+        # ======================================================================
         target_desc = (
             request.hostname
             if request.hostname
@@ -609,10 +674,13 @@ async def execute_code_upgrade(
         f"Target: {request.hostname or request.inventory_file}, "
         f"Image: {request.image_filename}, "
         f"Pre-Check ID: {request.pre_check_job_id or 'None'}, "
-        f"Skip Pre-Check: {request.skip_pre_check}"
+        f"Skip Pre-Check: {request.skip_pre_check}, "
+        f"Pre-check Selection: {request.pre_check_selection}"
     )
 
-    # Service availability
+    # ======================================================================
+    # SERVICE AVAILABILITY CHECKS
+    # ======================================================================
     if not redis_client or not redis_client.ping():
         logger.error("❌ Redis unavailable")
         raise HTTPException(
@@ -627,7 +695,9 @@ async def execute_code_upgrade(
             detail="Upgrade service configuration error",
         )
 
-    # Parameter validation
+    # ======================================================================
+    # PARAMETER VALIDATION
+    # ======================================================================
     validation_error = validate_upgrade_parameters(
         hostname=request.hostname,
         inventory_file=request.inventory_file,
@@ -643,7 +713,9 @@ async def execute_code_upgrade(
             status_code=status.HTTP_400_BAD_REQUEST, detail=validation_error
         )
 
-    # Job initialization
+    # ======================================================================
+    # JOB INITIALIZATION
+    # ======================================================================
     job_id = f"code-upgrade-{uuid.uuid4()}"
     logger.info(f"🆕 Initializing upgrade job: {job_id}")
 
@@ -685,6 +757,7 @@ async def execute_code_upgrade(
                 "vendor": request.vendor,
                 "platform": request.platform,
                 "username": request.username,
+                "pre_check_selection": request.pre_check_selection,
                 "pre_check_job_id": request.pre_check_job_id,
                 "skip_pre_check": request.skip_pre_check,
                 "force_upgrade": request.force_upgrade,
@@ -696,7 +769,9 @@ async def execute_code_upgrade(
         redis_client.lpush(REDIS_JOB_QUEUE, json.dumps(job_payload))
         logger.info(f"✅ Upgrade job {job_id} queued successfully")
 
-        # Success response
+        # ======================================================================
+        # SUCCESS RESPONSE
+        # ======================================================================
         target_desc = (
             request.hostname
             if request.hostname
