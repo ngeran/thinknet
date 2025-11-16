@@ -59,8 +59,17 @@ export function usePreCheck({
     const validationErrors = validateUpgradeParameters(upgradeParams);
     if (validationErrors.length > 0) {
       console.error("[PRE_CHECK] ❌ Validation failed:", validationErrors);
+
+      // FIX: Convert validation errors to proper strings
+      const errorMessages = validationErrors.map(error => {
+        if (typeof error === 'object') {
+          return error.message || JSON.stringify(error);
+        }
+        return error;
+      });
+
       setState({
-        jobOutput: prev => [...prev, ...validationErrors.map(error => ({
+        jobOutput: prev => [...prev, ...errorMessages.map(error => ({
           timestamp: new Date().toISOString(),
           message: `Validation Error: ${error}`,
           level: 'error',
@@ -119,7 +128,7 @@ export function usePreCheck({
     const payload = prepareApiPayload(upgradeParams, 'pre-check');
 
     console.log("[PRE_CHECK] Submitting to API endpoint:", `${API_URL}${ENDPOINTS.PRE_CHECK}`);
-    console.log("[PRE_CHECK] Payload being sent:", payload);
+    console.log("[PRE_CHECK] Payload being sent:", JSON.stringify(payload, null, 2));
 
     try {
       const response = await fetch(`${API_URL}${ENDPOINTS.PRE_CHECK}`, {
@@ -137,10 +146,25 @@ export function usePreCheck({
         let errorMessage;
         try {
           const errorData = await response.json();
-          errorMessage = errorData.detail || errorData.message || `HTTP ${response.status}`;
+          console.log("[PRE_CHECK] Error response data:", errorData);
+
+          // FIX: Handle different error response formats
+          if (Array.isArray(errorData.detail)) {
+            errorMessage = errorData.detail.map(err => {
+              if (typeof err === 'object') {
+                return err.msg || JSON.stringify(err);
+              }
+              return err;
+            }).join(', ');
+          } else if (typeof errorData.detail === 'string') {
+            errorMessage = errorData.detail;
+          } else if (errorData.message) {
+            errorMessage = errorData.message;
+          } else {
+            errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+          }
         } catch {
-          const errorText = await response.text();
-          errorMessage = errorText || `HTTP ${response.status}`;
+          errorMessage = `HTTP ${response.status}: ${response.statusText}`;
         }
 
         throw new Error(`API error: ${errorMessage}`);

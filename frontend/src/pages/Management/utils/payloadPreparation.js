@@ -15,9 +15,7 @@
  * @returns {Object} Prepared payload
  */
 export function prepareApiPayload(upgradeParams, operationType) {
-  // ============================================================================
-  // BASE PAYLOAD - COMMON FIELDS
-  // ============================================================================
+  // Base payload - common fields
   const basePayload = {
     hostname: upgradeParams.hostname,
     inventory_file: upgradeParams.inventoryFile,
@@ -29,16 +27,12 @@ export function prepareApiPayload(upgradeParams, operationType) {
     image_filename: upgradeParams.imageFilename,
   };
 
-  // ============================================================================
-  // ADD PRE_CHECK_SELECTION IF PROVIDED
-  // ============================================================================
+  // Add pre_check_selection if provided
   if (upgradeParams.preCheckSelection) {
     basePayload.pre_check_selection = upgradeParams.preCheckSelection;
   }
 
-  // ============================================================================
-  // OPERATION-SPECIFIC FIELDS
-  // ============================================================================
+  // Operation-specific fields
   if (operationType === 'pre-check') {
     return {
       ...basePayload,
