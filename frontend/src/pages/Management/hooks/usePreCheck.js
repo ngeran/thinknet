@@ -60,7 +60,7 @@ export function usePreCheck({
     if (validationErrors.length > 0) {
       console.error("[PRE_CHECK] ❌ Validation failed:", validationErrors);
 
-      // FIX: Convert validation errors to proper strings
+      // Convert validation errors to proper strings
       const errorMessages = validationErrors.map(error => {
         if (typeof error === 'object') {
           return error.message || JSON.stringify(error);
@@ -125,12 +125,12 @@ export function usePreCheck({
     // ======================================================================
     // API CALL
     // ======================================================================
-    const payload = prepareApiPayload(upgradeParams, 'pre-check');
-
-    console.log("[PRE_CHECK] Submitting to API endpoint:", `${API_URL}${ENDPOINTS.PRE_CHECK}`);
-    console.log("[PRE_CHECK] Payload being sent:", JSON.stringify(payload, null, 2));
-
     try {
+      const payload = prepareApiPayload(upgradeParams, 'pre-check');
+
+      console.log("[PRE_CHECK] Submitting to API endpoint:", `${API_URL}${ENDPOINTS.PRE_CHECK}`);
+      console.log("[PRE_CHECK] Payload being sent:", JSON.stringify(payload, null, 2));
+
       const response = await fetch(`${API_URL}${ENDPOINTS.PRE_CHECK}`, {
         method: 'POST',
         headers: {
@@ -148,7 +148,7 @@ export function usePreCheck({
           const errorData = await response.json();
           console.log("[PRE_CHECK] Error response data:", errorData);
 
-          // FIX: Handle different error response formats
+          // Handle different error response formats
           if (Array.isArray(errorData.detail)) {
             errorMessage = errorData.detail.map(err => {
               if (typeof err === 'object') {

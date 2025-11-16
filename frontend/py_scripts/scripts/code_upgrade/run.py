@@ -4,7 +4,7 @@
 SCRIPT:             Juniper Device Code Upgrade - Clean Event Architecture
 ENTRY POINT:        main.py
 VERSION:            2.1.0 - Structured Step Reporting
-AUTHOR:             nikos-geranios_vgi
+AUTHOR:             nikos
 DATE:               2025-11-07
 LAST UPDATED:       2025-11-07 15:13:11 UTC
 ================================================================================

@@ -4,7 +4,6 @@
 FILE:               app_gateway/api/routers/code_upgrade.py
 DESCRIPTION:        Enhanced FastAPI router with pre-check support
 VERSION:            4.0 - Added comprehensive pre-check phase
-NEW FEATURES:       ✅ Pre-check endpoint, ✅ Upgrade approval workflow
 ================================================================================
 """
 
@@ -169,17 +168,6 @@ class PreCheckRequestModel(BaseModel):
         extra = "forbid"
 
 
-class PreCheckResultModel(BaseModel):
-    """Individual pre-check result"""
-
-    check_name: str = Field(..., description="Name of the pre-check")
-    severity: PreCheckSeverity = Field(..., description="Result severity")
-    passed: bool = Field(..., description="Whether check passed")
-    message: str = Field(..., description="Detailed result message")
-    details: Optional[Dict[str, Any]] = Field(None, description="Additional details")
-    recommendation: Optional[str] = Field(None, description="Recommended action")
-
-
 class PreCheckResponseModel(BaseModel):
     """Response model for pre-check job submission"""
 
@@ -190,72 +178,6 @@ class PreCheckResponseModel(BaseModel):
     timestamp: str = Field(..., description="ISO timestamp")
     phase: UpgradePhase = Field(
         default=UpgradePhase.PRE_CHECK, description="Current phase"
-    )
-
-
-# ================================================================================
-# 📦 REQUEST/RESPONSE MODELS - UPGRADE
-# ================================================================================
-class CodeUpgradeRequestModel(BaseModel):
-    """
-    Enhanced request model for code upgrade operations.
-    """
-
-    command: str = Field(
-        default="code_upgrade",
-        description="Operation command - must be 'code_upgrade'",
-        examples=["code_upgrade"],
-    )
-    hostname: Optional[str] = Field(
-        default=None,
-        description="Single target device hostname or IP",
-        examples=["172.27.200.200"],
-    )
-    inventory_file: Optional[str] = Field(
-        default=None,
-        description="Path to inventory file for multiple devices",
-        examples=["/app/inventories/devices.csv"],
-    )
-    username: str = Field(..., description="Device username (REQUIRED)", min_length=1)
-    password: str = Field(..., description="Device password (REQUIRED)", min_length=1)
-    vendor: Optional[str] = Field(None, description="Device vendor")
-    platform: Optional[str] = Field(None, description="Device platform/model")
-    target_version: str = Field(
-        ..., description="Target software version (REQUIRED)", min_length=1
-    )
-    image_filename: str = Field(
-        ..., description="Upgrade image filename (REQUIRED)", min_length=1
-    )
-
-    # Pre-check selection field
-    pre_check_selection: Optional[str] = Field(
-        default=None, description="Pre-check selection type from frontend"
-    )
-
-    # Pre-check integration
-    pre_check_job_id: Optional[str] = Field(
-        None, description="Job ID from completed pre-check"
-    )
-    skip_pre_check: bool = Field(default=False, description="Skip inline pre-check")
-    force_upgrade: bool = Field(
-        default=False,
-        description="Force upgrade even with warnings",
-    )
-
-    class Config:
-        extra = "forbid"
-
-
-class CodeUpgradeResponseModel(BaseModel):
-    """Response model for upgrade job submission"""
-
-    job_id: str = Field(..., description="Unique upgrade job identifier")
-    status: str = Field(..., description="Job status message")
-    ws_channel: str = Field(..., description="WebSocket channel for progress")
-    message: str = Field(..., description="Detailed message")
-    timestamp: str = Field(..., description="ISO timestamp")
-    phase: UpgradePhase = Field(
-        default=UpgradePhase.UPGRADE, description="Current phase"
     )
 
 
@@ -521,144 +443,6 @@ async def run_pre_check(request: PreCheckRequestModel) -> PreCheckResponseModel:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Unexpected error during pre-check submission",
-        )
-
-
-# ================================================================================
-# 🎯 UPGRADE ENDPOINT
-# ================================================================================
-@code_upgrade_router.post(
-    "/execute",
-    response_model=CodeUpgradeResponseModel,
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Execute Code Upgrade on Network Device",
-    responses={
-        202: {"description": "Upgrade job accepted and queued"},
-        400: {"description": "Invalid parameters or failed pre-checks"},
-        503: {"description": "Backend services unavailable"},
-    },
-)
-async def execute_code_upgrade(
-    request: CodeUpgradeRequestModel,
-) -> CodeUpgradeResponseModel:
-    """
-    Execute code upgrade with enhanced pre-check integration.
-    """
-    logger.info(
-        f"Upgrade Request Received - "
-        f"Target: {request.hostname or request.inventory_file}, "
-        f"Image: {request.image_filename}, "
-        f"Pre-Check ID: {request.pre_check_job_id or 'None'}, "
-        f"Skip Pre-Check: {request.skip_pre_check}"
-    )
-
-    # Service availability
-    if not redis_client or not redis_client.ping():
-        logger.error("Redis unavailable")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Job queue service unavailable",
-        )
-
-    if not SCRIPT_PATH.is_file():
-        logger.error(f"Script not found: {SCRIPT_PATH}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Upgrade service configuration error",
-        )
-
-    # Parameter validation
-    validation_error = validate_upgrade_parameters(
-        hostname=request.hostname,
-        inventory_file=request.inventory_file,
-        username=request.username,
-        password=request.password,
-        target_version=request.target_version,
-        image_filename=request.image_filename,
-    )
-
-    if validation_error:
-        logger.warning(f"Validation failed: {validation_error}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=validation_error
-        )
-
-    # Job initialization
-    job_id = f"code-upgrade-{uuid.uuid4()}"
-    logger.info(f"Initializing upgrade job: {job_id}")
-
-    try:
-        # Build command arguments
-        cmd_args = build_script_arguments(
-            hostname=request.hostname,
-            inventory_file=request.inventory_file,
-            username=request.username,
-            password=request.password,
-            vendor=request.vendor,
-            platform=request.platform,
-            target_version=request.target_version,
-            image_filename=request.image_filename,
-            phase=UpgradePhase.UPGRADE,
-        )
-
-        # Add skip-pre-check flag if requested
-        if request.skip_pre_check:
-            cmd_args.append("--skip-pre-check")
-            logger.warning(f"Pre-check will be SKIPPED for job {job_id}")
-
-        # Add force flag if requested
-        if request.force_upgrade:
-            cmd_args.append("--force")
-            logger.warning(f"Force upgrade enabled for job {job_id}")
-
-        # Construct job payload
-        job_payload = {
-            "job_id": job_id,
-            "script_path": str(SCRIPT_PATH),
-            "cmd_args": cmd_args,
-            "metadata": {
-                "operation": "code_upgrade",
-                "phase": "upgrade",
-                "target": request.hostname or request.inventory_file,
-                "image_filename": request.image_filename,
-                "target_version": request.target_version,
-                "vendor": request.vendor,
-                "platform": request.platform,
-                "username": request.username,
-                "pre_check_job_id": request.pre_check_job_id,
-                "skip_pre_check": request.skip_pre_check,
-                "force_upgrade": request.force_upgrade,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
-            },
-        }
-
-        # Queue job
-        redis_client.lpush(REDIS_JOB_QUEUE, json.dumps(job_payload))
-        logger.info(f"Upgrade job {job_id} queued successfully")
-
-        # Success response
-        target_desc = (
-            request.hostname
-            if request.hostname
-            else f"devices in {request.inventory_file}"
-        )
-
-        return CodeUpgradeResponseModel(
-            job_id=job_id,
-            status="Code upgrade job queued successfully",
-            ws_channel=f"job:{job_id}",
-            message=f"Code upgrade started for {request.image_filename} to {target_desc}",
-            timestamp=datetime.utcnow().isoformat() + "Z",
-            phase=UpgradePhase.UPGRADE,
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Unexpected error during upgrade submission",
         )
 
 
