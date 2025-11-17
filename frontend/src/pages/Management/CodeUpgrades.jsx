@@ -4,7 +4,7 @@
  * =============================================================================
  *
  * @version 4.8.0 (Added Pre-Check Selection)
- * @last_updated 2025-11-10 15:36:31 UTC
+ * @last_updated 2025-11-17 14:18:47 UTC
  * @author nikos-geranios_vgi
  *
  * 🎯 UPDATES (v4.8.0):
@@ -12,6 +12,7 @@
  * - Added selectedPreChecks state management
  * - Updated ConfigurationTab props to include pre-check selection
  * - Enhanced validation to include pre-check selection
+ * - FIXED: Removed TypeScript interface syntax for .jsx compatibility
  *
  * 🏗️ ARCHITECTURE:
  * - All business logic delegated to hooks
@@ -19,16 +20,16 @@
  * - Main component coordinates workflow and manages prop passing
  * - Significantly reduced complexity and improved maintainability
  */
-
+ 
 import React, { useMemo, useCallback } from 'react';
-
+ 
 // ============================================================================
 // UI COMPONENT IMPORTS
 // ============================================================================
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-
+ 
 // ============================================================================
 // CUSTOM HOOKS
 // ============================================================================
@@ -37,7 +38,7 @@ import { useUpgradeState } from './hooks/useUpgradeState';
 import { usePreCheck } from './hooks/usePreCheck';
 import { useCodeUpgrade } from './hooks/useCodeUpgrade';
 import { useWebSocketMessages } from './hooks/useWebSocketMessages';
-
+ 
 // ============================================================================
 // TAB COMPONENTS
 // ============================================================================
@@ -45,24 +46,24 @@ import ConfigurationTab from './tabs/ConfigurationTab';
 import ExecutionTab from './tabs/ExecutionTab';
 import ReviewTab from './tabs/ReviewTab';
 import ResultsTab from './tabs/ResultsTab';
-
+ 
 // ============================================================================
 // UTILITIES
 // ============================================================================
 import { extractVersionFromImageFilename } from '@/utils/versionParser';
-
+ 
 /**
  * =============================================================================
  * MAIN COMPONENT
  * =============================================================================
  */
 export default function CodeUpgrades() {
-
+ 
   // ==========================================================================
   // WEBSOCKET CONNECTION
   // ==========================================================================
   const { sendMessage, lastMessage, isConnected } = useJobWebSocket();
-
+ 
   // ==========================================================================
   // CENTRALIZED STATE MANAGEMENT
   // ==========================================================================
@@ -70,7 +71,7 @@ export default function CodeUpgrades() {
     // Upgrade parameters
     upgradeParams,
     setUpgradeParams,
-
+ 
     // UI state
     activeTab,
     setActiveTab,
@@ -80,7 +81,7 @@ export default function CodeUpgrades() {
     setCurrentPhase,
     showTechnicalDetails,
     setShowTechnicalDetails,
-
+ 
     // Progress tracking
     progress,
     setProgress,
@@ -90,7 +91,7 @@ export default function CodeUpgrades() {
     setCompletedSteps,
     totalSteps,
     setTotalSteps,
-
+ 
     // Job identifiers
     jobId,
     setJobId,
@@ -98,7 +99,7 @@ export default function CodeUpgrades() {
     setWsChannel,
     finalResults,
     setFinalResults,
-
+ 
     // Pre-check state
     preCheckJobId,
     setPreCheckJobId,
@@ -110,25 +111,25 @@ export default function CodeUpgrades() {
     setIsRunningPreCheck,
     canProceedWithUpgrade,
     setCanProceedWithUpgrade,
-
+ 
     // Pre-check selection (NEW)
     selectedPreChecks,
     setSelectedPreChecks,
-
+ 
     // Statistics
     statistics,
     setStatistics,
-
+ 
     // Refs
     processedStepsRef,
     latestStepMessageRef,
     loggedMessagesRef,
     scrollAreaRef,
-
+ 
     // Utility functions
     resetState,
   } = useUpgradeState();
-
+ 
   // ==========================================================================
   // STATE SETTER WRAPPER
   // ==========================================================================
@@ -137,7 +138,7 @@ export default function CodeUpgrades() {
       console.warn('[STATE] Functional updates not yet implemented in setState wrapper');
       return;
     }
-
+ 
     Object.entries(updates).forEach(([key, value]) => {
       switch (key) {
         case 'upgradeParams': setUpgradeParams(value); break;
@@ -181,19 +182,19 @@ export default function CodeUpgrades() {
     setIsRunningPreCheck, setCanProceedWithUpgrade, setSelectedPreChecks,
     setStatistics, processedStepsRef, loggedMessagesRef
   ]);
-
+ 
   // ==========================================================================
   // PRE-CHECK HOOK
   // ==========================================================================
   const { startPreCheck } = usePreCheck({
     upgradeParams,
-    selectedPreChecks, // NEW: Pass selected checks
+    selectedPreChecks, // Pass selected checks
     isConnected,
     sendMessage,
     wsChannel,
     setState,
   });
-
+ 
   // ==========================================================================
   // UPGRADE EXECUTION HOOK
   // ==========================================================================
@@ -205,7 +206,7 @@ export default function CodeUpgrades() {
     wsChannel,
     setState,
   });
-
+ 
   // ==========================================================================
   // WEBSOCKET MESSAGE PROCESSING
   // ==========================================================================
@@ -227,19 +228,22 @@ export default function CodeUpgrades() {
       scrollAreaRef,
     },
   });
-
+ 
   // ==========================================================================
   // EVENT HANDLERS
   // ==========================================================================
-
+ 
   /**
    * Handles parameter changes from form inputs
    * Special handling for image_filename to auto-extract version
+   *
+   * @param {string} name - Parameter name
+   * @param {any} value - Parameter value
    */
   const handleParamChange = useCallback((name, value) => {
     console.log(`[PARAM_CHANGE] ${name}: ${value}`);
     setUpgradeParams(prev => ({ ...prev, [name]: value }));
-
+ 
     // Auto-extract version when image is selected
     if (name === 'image_filename' && value) {
       const preciseVersion = extractVersionFromImageFilename(value);
@@ -251,39 +255,41 @@ export default function CodeUpgrades() {
       }
     }
   }, [setUpgradeParams]);
-
+ 
   /**
-   * Handles pre-check selection changes (NEW)
+   * Handles pre-check selection changes
+   *
+   * @param {Array<string>} checkIds - Array of selected check IDs
    */
   const handlePreCheckSelectionChange = useCallback((checkIds) => {
     console.log(`[PRE_CHECK_SELECTION] Selected checks:`, checkIds);
     setSelectedPreChecks(checkIds);
   }, [setSelectedPreChecks]);
-
+ 
   /**
    * Resets the entire workflow to initial state
    */
   const resetWorkflow = useCallback(() => {
     console.log("[WORKFLOW] ===== INITIATING COMPLETE RESET =====");
-
+ 
     if (wsChannel) {
       console.log(`[WEBSOCKET] Unsubscribing from channel: ${wsChannel}`);
       sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
     }
-
+ 
     resetState();
-
+ 
     console.log("[WORKFLOW] ✅ Reset complete - ready for new operation");
   }, [wsChannel, sendMessage, resetState]);
-
+ 
   // ==========================================================================
   // DERIVED STATE
   // ==========================================================================
-
+ 
   const isRunning = jobStatus === 'running';
   const isComplete = jobStatus === 'success';
   const hasError = jobStatus === 'failed';
-
+ 
   /**
    * Form validation - checks if all required fields are filled
    */
@@ -296,11 +302,11 @@ export default function CodeUpgrades() {
       upgradeParams.target_version.trim()
     );
   }, [upgradeParams]);
-
+ 
   // ==========================================================================
   // RENDER
   // ==========================================================================
-
+ 
   return (
     <div className="p-8 pt-6">
       {/* ====================================================================
@@ -313,7 +319,7 @@ export default function CodeUpgrades() {
             Upgrade device operating system with pre-flight validation
           </p>
         </div>
-
+ 
         {/* Reset button - only show when job is active */}
         {jobStatus !== 'idle' && (
           <Button onClick={resetWorkflow} variant="outline" size="sm">
@@ -321,14 +327,14 @@ export default function CodeUpgrades() {
           </Button>
         )}
       </div>
-
+ 
       <Separator className="mb-8" />
-
+ 
       {/* ====================================================================
           MAIN TABS CONTAINER
           ==================================================================== */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-
+ 
         {/* ==================================================================
             TAB NAVIGATION
             ================================================================== */}
@@ -336,11 +342,11 @@ export default function CodeUpgrades() {
           <TabsTrigger value="config" disabled={isRunning}>
             Configure
           </TabsTrigger>
-
+ 
           <TabsTrigger value="execute" disabled={currentPhase === "config"}>
             {currentPhase === "pre_check" ? "Pre-Check" : "Execute"}
           </TabsTrigger>
-
+ 
           <TabsTrigger
             value="review"
             disabled={!preCheckSummary && activeTab !== "review"}
@@ -348,12 +354,12 @@ export default function CodeUpgrades() {
           >
             Review {preCheckSummary && "✅"}
           </TabsTrigger>
-
+ 
           <TabsTrigger value="results" disabled={currentPhase !== "results"}>
             Results
           </TabsTrigger>
         </TabsList>
-
+ 
         {/* ==================================================================
             TAB 1: CONFIGURATION
             ================================================================== */}
@@ -369,7 +375,7 @@ export default function CodeUpgrades() {
             onPreCheckSelectionChange={handlePreCheckSelectionChange}
           />
         </TabsContent>
-
+ 
         {/* ==================================================================
             TAB 2: EXECUTION
             ================================================================== */}
@@ -389,7 +395,7 @@ export default function CodeUpgrades() {
             scrollAreaRef={scrollAreaRef}
           />
         </TabsContent>
-
+ 
         {/* ==================================================================
             TAB 3: REVIEW
             ================================================================== */}
@@ -404,7 +410,7 @@ export default function CodeUpgrades() {
             onForceReview={() => {}} // Remove debug handler or keep for dev
           />
         </TabsContent>
-
+ 
         {/* ==================================================================
             TAB 4: RESULTS
             ================================================================== */}
@@ -429,7 +435,7 @@ export default function CodeUpgrades() {
             jobOutput={jobOutput}
           />
         </TabsContent>
-
+ 
       </Tabs>
     </div>
   );
