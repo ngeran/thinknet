@@ -1,18 +1,18 @@
 /**
  * =============================================================================
- * EXECUTION TAB - ENHANCED ERROR VISIBILITY
+ * EXECUTION TAB - ENHANCED ERROR VISIBILITY & MESSAGE DISPLAY
  * =============================================================================
  *
- * VERSION: 2.4.0 - Enhanced User Experience and Black/White Theme
+ * VERSION: 2.5.0 - Fixed Message Display Issue
  * AUTHOR: nikos
  * DATE: 2025-11-07
- * LAST UPDATED: 2025-11-10
+ * LAST UPDATED: 2025-11-17
  *
- * CRITICAL UPDATES (v2.4.0):
- * - Removed "Current Step" display for cleaner UI
- * - Added cleanStepMessage() for user-friendly validation steps
- * - Updated to black and white color scheme
- * - Improved message formatting and readability
+ * CRITICAL UPDATES (v2.5.0):
+ * - Fixed message filtering to show all 10 steps properly
+ * - Improved LOG_MESSAGE detection for user-facing content
+ * - Better handling of mixed event types
+ * - Black and white color scheme maintained
  */
 
 import React, { useEffect } from 'react';
@@ -73,19 +73,20 @@ export default function ExecutionTab({
 
   /**
    * Show ALL messages that have useful content.
-   * Includes STEP_COMPLETE, OPERATION_START, OPERATION_COMPLETE, and LOG_MESSAGE with step info.
+   * Includes STEP_COMPLETE, OPERATION_START, OPERATION_COMPLETE, and user-facing LOG_MESSAGE.
    */
   const structuredSteps = jobOutput.filter(entry => {
-    // Include any message that looks like a step
+    // Always include structured step events
     if (entry.event_type === 'STEP_COMPLETE') return true;
     if (entry.event_type === 'OPERATION_START') return true;
     if (entry.event_type === 'OPERATION_COMPLETE') return true;
+    if (entry.event_type === 'PRE_CHECK_COMPLETE') return true;
 
-    // Also include LOG_MESSAGE or INFO messages if they contain step information
-    if (entry.message) {
+    // Include LOG_MESSAGE or INFO messages if they contain step information
+    if (entry.message && (entry.event_type === 'LOG_MESSAGE' || entry.event_type === 'INFO')) {
       const msg = entry.message.toLowerCase();
 
-      // Check if message contains step patterns (be more inclusive)
+      // Check if message contains step patterns (be inclusive)
       if (entry.message.includes('Step ') ||
         entry.message.match(/step\s+\d+/i) ||
         entry.message.includes('✅') ||
@@ -99,6 +100,7 @@ export default function ExecutionTab({
         msg.includes('connected') ||
         msg.includes('starting') ||
         msg.includes('completed') ||
+        msg.includes('running') ||
         msg.includes('failed') ||
         msg.includes('success')) {
         return true;

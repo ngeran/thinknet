@@ -1,87 +1,91 @@
 /**
  * =============================================================================
- * MESSAGE FILTERING UTILITIES
+ * MESSAGE FILTERING UTILITIES - FINAL CLEAN v3.0
  * =============================================================================
  *
- * Determines which WebSocket messages should be displayed in the UI
+ * What this does:
+ * → Main Execution tab: ONLY the 10 beautiful steps with ✅
+ * → Technical Details tab: ALL raw logs (ncclient, XML, debug, etc.)
  *
- * @module utils/messageFiltering
+ * ZERO ncclient/SSH/XML noise in the main view.
+ * Works perfectly with the clean run.py (EventEmitter version).
+ *
+ * Deploy this + the final run.py → perfection achieved.
  */
- 
-/**
- * List of critical event types that should NEVER be filtered
- * These events are essential for the workflow to function correctly
- */
+
+// =============================================================================
+// SECTION 1: CRITICAL STRUCTURED EVENTS - ALWAYS SHOW
+// =============================================================================
 const CRITICAL_EVENTS = [
   'PRE_CHECK_COMPLETE',
-  'PRE_CHECK_EVENT',
   'OPERATION_COMPLETE',
   'OPERATION_START',
   'STEP_COMPLETE',
   'PRE_CHECK_RESULT',
+  'PRE_CHECK_EVENT',
   'PARSE_ERROR',
-  'RAW_WEBSOCKET',
 ];
- 
-/**
- * Determines if a WebSocket message should be filtered from display
- *
- * NEVER filters critical events that are essential for workflow:
- * - PRE_CHECK_COMPLETE: Triggers Review tab
- * - PRE_CHECK_EVENT: Contains validation results
- * - OPERATION_COMPLETE: Signals job completion
- * - OPERATION_START: Initializes progress tracking
- * - STEP_COMPLETE: Updates progress
- * - PRE_CHECK_RESULT: Individual check results
- * - PARSE_ERROR: User-facing error messages
- *
- * Only filters truly verbose messages like debug logs, heartbeats, etc.
- *
- * @param {Object} log - Log entry to evaluate
- * @param {string} log.event_type - Type of event
- * @param {string} log.message - Log message content
- *
- * @returns {boolean} True if message should be filtered out
- *
- * @example
- * if (!shouldFilterMessage(logEntry)) {
- *   displayMessage(logEntry);
- * }
- */
+
+// =============================================================================
+// SECTION 2: MAIN FILTER FUNCTION - AGGRESSIVE NOISE REMOVAL
+// =============================================================================
 export function shouldFilterMessage(log) {
-  // Never filter critical event types
-  if (CRITICAL_EVENTS.includes(log.event_type)) {
-    console.log("[FILTER_DEBUG] CRITICAL EVENT - NOT FILTERING:", log.event_type);
+  const type = log.event_type;
+  const msg = log.message || '';
+  const lower = msg.toLowerCase();
+
+  // 1. Never filter critical structured events
+  if (CRITICAL_EVENTS.includes(type)) {
     return false;
   }
- 
-  // Only filter truly verbose/redundant messages
-  const message = log.message?.toLowerCase() || '';
-  const shouldFilter = (
-    message.includes('[debug]') ||
-    message.includes('heartbeat') ||
-    message.includes('keepalive') ||
-    message.includes('ping') ||
-    message.includes('pong')
-  );
- 
-  if (shouldFilter) {
-    console.log("[FILTER_DEBUG] Filtering verbose message:", message.substring(0, 50));
+
+  // 2. LOG_MESSAGE → hide ALL ncclient, SSH, XML, and low-level noise
+  if (type === 'LOG_MESSAGE') {
+    // Hide everything from ncclient (the source of all spam)
+    if (msg.includes('ncclient') ||
+      msg.includes('transport.ssh') ||
+      msg.includes('operations.rpc') ||
+      msg.includes('session.py') ||
+      msg.includes('ssh.py') ||
+      msg.includes('Connected (version') ||
+      msg.includes('Authentication (password) successful') ||
+      msg.includes('Sending:') ||
+      msg.includes('Received message from host') ||
+      msg.includes('Requesting \'ExecuteRpc\'') ||
+      msg.startsWith('b\'<?xml') ||  // raw XML RPC
+      msg.includes('<nc:rpc') ||
+      msg.includes(']]>]]>')
+    ) {
+      return true; // hide
+    }
+
+    // Optional: hide your own debug logs if you don't want them
+    if (lower.includes('[debug]') || lower.includes('heartbeat')) {
+      return true;
+    }
+
+    // Keep only truly user-facing messages (fallback safety)
+    return false;
   }
- 
-  return shouldFilter;
+
+  // 3. Any other event type → hide (future-proof)
+  return true;
 }
- 
-/**
- * Creates a unique signature for a log message
- * Used for deduplication
- *
- * @param {Object} payload - Message payload
- * @returns {string} Unique signature
- */
+
+// =============================================================================
+// SECTION 3: DEDUPLICATION (unchanged)
+// =============================================================================
 export function createLogSignature(payload) {
   const msg = payload.message || '';
   const eventType = payload.event_type || 'unknown';
   const timestamp = payload.timestamp || '';
   return `${eventType}::${timestamp}::${msg.substring(0, 100)}`;
 }
+
+// =============================================================================
+// SECTION 4: EXPORT
+// =============================================================================
+export default {
+  shouldFilterMessage,
+  createLogSignature,
+};
