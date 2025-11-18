@@ -6,6 +6,9 @@
  * API endpoints and configuration
  *
  * @module constants/api
+ * @author nikos-geranios_vgi
+ * @date 2025-11-05
+ * @updated 2025-11-18 16:47:45 UTC - Added UPGRADE endpoint for device upgrades
  */
  
 /**
@@ -16,10 +19,16 @@ export const API_URL = import.meta.env.VITE_API_GATEWAY_URL || 'http://localhost
  
 /**
  * API Endpoints
+ *
+ * ARCHITECTURE:
+ * - PRE_CHECK: Validation checks before upgrade (code_upgrade.py)
+ * - UPGRADE: Device software upgrade execution (upgrade.py) - NEW 2025-11-18 16:47:45 UTC
+ * - EXECUTE: Generic operations for backup/restore (operations.py)
  */
 export const ENDPOINTS = {
-  PRE_CHECK: '/api/operations/pre-check',
-  EXECUTE: '/api/operations/execute',
+  PRE_CHECK: '/api/operations/pre-check',  // Pre-check validation endpoint
+  UPGRADE: '/api/operations/upgrade',      // NEW - Device upgrade endpoint
+  EXECUTE: '/api/operations/execute',      // Generic operations (backup/restore)
 };
  
 /**
