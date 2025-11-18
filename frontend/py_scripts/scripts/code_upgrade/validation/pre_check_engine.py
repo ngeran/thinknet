@@ -1,26 +1,32 @@
 """
 Pre-upgrade validation engine for comprehensive device health checks.
-
+ 
 Performs safety checks including storage, hardware health, protocol stability,
 and configuration validation before proceeding with upgrades or downgrades.
 Supports both Juniper SRX and other platform families with platform-specific
 validation rules.
-
-ENHANCEMENTS:
+ 
+ENHANCEMENTS v4.0.0:
+- Added progress callback support for real-time check completion notifications
+- Enhanced run_all_checks to invoke callback after each check completes
+- Improved error handling with callback notification on failures
+- Better integration with main.py for granular progress tracking
+ 
+PREVIOUS ENHANCEMENTS:
 - Added RPC timeout and retry logic to handle slow/unresponsive devices
 - Improved error handling for NETCONF operation timeouts
 - Better detection of device responsiveness issues
 - Support for selective pre-check execution based on user selection
 """
-
+ 
 import logging
 import re
 import time
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Tuple, Optional, Callable
 from functools import wraps
-
+ 
 from jnpr.junos.exception import RpcError, RpcTimeoutError
-
+ 
 from core.dataclasses import PreCheckResult, PreCheckSummary
 from core.enums import CheckSeverity
 from core.constants import (
@@ -32,26 +38,30 @@ from core.constants import (
     MAX_TEMPERATURE_WARNING,
     MAX_TEMPERATURE_CRITICAL,
 )
-
+ 
 logger = logging.getLogger(__name__)
-
-
+ 
+ 
+# =============================================================================
+# SECTION 1: RPC RETRY DECORATOR
+# =============================================================================
+ 
 def rpc_with_retry(timeout=60, retries=2, delay=5):
     """
     Decorator for RPC operations with timeout and retry logic.
-
+ 
     Handles slow/unresponsive devices by implementing retry mechanism
     with configurable timeouts and delays between attempts.
-
+ 
     Args:
         timeout: RPC timeout in seconds
         retries: Number of retry attempts
         delay: Delay between retries in seconds
-
+ 
     Returns:
         Decorator function for RPC methods
     """
-
+ 
     def decorator(func):
         @wraps(func)
         def wrapper(self, *args, **kwargs):
@@ -62,15 +72,15 @@ def rpc_with_retry(timeout=60, retries=2, delay=5):
                     if hasattr(self, "device") and self.device:
                         original_timeout = self.device.timeout
                         self.device.timeout = timeout
-
+ 
                     result = func(self, *args, **kwargs)
-
+ 
                     # Restore original timeout
                     if hasattr(self, "device") and self.device:
                         self.device.timeout = original_timeout
-
+ 
                     return result
-
+ 
                 except (RpcTimeoutError, RpcError) as e:
                     last_exception = e
                     if attempt < retries:
@@ -85,31 +95,41 @@ def rpc_with_retry(timeout=60, retries=2, delay=5):
                             f"All RPC attempts failed after {retries + 1} attempts: {e}"
                         )
             raise last_exception
-
+ 
         return wrapper
-
+ 
     return decorator
-
-
+ 
+ 
+# =============================================================================
+# SECTION 2: ENHANCED PRE-CHECK ENGINE CLASS
+# =============================================================================
+ 
 class EnhancedPreCheckEngine:
     """
     Comprehensive pre-upgrade validation with platform-aware checks.
-
+ 
     Executes a suite of validation checks to ensure device readiness for
     upgrade operations, including hardware health, storage capacity,
     protocol stability, and configuration compatibility.
-
-    ENHANCEMENTS:
+ 
+    ENHANCEMENTS v4.0.0:
+    - Added progress_callback parameter to run_all_checks()
+    - Invokes callback after each check completes for real-time progress
+    - Callback receives check name, number, total count, and pass/fail status
+    - Enables main.py to emit granular STEP_COMPLETE events
+ 
+    PREVIOUS ENHANCEMENTS:
     - All RPC operations include timeout and retry logic
     - Better handling of slow/unresponsive devices
     - Improved error messages for timeout scenarios
     - Support for selective check execution based on user preferences
     """
-
+ 
     def __init__(self, device, hostname: str, image_filename: str):
         """
         Initialize pre-check engine with device context.
-
+ 
         Args:
             device: PyEZ device instance
             hostname: Device hostname for logging
@@ -118,22 +138,35 @@ class EnhancedPreCheckEngine:
         self.device = device
         self.hostname = hostname
         self.image_filename = image_filename
-
+ 
+    # =========================================================================
+    # SUBSECTION 2.1: MAIN CHECK ORCHESTRATION
+    # =========================================================================
+ 
     def run_all_checks(
-        self, selected_check_ids: Optional[List[str]] = None
+        self,
+        selected_check_ids: Optional[List[str]] = None,
+        progress_callback: Optional[Callable[[str, int, int, bool], None]] = None
     ) -> PreCheckSummary:
         """
-        Execute pre-upgrade validation checks with optional selection.
-
+        Execute pre-upgrade validation checks with optional selection and progress callbacks.
+ 
         Enhanced to support selective execution of checks based on user
-        preferences from the frontend interface.
-
+        preferences from the frontend interface, and to provide real-time
+        progress updates via callback function.
+ 
         Args:
             selected_check_ids: List of check IDs to run. If None, runs all checks.
-
+            progress_callback: Optional callback function invoked after each check.
+                              Signature: callback(check_name: str, check_num: int,
+                                                 total_checks: int, passed: bool)
+ 
         Returns:
             PreCheckSummary with all check results and overall status
         """
+        # =====================================================================
+        # SUBSECTION 2.1.1: CHECK REGISTRY DEFINITION
+        # =====================================================================
         # Define all available checks with their IDs and methods
         available_checks = {
             "image_availability": {
@@ -153,7 +186,10 @@ class EnhancedPreCheckEngine:
                 "name": "BGP Protocol Stability",
             },
         }
-
+ 
+        # =====================================================================
+        # SUBSECTION 2.1.2: CHECK SELECTION LOGIC
+        # =====================================================================
         # Determine which checks to run based on selection
         if selected_check_ids:
             # Filter checks based on user selection
@@ -163,7 +199,7 @@ class EnhancedPreCheckEngine:
                     checks_to_run.append(available_checks[check_id]["method"])
                 else:
                     logger.warning(f"[{self.hostname}] Unknown check ID: {check_id}")
-
+ 
             if not checks_to_run:
                 logger.warning(
                     f"[{self.hostname}] No valid checks selected, running all checks"
@@ -179,42 +215,61 @@ class EnhancedPreCheckEngine:
             logger.info(
                 f"[{self.hostname}] 🔍 Running all {len(checks_to_run)} pre-upgrade checks"
             )
-
+ 
+        # =====================================================================
+        # SUBSECTION 2.1.3: CHECK EXECUTION LOOP WITH PROGRESS CALLBACKS
+        # =====================================================================
         results = []
         passed = 0
         warnings = 0
         critical_failures = 0
-
-        for check_func in checks_to_run:
+ 
+        for idx, check_func in enumerate(checks_to_run, start=1):
+            # Resolve check name for logging and callback
+            check_name = "Unknown Check"
+            for check_id, check_info in available_checks.items():
+                if check_info["method"] == check_func:
+                    check_name = check_info["name"]
+                    break
+ 
             try:
-                logger.debug(f"[{self.hostname}] Starting check: {check_func.__name__}")
+                logger.debug(f"[{self.hostname}] Starting check {idx}/{len(checks_to_run)}: {check_name}")
+ 
+                # Execute the check
                 result = check_func()
                 results.append(result)
-
+ 
+                # Update counters based on result
                 if result.passed:
                     passed += 1
-                    logger.debug(f"[{self.hostname}] ✅ {check_func.__name__} passed")
+                    logger.debug(f"[{self.hostname}] ✅ {check_name} passed")
                 else:
                     if result.severity == CheckSeverity.CRITICAL:
                         critical_failures += 1
-                        logger.error(
-                            f"[{self.hostname}] ❌ {check_func.__name__} failed critically"
-                        )
+                        logger.error(f"[{self.hostname}] ❌ {check_name} failed critically")
                     elif result.severity == CheckSeverity.WARNING:
                         warnings += 1
-                        logger.warning(
-                            f"[{self.hostname}] ⚠️ {check_func.__name__} has warnings"
+                        logger.warning(f"[{self.hostname}] ⚠️ {check_name} has warnings")
+ 
+                # ============================================================
+                # NEW: Invoke progress callback if provided
+                # ============================================================
+                if progress_callback:
+                    try:
+                        progress_callback(check_name, idx, len(checks_to_run), result.passed)
+                        logger.debug(f"[{self.hostname}] Progress callback invoked for {check_name}")
+                    except Exception as callback_error:
+                        logger.error(
+                            f"[{self.hostname}] Progress callback failed for {check_name}: {callback_error}"
                         )
-
+                        # Don't fail the check if callback fails
+ 
             except RpcTimeoutError as e:
-                # Get the check name for better error reporting
-                check_name = "Unknown Check"
-                for check_id, check_info in available_checks.items():
-                    if check_info["method"] == check_func:
-                        check_name = check_info["name"]
-                        break
-
+                # ============================================================
+                # SUBSECTION 2.1.4: TIMEOUT ERROR HANDLING
+                # ============================================================
                 logger.error(f"[{self.hostname}] ❌ Check {check_name} timed out: {e}")
+ 
                 failed_result = PreCheckResult(
                     check_name=check_name,
                     severity=CheckSeverity.CRITICAL,
@@ -225,16 +280,20 @@ class EnhancedPreCheckEngine:
                 )
                 results.append(failed_result)
                 critical_failures += 1
-
+ 
+                # Invoke progress callback for failed check
+                if progress_callback:
+                    try:
+                        progress_callback(check_name, idx, len(checks_to_run), False)
+                    except Exception as callback_error:
+                        logger.error(f"[{self.hostname}] Callback failed after timeout: {callback_error}")
+ 
             except Exception as e:
-                # Get the check name for better error reporting
-                check_name = "Unknown Check"
-                for check_id, check_info in available_checks.items():
-                    if check_info["method"] == check_func:
-                        check_name = check_info["name"]
-                        break
-
+                # ============================================================
+                # SUBSECTION 2.1.5: GENERAL ERROR HANDLING
+                # ============================================================
                 logger.error(f"[{self.hostname}] ❌ Check {check_name} failed: {e}")
+ 
                 failed_result = PreCheckResult(
                     check_name=check_name,
                     severity=CheckSeverity.CRITICAL,
@@ -245,10 +304,20 @@ class EnhancedPreCheckEngine:
                 )
                 results.append(failed_result)
                 critical_failures += 1
-
+ 
+                # Invoke progress callback for failed check
+                if progress_callback:
+                    try:
+                        progress_callback(check_name, idx, len(checks_to_run), False)
+                    except Exception as callback_error:
+                        logger.error(f"[{self.hostname}] Callback failed after error: {callback_error}")
+ 
+        # =====================================================================
+        # SUBSECTION 2.1.6: SUMMARY GENERATION
+        # =====================================================================
         # Determine if upgrade can proceed
         can_proceed = critical_failures == 0
-
+ 
         summary = PreCheckSummary(
             total_checks=len(checks_to_run),
             passed=passed,
@@ -258,22 +327,26 @@ class EnhancedPreCheckEngine:
             results=results,
             timestamp=self._get_current_timestamp(),
         )
-
+ 
         logger.info(
             f"[{self.hostname}] 📊 Pre-check summary: {passed}/{len(checks_to_run)} passed, "
             f"{warnings} warnings, {critical_failures} critical failures"
         )
-
+ 
         return summary
-
+ 
+    # =========================================================================
+    # SUBSECTION 2.2: IMAGE AVAILABILITY CHECK
+    # =========================================================================
+ 
     @rpc_with_retry(timeout=45, retries=1)
     def check_image_availability(self) -> PreCheckResult:
         """
         Verify target software image exists on device storage.
-
+ 
         Validates that the specified image file is present in /var/tmp/
         and accessible for installation operations.
-
+ 
         Returns:
             PreCheckResult with image availability status
         """
@@ -281,7 +354,7 @@ class EnhancedPreCheckEngine:
             logger.debug(
                 f"[{self.hostname}] Checking image availability: {self.image_filename}"
             )
-
+ 
             # Use CLI command to check file existence with details
             response = self.device.rpc.file_list(
                 detail=True, path=f"/var/tmp/{self.image_filename}"
@@ -289,7 +362,7 @@ class EnhancedPreCheckEngine:
             file_exists = (
                 response is not None and len(response.xpath(".//file-information")) > 0
             )
-
+ 
             if file_exists:
                 return PreCheckResult(
                     check_name="Image File Availability",
@@ -314,7 +387,7 @@ class EnhancedPreCheckEngine:
                     },
                     recommendation="Upload image file to /var/tmp/ on device",
                 )
-
+ 
         except RpcError as e:
             return PreCheckResult(
                 check_name="Image File Availability",
@@ -324,40 +397,44 @@ class EnhancedPreCheckEngine:
                 details={"error": str(e)},
                 recommendation="Verify device accessibility and file permissions",
             )
-
+ 
+    # =========================================================================
+    # SUBSECTION 2.3: STORAGE SPACE CHECK
+    # =========================================================================
+ 
     @rpc_with_retry(timeout=60, retries=1)
     def check_storage_space(self) -> PreCheckResult:
         """
         Validate sufficient storage space for upgrade operation.
-
+ 
         Checks available space in critical filesystems to ensure adequate
         storage for software installation and temporary files.
-
+ 
         Returns:
             PreCheckResult with storage space assessment
         """
         try:
             logger.debug(f"[{self.hostname}] Checking storage space")
-
+ 
             response = self.device.rpc.get_system_storage()
             filesystems = response.xpath(".//filesystem")
-
+ 
             storage_details = []
             has_critical_space = True
             has_warning_space = False
-
+ 
             for fs in filesystems:
                 filesystem_name = fs.findtext("filesystem-name", "unknown")
                 used_percent_text = fs.findtext("used-percent", "0")
                 available_percent_text = fs.findtext("available-percent", "100")
-
+ 
                 try:
                     used_percent = int(used_percent_text.strip("%"))
                     available_percent = int(available_percent_text.strip("%"))
                 except (ValueError, AttributeError):
                     used_percent = 0
                     available_percent = 100
-
+ 
                 # Calculate available space in MB (approximate)
                 total_blocks = int(fs.findtext("total-blocks", "0"))
                 block_size = int(fs.findtext("block-size", "1024"))
@@ -366,7 +443,7 @@ class EnhancedPreCheckEngine:
                     / (1024 * 1024)
                     * (available_percent / 100)
                 )
-
+ 
                 storage_details.append(
                     {
                         "filesystem": filesystem_name,
@@ -375,14 +452,14 @@ class EnhancedPreCheckEngine:
                         "available_mb": round(available_mb, 2),
                     }
                 )
-
+ 
                 # Check critical threshold
                 if used_percent >= STORAGE_CRITICAL_THRESHOLD:
                     has_critical_space = False
                 # Check warning threshold
                 elif used_percent >= STORAGE_WARNING_THRESHOLD:
                     has_warning_space = True
-
+ 
             if not has_critical_space:
                 return PreCheckResult(
                     check_name="Storage Space",
@@ -409,7 +486,7 @@ class EnhancedPreCheckEngine:
                     message="Sufficient storage space available",
                     details={"filesystems": storage_details},
                 )
-
+ 
         except RpcError as e:
             return PreCheckResult(
                 check_name="Storage Space",
@@ -419,49 +496,53 @@ class EnhancedPreCheckEngine:
                 details={"error": str(e)},
                 recommendation="Verify system storage accessibility",
             )
-
+ 
+    # =========================================================================
+    # SUBSECTION 2.4: HARDWARE HEALTH CHECK
+    # =========================================================================
+ 
     @rpc_with_retry(timeout=45, retries=1)
     def check_hardware_health(self) -> PreCheckResult:
         """
         Assess hardware component health and operational status.
-
+ 
         Validates power supplies, fan trays, temperature sensors, and
         other critical hardware components to ensure stable operation
         during upgrade process.
-
+ 
         Returns:
             PreCheckResult with hardware health assessment
         """
         try:
             logger.debug(f"[{self.hostname}] Checking hardware health")
-
+ 
             response = self.device.rpc.get_environment_information()
             components = response.xpath(".//environment-component")
-
+ 
             power_supplies_ok = 0
             power_supplies_total = 0
             fans_ok = 0
             fans_total = 0
             max_temperature = 0
             temperature_sensors = 0
-
+ 
             for component in components:
                 name = component.findtext("name", "")
                 status = component.findtext("status", "")
                 temperature_element = component.find(".//temperature")
-
+ 
                 # Count power supplies
                 if "power" in name.lower() or "psu" in name.lower():
                     power_supplies_total += 1
                     if status.lower() == "ok":
                         power_supplies_ok += 1
-
+ 
                 # Count fans
                 elif "fan" in name.lower():
                     fans_total += 1
                     if status.lower() == "ok":
                         fans_ok += 1
-
+ 
                 # Track temperatures
                 if temperature_element is not None:
                     temperature_sensors += 1
@@ -471,26 +552,26 @@ class EnhancedPreCheckEngine:
                             max_temperature = temp_value
                     except (ValueError, TypeError):
                         pass
-
+ 
             issues = []
             # Check power supply redundancy
             if power_supplies_ok < MINIMUM_POWER_SUPPLIES:
                 issues.append(
                     f"Insufficient operational power supplies: {power_supplies_ok} (minimum: {MINIMUM_POWER_SUPPLIES})"
                 )
-
+ 
             # Check fan redundancy
             if fans_ok < MINIMUM_FANS:
                 issues.append(
                     f"Insufficient operational fans: {fans_ok} (minimum: {MINIMUM_FANS})"
                 )
-
+ 
             # Check temperature thresholds
             if max_temperature > MAX_TEMPERATURE_CRITICAL:
                 issues.append(f"Critical temperature detected: {max_temperature}°C")
             elif max_temperature > MAX_TEMPERATURE_WARNING:
                 issues.append(f"High temperature warning: {max_temperature}°C")
-
+ 
             if issues:
                 return PreCheckResult(
                     check_name="Hardware Health",
@@ -522,7 +603,7 @@ class EnhancedPreCheckEngine:
                         "fans_total": fans_total,
                     },
                 )
-
+ 
         except RpcError as e:
             return PreCheckResult(
                 check_name="Hardware Health",
@@ -532,38 +613,42 @@ class EnhancedPreCheckEngine:
                 details={"error": str(e)},
                 recommendation="Verify environmental monitoring accessibility",
             )
-
+ 
+    # =========================================================================
+    # SUBSECTION 2.5: BGP STABILITY CHECK
+    # =========================================================================
+ 
     @rpc_with_retry(timeout=60, retries=1)
     def check_bgp_stability(self) -> PreCheckResult:
         """
         Validate BGP protocol stability and peer relationships.
-
+ 
         Checks BGP peer status to ensure stable routing protocol operation
         during upgrade process, minimizing network disruption.
-
+ 
         Returns:
             PreCheckResult with BGP stability assessment
         """
         try:
             logger.debug(f"[{self.hostname}] Checking BGP stability")
-
+ 
             response = self.device.rpc.get_bgp_summary_information()
             peers = response.xpath(".//bgp-peer")
-
+ 
             total_peers = 0
             established_peers = 0
             peer_details = []
-
+ 
             for peer in peers:
                 total_peers += 1
                 peer_state = peer.findtext("peer-state", "")
                 peer_address = peer.findtext("peer-address", "unknown")
-
+ 
                 peer_details.append({"address": peer_address, "state": peer_state})
-
+ 
                 if peer_state.lower() == "established":
                     established_peers += 1
-
+ 
             if total_peers == 0:
                 return PreCheckResult(
                     check_name="BGP Protocol Stability",
@@ -601,7 +686,7 @@ class EnhancedPreCheckEngine:
                     },
                     recommendation="Verify BGP peer relationships before upgrade",
                 )
-
+ 
         except RpcError as e:
             # BGP might not be configured, which is acceptable
             if "bgp is not running" in str(e).lower():
@@ -621,14 +706,18 @@ class EnhancedPreCheckEngine:
                     details={"error": str(e)},
                     recommendation="Verify BGP configuration and retry",
                 )
-
+ 
+    # =========================================================================
+    # SUBSECTION 2.6: UTILITY FUNCTIONS
+    # =========================================================================
+ 
     def _get_current_timestamp(self) -> str:
         """
         Generate ISO format timestamp for check results.
-
+ 
         Returns:
             ISO formatted timestamp string
         """
         from datetime import datetime
-
+ 
         return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")

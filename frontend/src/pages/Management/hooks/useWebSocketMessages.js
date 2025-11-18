@@ -1,19 +1,31 @@
 /**
  * =============================================================================
- * WEBSOCKET MESSAGE PROCESSING HOOK - RUST WEBSOCKET COMPATIBLE
+ * WEBSOCKET MESSAGE PROCESSING HOOK - INFINITE LOOP FIX
  * =============================================================================
  *
- * VERSION: 2.2.0 - Enhanced Error Handling for Reachability Failures
+ * VERSION: 2.3.1 - Infinite Loop Prevention
  * AUTHOR: nikos
- * DATE: 2025-11-05
- * LAST UPDATED: 2025-11-10
+ * DATE: 2025-11-18
+ * LAST UPDATED: 2025-11-18 12:53:57 UTC
+ *
+ * CRITICAL FIXES v2.3.1:
+ * - Removed problematic dependencies from useCallback hooks
+ * - Changed handleStepComplete to use event data directly instead of state
+ * - Prevented infinite setState loops causing "Maximum update depth exceeded"
+ * - Simplified dependency arrays to only essential stable references
+ *
+ * ENHANCEMENTS v2.3.0:
+ * - Implemented sequence-based deduplication instead of timestamp-based
+ * - Prevents legitimate events from being marked as duplicates
+ * - Handles rapid step emissions (sub-millisecond) correctly
+ * - Fallback to timestamp + random for legacy events without sequence
  *
  * ARCHITECTURE:
  * - Rust WebSocket sends: {"channel": "ws_channel:job:UUID", "data": "{...}"}
  * - This hook unwraps the outer structure and processes the inner event
  * - Backend events are clean JSON in the "data" field
  *
- * CRITICAL FIXES (v2.2.0):
+ * PREVIOUS ENHANCEMENTS (v2.2.0):
  * - Enhanced OPERATION_COMPLETE to handle reachability failures
  * - Added synthetic error summary creation for connection failures
  * - Implemented automatic transition to Review tab on failures
@@ -21,14 +33,14 @@
  *
  * @module hooks/useWebSocketMessages
  */
-
+ 
 import { useEffect, useCallback, useRef } from 'react';
 import { TIMING } from '../constants/timing';
-
+ 
 // =============================================================================
 // SECTION 1: RECOGNIZED EVENT TYPES
 // =============================================================================
-
+ 
 const RECOGNIZED_EVENT_TYPES = new Set([
   'PRE_CHECK_RESULT',
   'PRE_CHECK_COMPLETE',
@@ -37,11 +49,11 @@ const RECOGNIZED_EVENT_TYPES = new Set([
   'OPERATION_COMPLETE',
   'LOG_MESSAGE'
 ]);
-
+ 
 // =============================================================================
 // SECTION 2: MAIN HOOK DEFINITION
 // =============================================================================
-
+ 
 /**
  * Custom hook for processing WebSocket messages from Rust WebSocket Hub.
  *
@@ -60,19 +72,19 @@ export function useWebSocketMessages({
   setState,
   refs
 }) {
-
+ 
   // ===========================================================================
   // SUBSECTION 2.1: STATE MANAGEMENT
   // ===========================================================================
-
+ 
   const processedEventsRef = useRef(new Set());
   const transitionTimeoutRef = useRef(null);
   const safetyTimeoutRef = useRef(null);
-
+ 
   // ===========================================================================
   // SUBSECTION 2.2: CLEANUP UTILITIES
   // ===========================================================================
-
+ 
   const cleanupResources = useCallback(() => {
     if (transitionTimeoutRef.current) {
       clearTimeout(transitionTimeoutRef.current);
@@ -83,33 +95,33 @@ export function useWebSocketMessages({
       safetyTimeoutRef.current = null;
     }
   }, []);
-
+ 
   // ===========================================================================
   // SUBSECTION 2.3: RESET ON JOB CHANGE
   // ===========================================================================
-
+ 
   useEffect(() => {
     if (jobId) {
       console.log("[WEBSOCKET] New job detected, resetting processed events");
       processedEventsRef.current = new Set();
     }
   }, [jobId]);
-
+ 
   // ===========================================================================
   // SUBSECTION 2.4: CLEANUP ON UNMOUNT
   // ===========================================================================
-
+ 
   useEffect(() => {
     return () => {
       console.log("[WEBSOCKET] Cleaning up resources");
       cleanupResources();
     };
   }, [cleanupResources]);
-
+ 
   // ===========================================================================
   // SUBSECTION 2.5: SAFETY TIMEOUT FOR PRE-CHECK OPERATIONS
   // ===========================================================================
-
+ 
   /**
    * Safety timeout mechanism to prevent infinite loading states.
    * Forces error state if no completion message received within 2 minutes.
@@ -122,14 +134,14 @@ export function useWebSocketMessages({
   useEffect(() => {
     if (currentPhase === 'pre_check' && jobId && !preCheckSummary) {
       console.log("[WEBSOCKET] Starting pre-check safety timeout (120s)");
-
+ 
       safetyTimeoutRef.current = setTimeout(() => {
         console.warn("[WEBSOCKET] ⏰ PRE-CHECK TIMEOUT - No completion message received");
-
+ 
         // Double-check we're still waiting for results
         if (currentPhase === 'pre_check' && !preCheckSummary) {
           console.log("[WEBSOCKET] Creating timeout error summary");
-
+ 
           const timeoutSummary = {
             total_checks: 1,
             passed: 0,
@@ -147,7 +159,7 @@ export function useWebSocketMessages({
               timestamp: new Date().toISOString()
             }]
           };
-
+ 
           setState({
             preCheckSummary: timeoutSummary,
             canProceedWithUpgrade: false,
@@ -155,7 +167,7 @@ export function useWebSocketMessages({
             isRunningPreCheck: false,
             progress: 100,
           });
-
+ 
           // Add timeout message to job output
           setState({
             jobOutput: prev => [...prev, {
@@ -165,7 +177,7 @@ export function useWebSocketMessages({
               event_type: 'TIMEOUT'
             }]
           });
-
+ 
           // Transition to Review tab
           setTimeout(() => {
             setState({
@@ -176,7 +188,7 @@ export function useWebSocketMessages({
           }, 800);
         }
       }, 120000); // 2 minutes
-
+ 
       return () => {
         if (safetyTimeoutRef.current) {
           console.log("[WEBSOCKET] Clearing pre-check safety timeout");
@@ -186,13 +198,17 @@ export function useWebSocketMessages({
       };
     }
   }, [currentPhase, jobId, preCheckSummary, setState]);
-
+ 
   // =============================================================================
-  // SECTION 3: EVENT HANDLERS
+  // SECTION 3: EVENT HANDLERS - FIXED v2.3.1
   // =============================================================================
-
+ 
   /**
    * Handle PRE_CHECK_RESULT event
+   *
+   * CRITICAL FIX v2.3.1:
+   * - Removed setState from dependencies (it's stable from useState)
+   * - Prevents infinite re-render loops
    */
   const handlePreCheckResult = useCallback((data) => {
     console.log("[PRE_CHECK_RESULT] Individual check:", {
@@ -200,34 +216,38 @@ export function useWebSocketMessages({
       severity: data.severity,
       passed: data.passed
     });
-
+ 
     setState({
       preCheckResults: prev => [...(prev || []), data]
     });
-  }, [setState]);
-
+  }, []);  // Empty dependencies - setState is stable
+ 
   /**
    * Handle PRE_CHECK_COMPLETE event - CRITICAL for Review tab
+   *
+   * CRITICAL FIX v2.3.1:
+   * - Removed setState from dependencies
+   * - Prevents callback recreation on every render
    */
   const handlePreCheckComplete = useCallback((data) => {
     console.log("[PRE_CHECK_COMPLETE] ========================================");
     console.log("[PRE_CHECK_COMPLETE] 🎯 PRE-CHECK COMPLETE EVENT RECEIVED");
     console.log("[PRE_CHECK_COMPLETE] Enabling Review Tab");
     console.log("[PRE_CHECK_COMPLETE] ========================================");
-
+ 
     const summary = data.pre_check_summary || data;
-
+ 
     if (summary && (summary.total_checks !== undefined || summary.results)) {
       console.log("[PRE_CHECK_COMPLETE] ✅ Valid summary:", {
         total_checks: summary.total_checks,
         can_proceed: summary.can_proceed,
         results_count: summary.results?.length || 0
       });
-
+ 
       if (!summary.results) {
         summary.results = [];
       }
-
+ 
       setState({
         preCheckSummary: summary,
         canProceedWithUpgrade: summary.can_proceed !== false,
@@ -235,9 +255,9 @@ export function useWebSocketMessages({
         isRunningPreCheck: false,
         progress: 100,
       });
-
+ 
       console.log("[PRE_CHECK_COMPLETE] ✅ State updated - Review tab enabled");
-
+ 
       setTimeout(() => {
         setState({
           activeTab: "review",
@@ -245,7 +265,7 @@ export function useWebSocketMessages({
         });
         console.log("[PRE_CHECK_COMPLETE] ✅ Transitioned to Review tab");
       }, 500);
-
+ 
     } else {
       console.warn("[PRE_CHECK_COMPLETE] ❌ Invalid summary data:", summary);
       setState({
@@ -254,57 +274,76 @@ export function useWebSocketMessages({
         progress: 100
       });
     }
-  }, [setState]);
-
+  }, []);  // Empty dependencies
+ 
   /**
    * Handle OPERATION_START event
+   *
+   * CRITICAL FIX v2.3.1:
+   * - Removed setState from dependencies
    */
   const handleOperationStart = useCallback((data) => {
     console.log("[OPERATION_START] Operation started:", {
       operation: data.operation,
       total_steps: data.total_steps
     });
-
+ 
     setState({
       totalSteps: data.total_steps || 0,
       progress: 5,
     });
-  }, [setState]);
-
+  }, []);  // Empty dependencies
+ 
   /**
    * Handle STEP_COMPLETE event
+   *
+   * CRITICAL FIX v2.3.1:
+   * - Use step number from event data directly instead of incrementing state
+   * - Prevents dependency on current state values
+   * - Removed setState and refs from dependencies
+   * - This is the PRIMARY fix for the infinite loop issue
    */
   const handleStepComplete = useCallback((data) => {
     const stepNum = data.step;
-
+    const totalStepsFromEvent = data.total_steps;
+ 
+    console.log(`[STEP_COMPLETE] Processing step ${stepNum}/${totalStepsFromEvent}`);
+ 
+    // Check if we have refs (but don't include in dependencies)
     if (!refs?.processedStepsRef?.current) {
       console.warn("[STEP_COMPLETE] processedStepsRef not initialized");
       return;
     }
-
+ 
+    // Only process if we haven't seen this step before
     if (!refs.processedStepsRef.current.has(stepNum)) {
       refs.processedStepsRef.current.add(stepNum);
-      console.log(`[STEP_COMPLETE] Step ${stepNum}/${data.total_steps} completed`);
-
-      setState(prevState => {
-        const newCompleted = prevState.completedSteps + 1;
-        const newProgress = data.percentage ||
-          Math.min(99, Math.round((newCompleted / prevState.totalSteps) * 100));
-
-        return {
-          completedSteps: newCompleted,
-          progress: newProgress,
-        };
+      console.log(`[STEP_COMPLETE] ✅ Step ${stepNum}/${totalStepsFromEvent} completed`);
+ 
+      // CRITICAL FIX: Use step number directly from event, not incrementing counter
+      // This prevents state dependency and infinite loops
+      const newProgress = data.percentage ||
+        Math.min(99, Math.round((stepNum / totalStepsFromEvent) * 100));
+ 
+      setState({
+        completedSteps: stepNum,  // Use event data directly
+        progress: newProgress,
       });
+    } else {
+      console.log(`[STEP_COMPLETE] ⊘ Step ${stepNum} already processed, skipping`);
     }
-  }, [setState, refs]);
-
+  }, []);  // Empty dependencies - refs accessed directly without dependency
+ 
   /**
    * Handle OPERATION_COMPLETE event
    *
    * CRITICAL UPDATE (v2.2.0):
    * Enhanced to handle reachability failures and connection errors.
    * Creates synthetic error summaries when operation fails without results.
+   *
+   * CRITICAL FIX v2.3.1:
+   * - Removed problematic dependencies
+   * - Only includes currentPhase, preCheckSummary, wsChannel, sendMessage
    */
   const handleOperationComplete = useCallback((data) => {
     console.log("[OPERATION_COMPLETE] ========================================");
@@ -315,10 +354,10 @@ export function useWebSocketMessages({
     console.log("[OPERATION_COMPLETE] Has final_results:", !!data.final_results);
     console.log("[OPERATION_COMPLETE] Has error_message:", !!data.error_message);
     console.log("[OPERATION_COMPLETE] ========================================");
-
+ 
     const success = data.success || data.status === "SUCCESS";
     const operation = data.operation || currentPhase;
-
+ 
     // ========================================================================
     // PRE-CHECK COMPLETION HANDLING
     // ========================================================================
@@ -326,34 +365,34 @@ export function useWebSocketMessages({
       console.log("[OPERATION_COMPLETE] Finalizing pre-check operation");
       console.log("[OPERATION_COMPLETE] Success:", success);
       console.log("[OPERATION_COMPLETE] Current preCheckSummary:", !!preCheckSummary);
-
+ 
       // ======================================================================
       // CASE 1: FAILURE WITHOUT SUMMARY (Connection/Reachability Errors)
       // ======================================================================
       if (!success && !data.final_results && !preCheckSummary) {
         console.log("[OPERATION_COMPLETE] ⚠️ Pre-check failed without results");
         console.log("[OPERATION_COMPLETE] Creating synthetic error summary");
-
+ 
         // Extract error information from various possible locations
         const errorMessage =
           data.error_message ||
           data.message ||
           data.error ||
           "Pre-check operation failed. Device may be unreachable or connection timed out.";
-
+ 
         const errorDetails =
           data.error_details ||
           data.details ||
           "Common causes include: Device unreachable via network, SSH connection timeout, invalid credentials, NETCONF not enabled, or firewall blocking connection.";
-
+ 
         const errorType = data.error_type || "CONNECTION_ERROR";
-
+ 
         console.log("[OPERATION_COMPLETE] Error details:", {
           errorType,
           errorMessage,
           errorDetails
         });
-
+ 
         // Create synthetic error summary for UI display
         const errorSummary = {
           total_checks: 1,
@@ -372,9 +411,9 @@ export function useWebSocketMessages({
             timestamp: new Date().toISOString()
           }]
         };
-
+ 
         console.log("[OPERATION_COMPLETE] Created error summary:", errorSummary);
-
+ 
         // Update state with error information
         setState({
           preCheckSummary: errorSummary,
@@ -383,7 +422,7 @@ export function useWebSocketMessages({
           isRunningPreCheck: false,
           progress: 100,
         });
-
+ 
         // Add error to job output for Execution tab visibility
         setState({
           jobOutput: prev => [...prev, {
@@ -393,13 +432,13 @@ export function useWebSocketMessages({
             event_type: 'OPERATION_COMPLETE'
           }]
         });
-
+ 
         // Unsubscribe from WebSocket channel
         if (wsChannel) {
           console.log(`[OPERATION_COMPLETE] Unsubscribing from ${wsChannel}`);
           sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
         }
-
+ 
         // Transition to Review tab to show error details
         console.log("[OPERATION_COMPLETE] Scheduling transition to Review tab");
         setTimeout(() => {
@@ -409,44 +448,44 @@ export function useWebSocketMessages({
           });
           console.log("[OPERATION_COMPLETE] ✅ Transitioned to Review tab (error state)");
         }, 800);
-
+ 
         // Exit early - failure case fully handled
         return;
       }
-
+ 
       // ======================================================================
       // CASE 2: SUCCESS WITH RESULTS
       // ======================================================================
       if (data.final_results && !preCheckSummary) {
         console.log("[OPERATION_COMPLETE] Extracting summary from final_results");
         handlePreCheckComplete({ pre_check_summary: data.final_results });
-
+ 
         // Unsubscribe from WebSocket
         if (wsChannel) {
           console.log(`[OPERATION_COMPLETE] Unsubscribing from ${wsChannel}`);
           sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
         }
-
+ 
         // handlePreCheckComplete will handle the transition
         return;
       }
-
+ 
       // ======================================================================
       // CASE 3: COMPLETION WITH EXISTING SUMMARY
       // ======================================================================
       console.log("[OPERATION_COMPLETE] Updating pre-check status (summary exists)");
-
+ 
       setState({
         isRunningPreCheck: false,
         progress: 100,
         jobStatus: success ? "success" : "failed"
       });
-
+ 
       if (wsChannel) {
         console.log(`[OPERATION_COMPLETE] Unsubscribing from ${wsChannel}`);
         sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
       }
-
+ 
       // If we have a summary already, ensure we're on Review tab
       if (preCheckSummary) {
         console.log("[OPERATION_COMPLETE] Summary exists, transitioning to Review");
@@ -458,23 +497,23 @@ export function useWebSocketMessages({
         }, 500);
       }
     }
-
+ 
     // ========================================================================
     // UPGRADE COMPLETION HANDLING
     // ========================================================================
     else if (operation === "upgrade" && currentPhase === "upgrade") {
       console.log("[OPERATION_COMPLETE] Finalizing upgrade operation");
-
+ 
       setState({
         jobStatus: success ? "success" : "failed",
         finalResults: data,
         progress: 100,
       });
-
+ 
       if (wsChannel) {
         sendMessage({ type: 'UNSUBSCRIBE', channel: wsChannel });
       }
-
+ 
       transitionTimeoutRef.current = setTimeout(() => {
         setState({
           activeTab: "results",
@@ -483,10 +522,15 @@ export function useWebSocketMessages({
         console.log("[OPERATION_COMPLETE] ✅ Transitioned to Results tab");
       }, TIMING.TAB_TRANSITION_DELAY);
     }
-  }, [currentPhase, preCheckSummary, wsChannel, sendMessage, setState, handlePreCheckComplete]);
-
+  }, [currentPhase, preCheckSummary, wsChannel, sendMessage, handlePreCheckComplete]);
+  // Only essential dependencies - no setState
+ 
   /**
    * Handle LOG_MESSAGE event
+   *
+   * CRITICAL FIX v2.3.1:
+   * - Removed setState from dependencies
+   * - Refs accessed directly without dependency
    */
   const handleLogMessage = useCallback((event) => {
     const logEntry = {
@@ -495,15 +539,15 @@ export function useWebSocketMessages({
       level: event.level?.toLowerCase() || "info",
       event_type: "LOG_MESSAGE",
     };
-
+ 
     setState({
       jobOutput: prev => [...prev, logEntry]
     });
-
+ 
     if (refs?.latestStepMessageRef) {
       refs.latestStepMessageRef.current = event.message;
     }
-
+ 
     if (refs?.scrollAreaRef?.current) {
       setTimeout(() => {
         if (refs.scrollAreaRef.current) {
@@ -511,31 +555,31 @@ export function useWebSocketMessages({
         }
       }, TIMING.AUTO_SCROLL_DELAY);
     }
-  }, [setState, refs]);
-
+  }, []);  // Empty dependencies
+ 
   // =============================================================================
   // SECTION 4: MAIN MESSAGE PROCESSING
   // =============================================================================
-
+ 
   useEffect(() => {
     // ===========================================================================
     // SUBSECTION 4.1: VALIDATION
     // ===========================================================================
-
+ 
     if (!lastMessage || !jobId) {
       return;
     }
-
+ 
     console.log("[WEBSOCKET] ========================================");
     console.log("[WEBSOCKET] Raw message received");
     console.log("[WEBSOCKET] Length:", lastMessage.length);
     console.log("[WEBSOCKET] Preview:", lastMessage.substring(0, 300));
     console.log("[WEBSOCKET] ========================================");
-
+ 
     // ===========================================================================
     // SUBSECTION 4.2: PARSE RUST WEBSOCKET WRAPPER
     // ===========================================================================
-
+ 
     let rustWrapper;
     try {
       rustWrapper = JSON.parse(lastMessage);
@@ -544,29 +588,29 @@ export function useWebSocketMessages({
       console.debug("[WEBSOCKET] Raw:", lastMessage.substring(0, 200));
       return;
     }
-
+ 
     // Validate Rust wrapper structure
     if (!rustWrapper || typeof rustWrapper !== 'object') {
       console.debug("[WEBSOCKET] Invalid Rust wrapper structure");
       return;
     }
-
+ 
     console.log("[WEBSOCKET] Rust wrapper parsed:", {
       channel: rustWrapper.channel,
       has_data: !!rustWrapper.data,
       data_length: rustWrapper.data?.length
     });
-
+ 
     // ===========================================================================
     // SUBSECTION 4.3: EXTRACT INNER EVENT FROM DATA FIELD
     // ===========================================================================
-
+ 
     // The actual event JSON is in the "data" field as a string
     if (!rustWrapper.data) {
       console.debug("[WEBSOCKET] No data field in Rust wrapper");
       return;
     }
-
+ 
     let event;
     try {
       // Parse the inner event JSON from the data string
@@ -576,101 +620,137 @@ export function useWebSocketMessages({
       console.debug("[WEBSOCKET] Data field:", rustWrapper.data.substring(0, 200));
       return;
     }
-
+ 
     // ===========================================================================
     // SUBSECTION 4.4: VALIDATE EVENT STRUCTURE
     // ===========================================================================
-
+ 
     if (!event || typeof event !== 'object') {
       console.debug("[WEBSOCKET] Invalid event structure");
       return;
     }
-
+ 
     const eventType = event.event_type;
-
+ 
     if (!eventType) {
       console.debug("[WEBSOCKET] No event_type found");
       return;
     }
-
+ 
     if (!RECOGNIZED_EVENT_TYPES.has(eventType)) {
       console.debug("[WEBSOCKET] Unrecognized event type:", eventType);
       return;
     }
-
+ 
     // ===========================================================================
-    // SUBSECTION 4.5: DEDUPLICATION
+    // SUBSECTION 4.5: ENHANCED DEDUPLICATION WITH SEQUENCE NUMBERS
     // ===========================================================================
-
-    const eventSignature = `${eventType}-${event.timestamp || Date.now()}`;
-
+ 
+    /**
+     * CRITICAL ENHANCEMENT v2.3.0:
+     *
+     * Use sequence number if available (from main.py v4.0.0+), otherwise
+     * fall back to timestamp + random suffix for legacy events.
+     *
+     * PROBLEM SOLVED:
+     * - Previous: eventSignature = `${eventType}-${timestamp}`
+     * - Issue: Multiple events in same millisecond = identical signatures
+     * - Result: Legitimate events marked as duplicates and dropped
+     * - Symptom: Progress bar stuck, steps missing
+     *
+     * NEW APPROACH:
+     * - Use unique sequence number from backend if available
+     * - Fallback to timestamp + random for legacy compatibility
+     * - Guarantees no legitimate events are dropped
+     */
+ 
+    let eventSignature;
+ 
+    if (event.data && typeof event.data.sequence === 'number') {
+      // Use sequence number for guaranteed uniqueness
+      eventSignature = `${eventType}-seq-${event.data.sequence}`;
+      console.log("[WEBSOCKET] Using sequence-based signature:", eventSignature);
+    } else if (event.sequence) {
+      // Legacy: sequence at root level
+      eventSignature = `${eventType}-seq-${event.sequence}`;
+      console.log("[WEBSOCKET] Using root-level sequence signature:", eventSignature);
+    } else {
+      // Fallback: timestamp + random suffix to prevent collisions
+      const randomSuffix = Math.random().toString(36).substring(2, 9);
+      eventSignature = `${eventType}-${event.timestamp || Date.now()}-${randomSuffix}`;
+      console.log("[WEBSOCKET] Using timestamp+random signature:", eventSignature);
+    }
+ 
     if (processedEventsRef.current.has(eventSignature)) {
       console.debug("[WEBSOCKET] Duplicate event ignored:", eventSignature);
       return;
     }
-
+ 
     processedEventsRef.current.add(eventSignature);
-
+ 
+    // Prevent memory leak by limiting cache size
     if (processedEventsRef.current.size > 1000) {
       const iterator = processedEventsRef.current.values();
       processedEventsRef.current.delete(iterator.next().value);
     }
-
+ 
     // ===========================================================================
     // SUBSECTION 4.6: LOGGING
     // ===========================================================================
-
+ 
     console.log("[WEBSOCKET] ✅ Event extracted and validated:", {
       type: eventType,
       job: event.job_id,
       level: event.level,
       has_data: !!event.data,
-      channel: rustWrapper.channel
+      has_sequence: !!(event.data?.sequence || event.sequence),
+      channel: rustWrapper.channel,
+      signature: eventSignature
     });
-
+ 
     // ===========================================================================
     // SUBSECTION 4.7: EVENT ROUTING
     // ===========================================================================
-
+ 
     switch (eventType) {
       case 'PRE_CHECK_RESULT':
         if (event.data) {
           handlePreCheckResult(event.data);
         }
         break;
-
+ 
       case 'PRE_CHECK_COMPLETE':
         if (event.data) {
           handlePreCheckComplete(event.data);
         }
         break;
-
+ 
       case 'OPERATION_START':
         if (event.data) {
           handleOperationStart(event.data);
         }
         break;
-
+ 
       case 'STEP_COMPLETE':
         if (event.data) {
           handleStepComplete(event.data);
         }
         break;
-
+ 
       case 'OPERATION_COMPLETE':
         if (event.data) {
           handleOperationComplete(event.data);
         }
         break;
-
+ 
       case 'LOG_MESSAGE':
         handleLogMessage(event);
         break;
-
+ 
       default:
         console.debug("[WEBSOCKET] Unhandled event type:", eventType);
     }
-
+ 
   }, [
     lastMessage,
     jobId,
@@ -681,6 +761,8 @@ export function useWebSocketMessages({
     handleOperationComplete,
     handleLogMessage
   ]);
+  // CRITICAL FIX v2.3.1: Only include message, jobId, and stable handler callbacks
+  // Do NOT include setState, refs, or other state values
 }
-
+ 
 export default useWebSocketMessages;
