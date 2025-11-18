@@ -3,22 +3,30 @@
  * CODE UPGRADES COMPONENT - MAIN ORCHESTRATOR
  * =============================================================================
  *
- * @version 4.8.0 (Added Pre-Check Selection)
- * @last_updated 2025-11-17 14:18:47 UTC
+ * @version 5.0.0 (Added Dedicated Upgrade Tab)
+ * @last_updated 2025-11-18 17:20:18 UTC
  * @author nikos-geranios_vgi
  *
- * 🎯 UPDATES (v4.8.0):
- * - Integrated pre-check selection functionality
- * - Added selectedPreChecks state management
- * - Updated ConfigurationTab props to include pre-check selection
- * - Enhanced validation to include pre-check selection
- * - FIXED: Removed TypeScript interface syntax for .jsx compatibility
+ * 🎯 UPDATES (v5.0.0):
+ * - Added dedicated Upgrade tab for upgrade execution monitoring
+ * - Separated pre-check execution (Execute tab) from upgrade execution (Upgrade tab)
+ * - Improved UX with clear phase separation
+ * - Enhanced workflow: Config → Execute (Pre-Check) → Review → Upgrade → Results
+ * - Auto-navigation to appropriate tabs based on operation phase
  *
  * 🏗️ ARCHITECTURE:
  * - All business logic delegated to hooks
  * - All UI rendering delegated to tab components
  * - Main component coordinates workflow and manages prop passing
  * - Significantly reduced complexity and improved maintainability
+ * - Five-tab workflow for complete upgrade lifecycle
+ *
+ * 📊 TAB WORKFLOW:
+ * 1. Configure: Set parameters and select pre-checks
+ * 2. Execute: Run and monitor pre-check validation
+ * 3. Review: Review pre-check results and decide to proceed
+ * 4. Upgrade: Monitor real-time upgrade execution (NEW)
+ * 5. Results: View final upgrade results and summary
  */
  
 import React, { useMemo, useCallback } from 'react';
@@ -45,6 +53,7 @@ import { useWebSocketMessages } from './hooks/useWebSocketMessages';
 import ConfigurationTab from './tabs/ConfigurationTab';
 import ExecutionTab from './tabs/ExecutionTab';
 import ReviewTab from './tabs/ReviewTab';
+import UpgradeTab from './tabs/UpgradeTab';  // NEW - Dedicated upgrade tab
 import ResultsTab from './tabs/ResultsTab';
  
 // ============================================================================
@@ -112,7 +121,7 @@ export default function CodeUpgrades() {
     canProceedWithUpgrade,
     setCanProceedWithUpgrade,
  
-    // Pre-check selection (NEW)
+    // Pre-check selection
     selectedPreChecks,
     setSelectedPreChecks,
  
@@ -188,7 +197,7 @@ export default function CodeUpgrades() {
   // ==========================================================================
   const { startPreCheck } = usePreCheck({
     upgradeParams,
-    selectedPreChecks, // Pass selected checks
+    selectedPreChecks,
     isConnected,
     sendMessage,
     wsChannel,
@@ -271,6 +280,8 @@ export default function CodeUpgrades() {
    */
   const resetWorkflow = useCallback(() => {
     console.log("[WORKFLOW] ===== INITIATING COMPLETE RESET =====");
+    console.log("[WORKFLOW] Date: 2025-11-18 17:20:18 UTC");
+    console.log("[WORKFLOW] User: nikos-geranios_vgi");
  
     if (wsChannel) {
       console.log(`[WEBSOCKET] Unsubscribing from channel: ${wsChannel}`);
@@ -336,17 +347,20 @@ export default function CodeUpgrades() {
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
  
         {/* ==================================================================
-            TAB NAVIGATION
+            TAB NAVIGATION - UPDATED TO 5 TABS
             ================================================================== */}
-        <TabsList className="grid w-full grid-cols-4 mb-6">
+        <TabsList className="grid w-full grid-cols-5 mb-6">
+          {/* Tab 1: Configuration */}
           <TabsTrigger value="config" disabled={isRunning}>
             Configure
           </TabsTrigger>
  
+          {/* Tab 2: Execute (Pre-Check) */}
           <TabsTrigger value="execute" disabled={currentPhase === "config"}>
-            {currentPhase === "pre_check" ? "Pre-Check" : "Execute"}
+            Pre-Check
           </TabsTrigger>
  
+          {/* Tab 3: Review */}
           <TabsTrigger
             value="review"
             disabled={!preCheckSummary && activeTab !== "review"}
@@ -355,6 +369,16 @@ export default function CodeUpgrades() {
             Review {preCheckSummary && "✅"}
           </TabsTrigger>
  
+          {/* Tab 4: Upgrade (NEW) */}
+          <TabsTrigger
+            value="upgrade"
+            disabled={currentPhase !== "upgrade"}
+            className={currentPhase === "upgrade" ? "bg-blue-50 border-blue-200" : ""}
+          >
+            Upgrade
+          </TabsTrigger>
+ 
+          {/* Tab 5: Results */}
           <TabsTrigger value="results" disabled={currentPhase !== "results"}>
             Results
           </TabsTrigger>
@@ -377,7 +401,7 @@ export default function CodeUpgrades() {
         </TabsContent>
  
         {/* ==================================================================
-            TAB 2: EXECUTION
+            TAB 2: EXECUTE (PRE-CHECK)
             ================================================================== */}
         <TabsContent value="execute">
           <ExecutionTab
@@ -407,12 +431,31 @@ export default function CodeUpgrades() {
             isRunningPreCheck={isRunningPreCheck}
             onProceedWithUpgrade={startUpgradeExecution}
             onCancel={resetWorkflow}
-            onForceReview={() => {}} // Remove debug handler or keep for dev
+            onForceReview={() => {}}
           />
         </TabsContent>
  
         {/* ==================================================================
-            TAB 4: RESULTS
+            TAB 4: UPGRADE (NEW - DEDICATED UPGRADE EXECUTION TAB)
+            ================================================================== */}
+        <TabsContent value="upgrade">
+          <UpgradeTab
+            jobStatus={jobStatus}
+            isRunning={isRunning && currentPhase === "upgrade"}
+            isComplete={isComplete && currentPhase === "upgrade"}
+            hasError={hasError && currentPhase === "upgrade"}
+            progress={progress}
+            completedSteps={completedSteps}
+            totalSteps={totalSteps}
+            jobOutput={jobOutput}
+            showTechnicalDetails={showTechnicalDetails}
+            onToggleTechnicalDetails={() => setShowTechnicalDetails(!showTechnicalDetails)}
+            scrollAreaRef={scrollAreaRef}
+          />
+        </TabsContent>
+ 
+        {/* ==================================================================
+            TAB 5: RESULTS
             ================================================================== */}
         <TabsContent value="results">
           <ResultsTab
