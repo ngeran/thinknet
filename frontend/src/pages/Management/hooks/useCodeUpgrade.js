@@ -6,9 +6,9 @@
  * Handles upgrade execution logic
  *
  * @module hooks/useCodeUpgrade
- * @author nikos
+ * @author nikos-geranios_vgi
  * @date 2025-11-05
- * @updated 2025-11-18 16:47:45 UTC - Updated to use dedicated UPGRADE endpoint
+ * @updated 2025-11-18 18:15:39 UTC - Auto-navigate to dedicated Upgrade tab
  */
  
 import { useCallback } from 'react';
@@ -19,9 +19,9 @@ import { prepareApiPayload } from '../utils/payloadPreparation';
 /**
  * Custom hook for upgrade execution operations
  *
- * ARCHITECTURE:
- * - Pre-check uses ENDPOINTS.PRE_CHECK (code_upgrade.py)
- * - Upgrade uses ENDPOINTS.UPGRADE (upgrade.py) - UPDATED 2025-11-18 16:47:45 UTC
+ * UPDATES (2025-11-18 18:15:39 UTC):
+ * - Auto-navigates to dedicated "upgrade" tab on execution start
+ * - Maintains separation between pre-check execution and upgrade execution
  *
  * @param {Object} params - Hook parameters
  * @param {Object} params.upgradeParams - Upgrade configuration parameters
@@ -54,16 +54,13 @@ export function useCodeUpgrade({
    * 1. Validates parameters and pre-check completion
    * 2. Cleans up previous WebSocket connection
    * 3. Resets state for upgrade phase
-   * 4. Sends API request to dedicated UPGRADE endpoint
-   * 5. Subscribes to WebSocket for real-time progress
-   *
-   * UPDATED 2025-11-18 16:47:45 UTC:
-   * - Changed from ENDPOINTS.EXECUTE to ENDPOINTS.UPGRADE
-   * - Now calls dedicated upgrade endpoint (upgrade.py)
+   * 4. Sends API request with pre-check job ID
+   * 5. Auto-navigates to dedicated Upgrade tab (UPDATED)
+   * 6. Subscribes to WebSocket for real-time progress
    */
   const startUpgradeExecution = useCallback(async () => {
     console.log("[UPGRADE] ===== UPGRADE EXECUTION INITIATED =====");
-    console.log("[UPGRADE] Date: 2025-11-18 16:47:45 UTC");
+    console.log("[UPGRADE] Date: 2025-11-18 18:15:39 UTC");
     console.log("[UPGRADE] User: nikos-geranios_vgi");
     console.log("[UPGRADE] Pre-check job ID:", preCheckJobId);
  
@@ -107,10 +104,10 @@ export function useCodeUpgrade({
     }
  
     // ======================================================================
-    // STATE RESET
+    // STATE RESET - CRITICAL UPDATE: Navigate to "upgrade" tab
     // ======================================================================
     setState({
-      activeTab: "execute",
+      activeTab: "upgrade",  // ← CHANGED FROM "execute" to "upgrade"
       currentPhase: "upgrade",
       jobStatus: "running",
       progress: 0,
@@ -120,6 +117,10 @@ export function useCodeUpgrade({
       totalSteps: 0,
     });
  
+    console.log("[UPGRADE] ✅ Navigating to dedicated Upgrade tab");
+    console.log("[UPGRADE] Date: 2025-11-18 18:15:39 UTC");
+    console.log("[UPGRADE] User: nikos-geranios_vgi");
+ 
     // Clear refs
     setState({
       processedStepsRef: new Set(),
@@ -127,21 +128,17 @@ export function useCodeUpgrade({
     });
  
     // ======================================================================
-    // API CALL - UPDATED 2025-11-18 16:47:45 UTC
+    // API CALL
     // ======================================================================
     const payload = prepareApiPayload({
       ...upgradeParams,
       pre_check_job_id: preCheckJobId
     }, 'upgrade');
  
-    // CRITICAL UPDATE: Changed from ENDPOINTS.EXECUTE to ENDPOINTS.UPGRADE
-    const upgradeEndpoint = `${API_URL}${ENDPOINTS.UPGRADE}`;
-    console.log("[UPGRADE] Submitting to upgrade endpoint:", upgradeEndpoint);
-    console.log("[UPGRADE] Endpoint changed from /execute to /upgrade");
-    console.log("[UPGRADE] Date: 2025-11-18 16:47:45 UTC");
+    console.log("[UPGRADE] Submitting to API endpoint:", `${API_URL}${ENDPOINTS.UPGRADE}`);
  
     try {
-      const response = await fetch(upgradeEndpoint, {
+      const response = await fetch(`${API_URL}${ENDPOINTS.UPGRADE}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -211,4 +208,3 @@ export function useCodeUpgrade({
     startUpgradeExecution,
   };
 }
-
