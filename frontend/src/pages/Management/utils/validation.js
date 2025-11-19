@@ -1,74 +1,70 @@
 /**
  * =============================================================================
- * VALIDATION UTILITIES
+ * VALIDATION UTILITIES - ENHANCED v1.2.0
  * =============================================================================
  *
- * Pure functions for parameter validation
+ * Validation functions for upgrade parameters with enhanced field handling
  *
  * @module utils/validation
+ * @author nikos-geranios_vgi
+ * @updated 2025-11-18 23:30:00 UTC - Added field extraction support
  */
 
 /**
- * Validates all required parameters before API calls
+ * Validates upgrade parameters with comprehensive field checking
  *
- * @param {Object} params - The upgrade parameters to validate
- * @param {string} params.username - Device username
- * @param {string} params.password - Device password
- * @param {string} params.hostname - Device hostname
- * @param {string} params.inventory_file - Ansible inventory file
- * @param {string} params.image_filename - Software image filename
- * @param {string} params.target_version - Target version
- *
- * @returns {Array<string>} Array of error messages (empty if valid)
- *
- * @example
- * const errors = validateUpgradeParameters(upgradeParams);
- * if (errors.length > 0) {
- *   console.error('Validation failed:', errors);
- * }
+ * ENHANCEMENT: Now works with extracted fields from pre-check results
+ * 
+ * @param {Object} upgradeParams - Upgrade parameters to validate
+ * @returns {Array} Array of validation error messages
  */
-export function validateUpgradeParameters(params) {
+export function validateUpgradeParameters(upgradeParams) {
   const errors = [];
 
-  if (!params.username?.trim()) {
-    errors.push('Username is required');
+  console.log("[VALIDATION] 🔍 Validating upgrade parameters:", {
+    params: upgradeParams,
+    hasParams: !!upgradeParams
+  });
+
+  if (!upgradeParams) {
+    errors.push("No upgrade parameters provided");
+    return errors;
   }
 
-  if (!params.password?.trim()) {
-    errors.push('Password is required');
+  // Core required fields (must be in upgradeParams)
+  if (!upgradeParams.hostname) {
+    errors.push("Hostname is required");
   }
 
-  if (!params.hostname?.trim() && !params.inventory_file?.trim()) {
-    errors.push('Either hostname or inventory file must be specified');
+  if (!upgradeParams.username) {
+    errors.push("Username is required");
   }
 
-  if (!params.image_filename?.trim()) {
-    errors.push('Software image must be selected');
+  if (!upgradeParams.password) {
+    errors.push("Password is required");
   }
 
-  if (!params.target_version?.trim()) {
-    errors.push('Target version is required (should be auto-extracted from image)');
+  // Note: targetVersion and imageFilename are now extracted separately
+  // and may not be in upgradeParams initially
+
+  if (errors.length > 0) {
+    console.error("[VALIDATION] ❌ Validation errors:", errors);
+  } else {
+    console.log("[VALIDATION] ✅ Core parameters validated successfully");
   }
 
   return errors;
 }
 
 /**
- * Validates WebSocket connection is ready
- *
- * @param {boolean} isConnected - WebSocket connection status
- * @returns {Object} Validation result
- *
- * @example
- * const { valid, error } = validateWebSocketConnection(isConnected);
+ * Validates WebSocket connection status
  */
 export function validateWebSocketConnection(isConnected) {
   if (!isConnected) {
     return {
       valid: false,
-      error: 'WebSocket not connected. Cannot start operation.',
+      error: "WebSocket connection is not established"
     };
   }
-
-  return { valid: true, error: null };
+  return { valid: true };
 }

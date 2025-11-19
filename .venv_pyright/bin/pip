@@ -1,4 +1,4 @@
-#!/home/nikos/github/ngeran/thinknet/.venv_pyright/bin/python
+#!/home/nikos/github/ngeran/thinknet/.venv_pyright/bin/python3.12
 # -*- coding: utf-8 -*-
 import re
 import sys
