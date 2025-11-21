@@ -1,53 +1,25 @@
 /**
  * =============================================================================
- * UPGRADE EXECUTION TAB COMPONENT - ENHANCED v1.1.0
+ * UPGRADE EXECUTION TAB COMPONENT v2.0.0
  * =============================================================================
  *
- * Real-time upgrade execution monitoring with progress tracking
+ * Real-time upgrade execution monitoring with elapsed timer
  *
- * @module components/tabs/UpgradeTab
- * @author nikos-geranios_vgi
- * @date 2025-11-18
- * @created 2025-11-18 17:20:18 UTC
- * @updated 2025-11-18 22:45:00 UTC - Enhanced error handling and user feedback
+ * ENHANCEMENTS v2.0.0 (2025-11-20 15:25:23 UTC):
+ * - Added elapsed time tracking and display
+ * - Timer shows in header during upgrade execution
+ * - Consistent message filtering with ExecutionTab
+ * - Enhanced UX with elapsed duration visibility
  *
- * PURPOSE:
- * Dedicated tab for monitoring device software upgrade execution with real-time
- * progress updates, step-by-step visibility, and comprehensive status tracking.
- * Separates upgrade execution from pre-check validation for clearer UX.
- *
- * ARCHITECTURE:
- * - Displays live upgrade progress during execution
- * - Shows filtered user-facing messages (hides XML/SSH noise)
- * - Provides technical details toggle for troubleshooting
+ * FEATURES:
+ * - Live upgrade progress during execution
+ * - Filtered user-facing messages (removes XML/SSH noise)
+ * - Technical details toggle for troubleshooting
+ * - Elapsed time counter updates every second
  * - Auto-transitions to Results tab on completion
- * - Integrates with WebSocket for real-time updates
- *
- * WORKFLOW:
- * 1. User clicks "Proceed with Upgrade" in Review tab
- * 2. System auto-navigates to this Upgrade tab
- * 3. Backend executes upgrade (install, reboot, verify)
- * 4. Tab displays progress messages in real-time
- * 5. On completion, auto-navigates to Results tab
- *
- * ENHANCEMENTS v1.1.0:
- * - Enhanced error state handling with detailed messages
- * - Improved progress tracking for multi-step operations
- * - Better visual feedback for connection states
- * - Enhanced technical details view with structured logging
- *
- * ENHANCEMENTS v1.0.0:
- * - Phase-specific branding (upgrade vs pre-check)
- * - Upgrade-specific progress indicators
- * - Installation progress tracking
- * - Reboot monitoring display
- * - Version verification status
- * - Technical details expandable section
- * - Clean message filtering
- * =============================================================================
  */
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -66,20 +38,18 @@ import {
   HardDrive,
   Wifi,
   ShieldAlert,
+  Clock,
 } from 'lucide-react';
 
 import { shouldShowToUser } from '../utils/messageFiltering';
 
+// =============================================================================
+// SECTION 1: HELPER COMPONENTS
+// =============================================================================
+
 /**
- * =============================================================================
- * UPGRADE STATUS BADGE COMPONENT
- * =============================================================================
- *
- * Visual status indicator for upgrade execution state
- *
- * @param {string} status - Current job status
- * @param {boolean} isRunning - Whether upgrade is actively running
- * @returns {JSX.Element} Styled badge component
+ * Status Badge Component
+ * Visual indicator for upgrade execution state
  */
 function UpgradeStatusBadge({ status, isRunning }) {
   if (isRunning) {
@@ -118,20 +88,61 @@ function UpgradeStatusBadge({ status, isRunning }) {
 }
 
 /**
- * =============================================================================
- * UPGRADE PROGRESS CARD COMPONENT
- * =============================================================================
- *
- * Displays overall upgrade progress with visual indicators
- *
- * @param {number} progress - Progress percentage (0-100)
- * @param {number} completedSteps - Number of completed steps
- * @param {number} totalSteps - Total number of steps
- * @param {boolean} isRunning - Whether upgrade is running
- * @returns {JSX.Element} Progress card component
+ * Elapsed Time Display Component
+ * Shows formatted elapsed time during upgrade
  */
-function UpgradeProgressCard({ progress, completedSteps, totalSteps, isRunning }) {
-  // Calculate progress color based on completion
+function ElapsedTimeDisplay({ isRunning, jobOutput }) {
+  const [elapsedTime, setElapsedTime] = useState(0);
+
+  useEffect(() => {
+    if (!isRunning || jobOutput.length === 0) {
+      return;
+    }
+
+    // Find the first message timestamp
+    const firstMessage = jobOutput[0];
+    if (!firstMessage?.timestamp) {
+      return;
+    }
+
+    const startTime = new Date(firstMessage.timestamp).getTime();
+
+    const interval = setInterval(() => {
+      const now = new Date().getTime();
+      const elapsed = Math.floor((now - startTime) / 1000);
+      setElapsedTime(elapsed);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [isRunning, jobOutput]);
+
+  // Format elapsed time as HH:MM:SS
+  const formatTime = (seconds) => {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+
+    if (hours > 0) {
+      return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
+    return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  return (
+    <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-blue-100 border border-blue-300">
+      <Clock className="h-4 w-4 text-blue-600" />
+      <span className="text-sm font-mono font-semibold text-blue-900">
+        {formatTime(elapsedTime)}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Progress Card Component
+ * Displays overall upgrade progress with visual indicators
+ */
+function UpgradeProgressCard({ progress, completedSteps, totalSteps, isRunning, elapsedTime }) {
   const getProgressColor = () => {
     if (progress >= 90) return 'bg-green-600';
     if (progress >= 70) return 'bg-blue-600';
@@ -143,12 +154,15 @@ function UpgradeProgressCard({ progress, completedSteps, totalSteps, isRunning }
   return (
     <Card className="border-l-4 border-l-blue-500">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2">
-          <Rocket className="h-4 w-4 text-blue-600" />
-          Upgrade Progress
-          {isRunning && (
-            <Loader2 className="h-3 w-3 text-blue-600 animate-spin" />
-          )}
+        <CardTitle className="text-base flex items-center gap-2 justify-between">
+          <div className="flex items-center gap-2">
+            <Rocket className="h-4 w-4 text-blue-600" />
+            Upgrade Progress
+            {isRunning && (
+              <Loader2 className="h-3 w-3 text-blue-600 animate-spin" />
+            )}
+          </div>
+          {isRunning && <ElapsedTimeDisplay isRunning={isRunning} jobOutput={[]} />}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -187,94 +201,59 @@ function UpgradeProgressCard({ progress, completedSteps, totalSteps, isRunning }
 }
 
 /**
- * =============================================================================
- * UPGRADE STEP ICON COMPONENT
- * =============================================================================
- *
+ * Step Icon Component
  * Returns appropriate icon based on step message content
- *
- * @param {string} message - Step message text
- * @param {boolean} passed - Whether step passed
- * @returns {JSX.Element} Icon component
  */
 function UpgradeStepIcon({ message, passed }) {
   const messageLower = message.toLowerCase();
 
-  // Installation step
   if (messageLower.includes('install')) {
     return <HardDrive className="h-5 w-5 text-blue-600" />;
   }
 
-  // Reboot step
   if (messageLower.includes('reboot') || messageLower.includes('recover')) {
     return <RotateCw className="h-5 w-5 text-orange-600" />;
   }
 
-  // Verification step
   if (messageLower.includes('verif') || messageLower.includes('version')) {
     return <CheckCircle className="h-5 w-5 text-purple-600" />;
   }
 
-  // Connectivity step
   if (messageLower.includes('connect') || messageLower.includes('reach')) {
     return <Wifi className="h-5 w-5 text-green-600" />;
   }
 
-  // Error/Warning step
   if (messageLower.includes('error') || messageLower.includes('fail') || messageLower.includes('warn')) {
     return <ShieldAlert className="h-5 w-5 text-red-600" />;
   }
 
-  // Success/failure
   if (passed) {
     return <CheckCircle className="h-5 w-5 text-green-600" />;
-  } else {
-    return <XCircle className="h-5 w-5 text-red-600" />;
   }
+
+  return <XCircle className="h-5 w-5 text-red-600" />;
 }
 
 /**
- * =============================================================================
- * CLEAN STEP MESSAGE FUNCTION
- * =============================================================================
- *
- * Removes step prefixes for cleaner display and enhances readability
- *
- * @param {string} message - Original message
- * @returns {string} Cleaned message
+ * Clean Step Message Function
+ * Removes prefixes for cleaner display
  */
 function cleanStepMessage(message) {
   if (!message) return 'No message';
 
   let cleaned = message;
-
-  // Remove "Step X/Y: " prefix if present
   cleaned = cleaned.replace(/^Step \d+\/\d+:\s*/i, '');
-
-  // Remove common timestamp prefixes
   cleaned = cleaned.replace(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} - /, '');
-
-  // Remove log level prefixes
   cleaned = cleaned.replace(/^(INFO|DEBUG|WARNING|ERROR|CRITICAL)\s+-\s+/, '');
-
-  // Remove module path prefixes
   cleaned = cleaned.replace(/^\[[^\]]+\]\s*/, '');
-
-  // Trim whitespace
   cleaned = cleaned.trim();
 
   return cleaned || 'Processing...';
 }
 
 /**
- * =============================================================================
- * MESSAGE PRIORITY INDICATOR
- * =============================================================================
- *
- * Visual indicator for message priority/severity
- *
- * @param {string} level - Message level (error, warning, info, success)
- * @returns {JSX.Element} Priority indicator component
+ * Message Priority Indicator Component
+ * Visual indicator for message severity
  */
 function MessagePriorityIndicator({ level }) {
   const getColor = () => {
@@ -291,26 +270,18 @@ function MessagePriorityIndicator({ level }) {
   );
 }
 
+// =============================================================================
+// SECTION 2: MAIN UPGRADE TAB COMPONENT
+// =============================================================================
+
 /**
- * =============================================================================
- * MAIN UPGRADE TAB COMPONENT
- * =============================================================================
- *
+ * UpgradeTab Component
  * Primary component for upgrade execution monitoring
  *
- * @param {Object} props - Component properties
- * @param {string} props.jobStatus - Current job status (idle/running/success/failed)
- * @param {boolean} props.isRunning - Whether upgrade is actively running
- * @param {boolean} props.isComplete - Whether upgrade has completed
- * @param {boolean} props.hasError - Whether upgrade encountered errors
- * @param {number} props.progress - Progress percentage (0-100)
- * @param {number} props.completedSteps - Number of completed steps
- * @param {number} props.totalSteps - Total number of steps
- * @param {Array} props.jobOutput - Array of output messages
- * @param {boolean} props.showTechnicalDetails - Whether to show technical logs
- * @param {Function} props.onToggleTechnicalDetails - Toggle technical details
- * @param {Object} props.scrollAreaRef - Ref for scroll area
- * @returns {JSX.Element} UpgradeTab component
+ * ENHANCEMENTS v2.0.0:
+ * - Integrated elapsed time tracking
+ * - Uses messageFiltering.js for consistent message display
+ * - Provides real-time upgrade execution feedback
  */
 export default function UpgradeTab({
   jobStatus,
@@ -325,15 +296,47 @@ export default function UpgradeTab({
   onToggleTechnicalDetails,
   scrollAreaRef,
 }) {
-  // =========================================================================
-  // SUBSECTION: MESSAGE FILTERING
-  // =========================================================================
-  // Filter messages to show only user-facing content
+  const [elapsedTime, setElapsedTime] = useState(0);
+
+  // ==========================================================================
+  // SECTION 3: TIMER EFFECT
+  // ==========================================================================
+
+  /**
+   * Track elapsed time during upgrade
+   * Updates every second while upgrade is running
+   */
+  useEffect(() => {
+    if (!isRunning || jobOutput.length === 0) {
+      return;
+    }
+
+    const firstMessage = jobOutput[0];
+    if (!firstMessage?.timestamp) {
+      return;
+    }
+
+    const startTime = new Date(firstMessage.timestamp).getTime();
+
+    const interval = setInterval(() => {
+      const now = new Date().getTime();
+      const elapsed = Math.floor((now - startTime) / 1000);
+      setElapsedTime(elapsed);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [isRunning, jobOutput]);
+
+  // ==========================================================================
+  // SECTION 4: MESSAGE FILTERING
+  // ==========================================================================
+
   const userFacingMessages = jobOutput.filter(shouldShowToUser);
 
-  // =========================================================================
-  // SUBSECTION: STATUS CALCULATIONS
-  // =========================================================================
+  // ==========================================================================
+  // SECTION 5: STATUS CALCULATIONS
+  // ==========================================================================
+
   const hasCriticalErrors = jobOutput.some(log =>
     log.level === 'error' &&
     (log.message?.includes('failed') || log.message?.includes('error'))
@@ -345,9 +348,10 @@ export default function UpgradeTab({
     new Date(jobOutput[jobOutput.length - 1].timestamp).toLocaleTimeString() :
     'No activity';
 
-  // =========================================================================
-  // SUBSECTION: EMPTY STATE
-  // =========================================================================
+  // ==========================================================================
+  // SECTION 6: EMPTY STATE
+  // ==========================================================================
+
   if (jobOutput.length === 0) {
     return (
       <Card className="border-dashed">
@@ -367,29 +371,30 @@ export default function UpgradeTab({
     );
   }
 
-  // =========================================================================
-  // SUBSECTION: MAIN RENDER
-  // =========================================================================
+  // ==========================================================================
+  // SECTION 7: MAIN RENDER
+  // ==========================================================================
+
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
 
       {/* ====================================================================
-          HEADER SECTION
+          HEADER SECTION WITH ELAPSED TIME
           ==================================================================== */}
       <Card className={`border-l-4 ${hasError ? 'border-l-red-500 bg-red-50' :
-          isComplete ? 'border-l-green-500 bg-green-50' :
-            'border-l-blue-500 bg-gradient-to-r from-blue-50 to-white'
+        isComplete ? 'border-l-green-500 bg-green-50' :
+          'border-l-blue-500 bg-gradient-to-r from-blue-50 to-white'
         }`}>
         <CardHeader>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className={`p-2 rounded-lg ${hasError ? 'bg-red-100' :
-                  isComplete ? 'bg-green-100' :
-                    'bg-blue-100'
+                isComplete ? 'bg-green-100' :
+                  'bg-blue-100'
                 }`}>
                 <Rocket className={`h-6 w-6 ${hasError ? 'text-red-600' :
-                    isComplete ? 'text-green-600' :
-                      'text-blue-600'
+                  isComplete ? 'text-green-600' :
+                    'text-blue-600'
                   }`} />
               </div>
               <div>
@@ -406,6 +411,9 @@ export default function UpgradeTab({
                 <p className="text-sm text-muted-foreground">Last Activity</p>
                 <p className="text-sm font-medium">{recentActivity}</p>
               </div>
+              {isRunning && (
+                <ElapsedTimeDisplay isRunning={isRunning} jobOutput={jobOutput} />
+              )}
               <UpgradeStatusBadge status={jobStatus} isRunning={isRunning} />
             </div>
           </div>
@@ -420,6 +428,7 @@ export default function UpgradeTab({
         completedSteps={completedSteps}
         totalSteps={totalSteps}
         isRunning={isRunning}
+        elapsedTime={elapsedTime}
       />
 
       {/* ====================================================================
@@ -477,35 +486,32 @@ export default function UpgradeTab({
                       <div
                         key={index}
                         className={`flex items-start gap-3 p-4 rounded-lg border transition-all duration-200 ${isFailed
-                            ? 'bg-red-50 border-red-200 hover:border-red-300'
-                            : isWarning
-                              ? 'bg-orange-50 border-orange-200 hover:border-orange-300'
-                              : isPassed
-                                ? 'bg-green-50 border-green-200 hover:border-green-300'
-                                : 'bg-white border-gray-200 hover:border-gray-300 hover:shadow-sm'
+                          ? 'bg-red-50 border-red-200 hover:border-red-300'
+                          : isWarning
+                            ? 'bg-orange-50 border-orange-200 hover:border-orange-300'
+                            : isPassed
+                              ? 'bg-green-50 border-green-200 hover:border-green-300'
+                              : 'bg-white border-gray-200 hover:border-gray-300 hover:shadow-sm'
                           }`}
                       >
-                        {/* Priority Indicator */}
                         <MessagePriorityIndicator level={step.level} />
 
-                        {/* Status Icon */}
                         <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${isFailed
-                            ? 'bg-red-100'
-                            : isWarning
-                              ? 'bg-orange-100'
-                              : isPassed
-                                ? 'bg-green-100'
-                                : 'bg-gray-100'
+                          ? 'bg-red-100'
+                          : isWarning
+                            ? 'bg-orange-100'
+                            : isPassed
+                              ? 'bg-green-100'
+                              : 'bg-gray-100'
                           }`}>
                           <UpgradeStepIcon message={displayMessage} passed={isPassed} />
                         </div>
 
-                        {/* Message Content */}
                         <div className="flex-1 min-w-0">
                           <p className={`text-sm font-medium break-words ${isFailed ? 'text-red-900' :
-                              isWarning ? 'text-orange-900' :
-                                isPassed ? 'text-green-900' :
-                                  'text-gray-900'
+                            isWarning ? 'text-orange-900' :
+                              isPassed ? 'text-green-900' :
+                                'text-gray-900'
                             }`}>
                             {displayMessage}
                           </p>
@@ -539,10 +545,10 @@ export default function UpgradeTab({
                       <div
                         key={index}
                         className={`p-3 rounded border font-mono text-xs transition-colors ${isRecent ? 'bg-blue-50 border-blue-200' :
-                            log.level === 'error' ? 'bg-red-50 border-red-200' :
-                              log.level === 'warning' ? 'bg-orange-50 border-orange-200' :
-                                log.level === 'success' ? 'bg-green-50 border-green-200' :
-                                  'bg-gray-50 border-gray-200'
+                          log.level === 'error' ? 'bg-red-50 border-red-200' :
+                            log.level === 'warning' ? 'bg-orange-50 border-orange-200' :
+                              log.level === 'success' ? 'bg-green-50 border-green-200' :
+                                'bg-gray-50 border-gray-200'
                           }`}
                       >
                         <div className="flex items-start gap-2">
@@ -550,9 +556,9 @@ export default function UpgradeTab({
                             {log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : '--:--:--'}
                           </span>
                           <span className={`flex-shrink-0 font-semibold ${log.level === 'error' ? 'text-red-600' :
-                              log.level === 'warning' ? 'text-orange-600' :
-                                log.level === 'success' ? 'text-green-600' :
-                                  'text-blue-600'
+                            log.level === 'warning' ? 'text-orange-600' :
+                              log.level === 'success' ? 'text-green-600' :
+                                'text-blue-600'
                             }`}>
                             [{log.event_type || 'LOG'}]
                           </span>

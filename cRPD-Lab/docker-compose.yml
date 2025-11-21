@@ -1,6 +1,5 @@
-version: '3.8'
-
 services:
+  # --- Main cRPD Container ---
   crpd:
     image: ${CRPD_IMAGE_NAME}:${CRPD_TAG}
     container_name: juniper-crpd
@@ -10,52 +9,59 @@ services:
     stdin_open: true
     networks:
       lab-net:
-        ipv4_address: 172.20.0.10
+        ipv4_address: 10.99.1.10
     volumes:
       - ./configs:/config
       - ./scripts:/scripts
       - ./license:/config/license
       - crpd-persist:/var/crpd
     ports:
-      - "22:22"
-      - "830:830"
-      - "5000:5000"
+      # HOST_PORT : CONTAINER_PORT
+      - "2222:22"    # SSH mapped to avoid host conflict
+      - "8830:830"  # NETCONF mapped
+      - "5000:5000" # Generic
     environment:
       - TZ=UTC
     restart: unless-stopped
     profiles: [ "run-crpd" ]
     command: >
       sh -c "
+        # Apply configuration if it exists
         if [ -f /config/crpd.conf ]; then
           cp /config/crpd.conf /etc/crpd.conf;
         fi;
-        # Check for license
+        # Check for license (placeholder logic)
         if [ -f /config/license/juniper.lic ]; then
-           echo 'License found, attempting to load...';
-           # Logic to add license could go here or be done manually
+           echo 'License file detected...';
         fi;
+        # Start the Routing Process Daemon
         /sbin/rpd -c /etc/crpd.conf -v --log-level=info
       "
 
+  # --- Initialization Helper ---
+  # Prints access credentials to the log after startup
   crpd-init:
     image: alpine
     container_name: crpd-init
     networks:
       lab-net:
-        ipv4_address: 172.20.0.99
+        ipv4_address: 10.99.1.99
     profiles: [ "init" ]
     depends_on:
       - crpd
     command: >
       sh -c "
-        sleep 15;
+        sleep 10;
         echo '=============================================';
-        echo '🚀 cRPD Lab Ready!';
+        echo '🚀 cRPD Lab is RUNNING!';
+        echo '📡 Internal IP:   10.99.1.10';
         echo '🔑 Default Creds: root / Juniper123';
-        echo '💻 SSH: ssh root@localhost -p 22';
+        echo '💻 SSH Access:    ssh root@localhost -p 2222';
         echo '=============================================';
       "
 
+  # --- Status Checker ---
+  # Can be run manually to verify internal connectivity
   crpd-status:
     image: alpine
     container_name: crpd-status
@@ -67,9 +73,9 @@ services:
         apk add --no-cache netcat-openbsd;
         echo '=== cRPD Connectivity Check ===';
         if nc -z crpd 22; then
-          echo '✅ cRPD SSH port is OPEN';
+          echo '✅ cRPD is reachable on internal port 22';
         else
-          echo '❌ cRPD SSH port is CLOSED';
+          echo '❌ cRPD is NOT reachable';
         fi;
       "
 
@@ -78,7 +84,7 @@ networks:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.20.0.0/24
+        - subnet: 10.99.1.0/24
 
 volumes:
   crpd-persist:
