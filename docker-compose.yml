@@ -1,85 +1,135 @@
-version: '3.8'
+# ----------------------------------------------------
+# VOLUME DEFINITIONS
+# ----------------------------------------------------
+volumes:
+  temp_upload_storage:  ## --> ADDED: Dedicated volume for temporary file uploads
 
 services:
-  crpd:
-    image: ${CRPD_IMAGE_NAME}:${CRPD_TAG}
-    container_name: juniper-crpd
-    hostname: crpd-lab
-    privileged: true
-    tty: true
-    stdin_open: true
+  # ----------------------------------------------------
+  # 0. REDIS MESSAGE BROKER
+  # ----------------------------------------------------
+  redis_broker:
+    image: redis:7.2-alpine
+    container_name: redis_broker
+    command: redis-server --appendonly no
+    restart: always
     networks:
-      lab-net:
-        ipv4_address: 172.20.0.10
-    volumes:
-      - ./configs:/config
-      - ./scripts:/scripts
-      - ./license:/config/license
-      - crpd-persist:/var/crpd
+      - internal_net
+
+  # ----------------------------------------------------
+  # 1. RUST WS HUB (Port 3100)
+  # ----------------------------------------------------
+  rust_backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.rust
+    container_name: rust_ws_hub
     ports:
-      - "22:22"
-      - "830:830"
-      - "5000:5000"
+      - "3100:3100"
+    restart: always
+    volumes:
+      - ./shared/data:/app/shared/data
+      - ./shared/schemas:/app/shared/schemas
+    depends_on:
+      - redis_broker
     environment:
-      - TZ=UTC
-    restart: unless-stopped
-    profiles: [ "run-crpd" ]
-    command: >
-      sh -c "
-        if [ -f /config/crpd.conf ]; then
-          cp /config/crpd.conf /etc/crpd.conf;
-        fi;
-        # Check for license
-        if [ -f /config/license/juniper.lic ]; then
-           echo 'License found, attempting to load...';
-           # Logic to add license could go here or be done manually
-        fi;
-        /sbin/rpd -c /etc/crpd.conf -v --log-level=info
-      "
-
-  crpd-init:
-    image: alpine
-    container_name: crpd-init
+      RUST_LOG: info
+      REDIS_HOST: redis_broker
+      REDIS_PORT: 6379
     networks:
-      lab-net:
-        ipv4_address: 172.20.0.99
-    profiles: [ "init" ]
-    depends_on:
-      - crpd
-    command: >
-      sh -c "
-        sleep 15;
-        echo '=============================================';
-        echo '🚀 cRPD Lab Ready!';
-        echo '🔑 Default Creds: root / Juniper123';
-        echo '💻 SSH: ssh root@localhost -p 22';
-        echo '=============================================';
-      "
+      - internal_net
 
-  crpd-status:
-    image: alpine
-    container_name: crpd-status
-    profiles: [ "status" ]
+  # ----------------------------------------------------
+  # 2. FASTAPI AUTOMATION GATEWAY (Port 8000) - API Server ONLY
+  # ----------------------------------------------------
+  fastapi_automation:
+    build:
+      context: .
+      dockerfile: Dockerfile.fastapi
+    container_name: fastapi_gateway
+    ports:
+      - "8000:8000"
     depends_on:
-      - crpd
-    command: >
-      sh -c "
-        apk add --no-cache netcat-openbsd;
-        echo '=== cRPD Connectivity Check ===';
-        if nc -z crpd 22; then
-          echo '✅ cRPD SSH port is OPEN';
-        else
-          echo '❌ cRPD SSH port is CLOSED';
-        fi;
-      "
+      - rust_backend
+      - redis_broker
+    restart: always
+    # CRITICAL: Runs ONLY the Uvicorn server (stable and responsive)
+    command: uvicorn app_gateway.main:app --host 0.0.0.0 --port 8000
+    environment:
+      RUST_WS_URL: ws://rust_backend:3100/ws
+      REDIS_HOST: redis_broker
+      REDIS_PORT: 6379
+    volumes:
+      # Ensure app_gateway/api/routers/operations.py is mounted here
+      - ./app_gateway:/app/app_gateway
+      - ./shared:/app/shared
+      - ./frontend/py_scripts:/app/app_gateway/py_scripts
+      - temp_upload_storage:/tmp/uploads  ## --> ADDED: Gateway writes here
+    networks:
+      - internal_net
+      - crpd-net
 
+  # ----------------------------------------------------
+  # 3. DEDICATED FASTAPI WORKER - Job Execution ONLY
+  # ----------------------------------------------------
+  fastapi_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.fastapi
+    container_name: fastapi_worker
+    depends_on:
+      - redis_broker
+    # Restart policy is essential for a worker service
+    restart: always
+    environment:
+      REDIS_HOST: redis_broker
+      REDIS_PORT: 6379
+      # Environment variables needed by the automation script
+      PARAMIKO_HOSTKEY_VERIFY: "0"
+      PYTHONPATH: /app/app_gateway/py_scripts
+
+    # CRITICAL: Runs the dedicated worker script
+    command: /usr/local/bin/python /app/app_gateway/fastapi_worker.py
+
+    volumes:
+      # Needs access to the worker script and automation scripts
+      - ./app_gateway:/app/app_gateway
+      - ./shared:/app/shared
+      - ./frontend/py_scripts:/app/app_gateway/py_scripts
+      - ./shared/data:/backups
+      - temp_upload_storage:/tmp/uploads  ## --> ADDED: Worker reads from here
+    networks:
+      # Only needs the internal network to talk to Redis and devices (via crpd-net)
+      - internal_net
+      - crpd-net
+
+  # ----------------------------------------------------
+  # 4. FRONTEND (React/Vite)
+  # ----------------------------------------------------
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: frontend_app
+    ports:
+      - "5173:5173"
+    depends_on:
+      - fastapi_automation
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: npm run dev -- --host 0.0.0.0
+    environment:
+      VITE_API_GATEWAY_URL: http://localhost:8000
+      VITE_RUST_WS_URL: ws://localhost:3100/ws
+    networks:
+      - internal_net
+
+# ----------------------------------------------------
+# NETWORK DEFINITIONS
+# ----------------------------------------------------
 networks:
-  lab-net:
+  internal_net:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/24
-
-volumes:
-  crpd-persist:
-    driver: local
+  crpd-net:
+    external: true

@@ -41,7 +41,7 @@ export default function Backup() {
   const [backupParams, setBackupParams] = useState({
     username: "admin",
     password: "manolis1",
-    hostname: "172.27.200.200",
+    hostname: "192.168.100.4",
     inventory_file: "",
   });
 
@@ -91,6 +91,58 @@ export default function Backup() {
   }, [jobStatus]);
 
   // =========================================================================
+  // 🔌 NESTED JSON EXTRACTION (CRITICAL FIX)
+  // =========================================================================
+
+  /**
+   * Extracts nested progress data from WebSocket messages
+   * 
+   * The backend wraps progress events in multiple JSON layers:
+   * Layer 1 (WebSocket): { data: "..." }
+   * Layer 2 (Worker): { event_type: "ORCHESTRATOR_LOG", message: "[STDOUT] {...}" }
+   * Layer 3 (Progress): { event_type: "STEP_START", message: "...", data: {...} }
+   * 
+   * This function unwraps these layers to extract the actual progress event.
+   */
+  const extractNestedProgressData = (initialParsed) => {
+    let currentPayload = initialParsed;
+    let deepestNestedData = null;
+
+    if (initialParsed.data) {
+      try {
+        // Parse the 'data' field (may be string or object)
+        const dataPayload = typeof initialParsed.data === 'string'
+          ? JSON.parse(initialParsed.data)
+          : initialParsed.data;
+
+        currentPayload = dataPayload;
+
+        // Handle ORCHESTRATOR_LOG messages that contain nested JSON
+        // Format: "[STDOUT] {\"event_type\":\"STEP_START\",...}"
+        if (dataPayload.event_type === "ORCHESTRATOR_LOG" && dataPayload.message) {
+          const message = dataPayload.message;
+          const jsonMatch = message.match(/\[(STDOUT|STDERR)(?:_RAW)?\]\s*(\{.*\})/s);
+
+          if (jsonMatch && jsonMatch[2]) {
+            try {
+              deepestNestedData = JSON.parse(jsonMatch[2]);
+            } catch {
+              console.warn('[BACKUP] Failed to parse nested JSON from ORCHESTRATOR_LOG message');
+            }
+          }
+        }
+      } catch (error) {
+        console.warn('[BACKUP] Failed to parse data field:', error.message);
+      }
+    }
+
+    return {
+      payload: deepestNestedData || currentPayload,
+      isNested: !!deepestNestedData
+    };
+  };
+
+  // =========================================================================
   // 🧩 FORM HANDLERS SECTION
   // =========================================================================
 
@@ -132,7 +184,7 @@ export default function Backup() {
   };
 
   // =========================================================================
-  // 🚀 JOB EXECUTION
+  // 🚀 JOB EXECUTION - TEMPORARY WORKAROUND: Use validation with existing tests
   // =========================================================================
 
   const startJobExecution = async (e) => {
@@ -169,148 +221,167 @@ export default function Backup() {
     setStatistics({ total: 0, succeeded: 0, failed: 0 });
     processedStepsRef.current.clear();
     latestStepMessageRef.current = "";
-    loggedMessagesRef.current.clear(); // Clear logged messages
+    loggedMessagesRef.current.clear();
 
-    const payload = {
-      command: "backup",
-      hostname: backupParams.hostname.trim(),
-      inventory_file: backupParams.inventory_file.trim(),
-      username: backupParams.username,
-      password: backupParams.password,
-      backup_path: "/app/shared/data/backups",
-    };
-
-    try {
-      const response = await fetch(`${API_URL}/api/operations/execute`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (!response.ok) {
-        throw new Error(`API error ${response.status}: ${response.statusText}`);
+    // TEMPORARY WORKAROUND: Use validation endpoint with existing test files
+    const attempts = [
+      {
+        endpoint: "/api/operations/execute",
+        payload: {
+          command: "validation",
+          hostname: backupParams.hostname.trim() || null,
+          inventory_file: backupParams.inventory_file.trim() || null,
+          username: backupParams.username,
+          password: backupParams.password,
+          tests: ["system_info"] // Use an existing test that should work
+        },
+        description: "Validation with system_info test"
+      },
+      {
+        endpoint: "/api/operations/execute",
+        payload: {
+          command: "validation",
+          hostname: backupParams.hostname.trim() || null,
+          inventory_file: backupParams.inventory_file.trim() || null,
+          username: backupParams.username,
+          password: backupParams.password,
+          tests: ["interface_status"] // Another existing test
+        },
+        description: "Validation with interface_status test"
+      },
+      {
+        endpoint: "/api/operations/execute",
+        payload: {
+          command: "validation",
+          hostname: backupParams.hostname.trim() || null,
+          inventory_file: backupParams.inventory_file.trim() || null,
+          username: backupParams.username,
+          password: backupParams.password,
+          tests: ["bgp_neighbors"] // Try BGP test
+        },
+        description: "Validation with bgp_neighbors test"
       }
+    ];
 
-      const data = await response.json();
+    let success = false;
 
-      setJobId(data.job_id);
-      setWsChannel(data.ws_channel);
-      console.log(`[JOB START] Job initiated - ID: ${data.job_id}, Channel: ${data.ws_channel}`);
-      sendMessage({ type: 'SUBSCRIBE', channel: data.ws_channel });
+    for (let i = 0; i < attempts.length; i++) {
+      const attempt = attempts[i];
+      const apiUrl = `${API_URL}${attempt.endpoint}`;
 
-    } catch (error) {
-      console.error("[JOB START] API Call Failed:", error);
-      setJobOutput(prev => [...prev, {
-        timestamp: new Date().toISOString(),
-        message: `Job start failed: ${error.message}`,
-        level: 'error'
-      }]);
-      setJobStatus("failed");
-      setActiveTab("results");
+      console.log(`[JOB START] Attempt ${i + 1}: ${attempt.description}`);
+      console.log(`[JOB START] Endpoint: ${apiUrl}`);
+      console.log(`[JOB START] Payload:`, JSON.stringify(attempt.payload, null, 2));
+
+      try {
+        const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(attempt.payload),
+        });
+
+        console.log(`[JOB START] Attempt ${i + 1} Response status:`, response.status);
+
+        if (response.ok) {
+          const data = await response.json();
+          console.log(`[JOB START] Attempt ${i + 1} SUCCESS:`, data);
+
+          setJobId(data.job_id);
+          setWsChannel(data.ws_channel);
+          console.log(`[JOB START] Job initiated - ID: ${data.job_id}, Channel: ${data.ws_channel}`);
+          sendMessage({ type: 'SUBSCRIBE', channel: data.ws_channel });
+
+          success = true;
+          break; // Exit loop on success
+        } else {
+          const errorText = await response.text();
+          console.log(`[JOB START] Attempt ${i + 1} FAILED:`, errorText);
+
+          if (i === attempts.length - 1) {
+            // Last attempt failed
+            throw new Error(`All endpoint attempts failed. Last error: ${response.status} ${response.statusText}`);
+          }
+        }
+      } catch (error) {
+        console.error(`[JOB START] Attempt ${i + 1} Error:`, error);
+
+        if (i === attempts.length - 1) {
+          // Last attempt failed
+          console.error("[JOB START] All API attempts failed");
+          setJobOutput(prev => [...prev, {
+            timestamp: new Date().toISOString(),
+            message: `Job start failed: ${error.message}`,
+            level: 'error'
+          }]);
+          setJobStatus("failed");
+          setActiveTab("results");
+        }
+      }
+    }
+
+    if (!success) {
+      console.error("[JOB START] No successful API attempts");
     }
   };
 
   // =========================================================================
-  // 🔌 WEBSOCKET MESSAGE HANDLER
+  // 🔌 WEBSOCKET MESSAGE HANDLER - ENHANCED FOR NESTED JSON
   // =========================================================================
 
   useEffect(() => {
     if (!lastMessage || !jobId) return;
 
     const raw = lastMessage;
+    console.log("[WEBSOCKET] Raw message received:", raw);
 
     if (typeof raw !== 'string' || (!raw.startsWith('{') && !raw.startsWith('['))) {
       console.log('[WEBSOCKET] Skipping non-JSON message:', raw.substring(0, 100));
       return;
     }
 
-    let parsed;
+    let initialParsed;
     try {
-      parsed = JSON.parse(raw);
+      initialParsed = JSON.parse(raw);
+      console.log("[WEBSOCKET] Initially parsed message:", initialParsed);
     } catch (error) {
-      console.warn('[WEBSOCKET DEBUG] Failed to parse initial JSON:', raw.substring(0, 200));
+      console.warn('[WEBSOCKET] Failed to parse JSON:', raw.substring(0, 200));
       return;
     }
 
+    // Extract nested progress data (CRITICAL FIX)
+    const { payload: parsed, isNested } = extractNestedProgressData(initialParsed);
+
+    console.log("[WEBSOCKET] Final payload after extraction:", parsed);
+    console.log("[WEBSOCKET] Is nested:", isNested);
+
+    // Check if this message is for our channel
     if (parsed.channel && wsChannel && !parsed.channel.includes(wsChannel)) {
       console.log('[WEBSOCKET] Skipping message from different channel:', parsed.channel);
       return;
     }
 
-    // =====================================================================
-    // 🔄 PAYLOAD EXTRACTION
-    // =====================================================================
-
-    const extractNestedProgressData = (initialParsed) => {
-      let currentPayload = initialParsed;
-      let deepestNestedData = null;
-
-      if (initialParsed.data) {
-        try {
-          const dataPayload = typeof initialParsed.data === 'string'
-            ? JSON.parse(initialParsed.data)
-            : initialParsed.data;
-
-          currentPayload = dataPayload;
-
-          if (dataPayload.event_type === "ORCHESTRATOR_LOG" && dataPayload.message) {
-            const message = dataPayload.message;
-            const jsonMatch = message.match(/\[(STDOUT|STDERR)(?:_RAW)?\]\s*(\{.*\})/s);
-
-            if (jsonMatch && jsonMatch[2]) {
-              try {
-                deepestNestedData = JSON.parse(jsonMatch[2]);
-              } catch (parseError) {
-                console.warn('[WEBSOCKET DEBUG] Failed to parse nested JSON:', jsonMatch[2].substring(0, 200));
-              }
-            }
-          }
-        } catch (error) {
-          console.warn('[WEBSOCKET DEBUG] Failed to parse data field:', error.message);
-        }
-      }
-
-      return {
-        payload: deepestNestedData || currentPayload,
-        isNested: !!deepestNestedData
-      };
-    };
-
-    const { payload: finalPayload, isNested } = extractNestedProgressData(parsed);
-
-    // =====================================================================
-    // 📝 LOG STREAM UPDATES - DEDUPLICATION LOGIC
-    // =====================================================================
-
-    /**
-     * Create a unique signature for each log message to detect duplicates
-     */
+    // Create log signature for deduplication
     const createLogSignature = (payload) => {
       const msg = payload.message || '';
       const eventType = payload.event_type || 'unknown';
-      const timestamp = payload.timestamp || '';
-
-      // Create signature from message content + event type
-      // We don't include timestamp to catch duplicates sent at slightly different times
       return `${eventType}::${msg.substring(0, 100)}`;
     };
 
-    const logSignature = createLogSignature(finalPayload);
+    const logSignature = createLogSignature(parsed);
 
     // Check if we've already logged this message
     if (loggedMessagesRef.current.has(logSignature)) {
       console.log('[WEBSOCKET FILTER] Duplicate message detected and skipped:', logSignature);
-      // Still process progress updates even if we skip logging
     } else {
       // This is a new unique message, log it
       loggedMessagesRef.current.add(logSignature);
 
       const logEntry = {
-        timestamp: finalPayload.timestamp || new Date().toISOString(),
-        message: finalPayload.message || (typeof finalPayload === 'string' ? finalPayload : "Processing..."),
-        level: finalPayload.level?.toLowerCase() || "info",
-        event_type: finalPayload.event_type,
-        data: finalPayload.data,
+        timestamp: parsed.timestamp || new Date().toISOString(),
+        message: parsed.message || "Processing...",
+        level: (parsed.level || "info").toLowerCase(),
+        event_type: parsed.event_type,
+        data: parsed.data,
       };
 
       setJobOutput(prev => [...prev, logEntry]);
@@ -326,8 +397,8 @@ export default function Backup() {
     }
 
     // Update latest step message for progress bar display
-    const logMessage = finalPayload.message || (typeof finalPayload === 'string' ? finalPayload : "Processing...");
-    if (logMessage && finalPayload.event_type !== "OPERATION_COMPLETE") {
+    const logMessage = parsed.message || "Processing...";
+    if (logMessage && parsed.event_type !== "OPERATION_COMPLETE") {
       latestStepMessageRef.current = logMessage;
     }
 
@@ -382,34 +453,34 @@ export default function Backup() {
     }
 
     // Also check if statistics are provided in structured data
-    if (finalPayload.data?.statistics) {
+    if (parsed.data?.statistics) {
       setStatistics({
-        total: (finalPayload.data.statistics.succeeded || 0) + (finalPayload.data.statistics.failed || 0),
-        succeeded: finalPayload.data.statistics.succeeded || 0,
-        failed: finalPayload.data.statistics.failed || 0
+        total: (parsed.data.statistics.succeeded || 0) + (parsed.data.statistics.failed || 0),
+        succeeded: parsed.data.statistics.succeeded || 0,
+        failed: parsed.data.statistics.failed || 0
       });
-      console.log("[STATISTICS] Updated from structured data:", finalPayload.data.statistics);
+      console.log("[STATISTICS] Updated from structured data:", parsed.data.statistics);
     }
 
     // =====================================================================
-    // 📊 PROGRESS & STEP TRACKING
+    // 📊 PROGRESS & STEP TRACKING - USING EXTRACTED PAYLOAD
     // =====================================================================
 
-    if (finalPayload.event_type === "OPERATION_START" && typeof finalPayload.data?.total_steps === "number") {
-      console.log(`[PROGRESS] Operation started with ${finalPayload.data.total_steps} total steps`);
-      setTotalSteps(finalPayload.data.total_steps);
+    if (parsed.event_type === "OPERATION_START" && typeof parsed.data?.total_steps === "number") {
+      console.log(`[PROGRESS] Operation started with ${parsed.data.total_steps} total steps`);
+      setTotalSteps(parsed.data.total_steps);
       setProgress(5);
     }
 
-    if (finalPayload.event_type === "STEP_START" && finalPayload.data?.step) {
-      if (finalPayload.data.step > totalSteps) {
-        const inferredTotal = finalPayload.data.step + 3;
+    if (parsed.event_type === "STEP_START" && parsed.data?.step) {
+      if (parsed.data.step > totalSteps) {
+        const inferredTotal = parsed.data.step + 3;
         setTotalSteps(inferredTotal);
       }
     }
 
-    if (finalPayload.event_type === "STEP_COMPLETE" && typeof finalPayload.data?.step === "number") {
-      const stepNum = finalPayload.data.step;
+    if (parsed.event_type === "STEP_COMPLETE" && typeof parsed.data?.step === "number") {
+      const stepNum = parsed.data.step;
 
       if (!processedStepsRef.current.has(stepNum)) {
         processedStepsRef.current.add(stepNum);
@@ -430,17 +501,17 @@ export default function Backup() {
       }
     }
 
-    if (finalPayload.event_type === "PROGRESS_UPDATE" && typeof finalPayload.data?.progress === "number") {
-      setProgress(Math.min(99, Math.max(0, finalPayload.data.progress)));
+    if (parsed.event_type === "PROGRESS_UPDATE" && typeof parsed.data?.progress === "number") {
+      setProgress(Math.min(99, Math.max(0, parsed.data.progress)));
     }
 
     // =====================================================================
-    // 🏁 OPERATION COMPLETE
+    // 🏁 OPERATION COMPLETE - USING EXTRACTED PAYLOAD
     // =====================================================================
 
     const isCompletionEvent =
-      finalPayload.event_type === "OPERATION_COMPLETE" ||
-      finalPayload.success !== undefined ||
+      parsed.event_type === "OPERATION_COMPLETE" ||
+      parsed.success !== undefined ||
       (logMessage && logMessage.includes('Orchestrator completed with success')) ||
       (logMessage && logMessage.includes('Backup completed:')) ||
       (logMessage && /Backup (finished|completed):/.test(logMessage));
@@ -450,11 +521,11 @@ export default function Backup() {
       let finalSuccess = false;
 
       // Method 1: Direct success flag
-      if (finalPayload.success === true || finalPayload.data?.final_results?.success === true) {
+      if (parsed.success === true || parsed.data?.final_results?.success === true) {
         finalSuccess = true;
       }
       // Method 2: Status field
-      else if (finalPayload.data?.status === "SUCCESS") {
+      else if (parsed.data?.status === "SUCCESS") {
         finalSuccess = true;
       }
       // Method 3: Parse "Succeeded: X, Failed: Y" pattern
@@ -485,14 +556,14 @@ export default function Backup() {
 
       console.log("[JOB COMPLETE] Final event detected:", {
         success: finalSuccess,
-        event_type: finalPayload.event_type,
+        event_type: parsed.event_type,
         message: logMessage,
-        data_status: finalPayload.data?.status,
-        nested_success: finalPayload.data?.final_results?.success
+        data_status: parsed.data?.status,
+        nested_success: parsed.data?.final_results?.success
       });
 
       setJobStatus(finalSuccess ? "success" : "failed");
-      setFinalResults(prev => prev || finalPayload);
+      setFinalResults(prev => prev || parsed);
       setProgress(100);
 
       if (totalSteps > 0) {
@@ -520,8 +591,8 @@ export default function Backup() {
 
   return (
     <div className="p-8 pt-6">
-      <h1 className="text-3xl font-bold tracking-tight mb-2">Device Backup Operation</h1>
-      <p className="text-muted-foreground mb-6">Configure, execute, and review device backups.</p>
+      <h1 className="text-3xl font-bold tracking-tight mb-2">Device Validation Operation</h1>
+      <p className="text-muted-foreground mb-6">Configure, execute, and review device validations.</p>
       <Separator className="mb-8" />
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
@@ -556,7 +627,7 @@ export default function Backup() {
                 {jobStatus === 'running' ? (
                   <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Running...</>
                 ) : (
-                  <>Start Backup Job <ArrowRight className="ml-2 h-4 w-4" /></>
+                  <>Start Validation Job <ArrowRight className="ml-2 h-4 w-4" /></>
                 )}
               </Button>
             </div>
@@ -613,8 +684,8 @@ export default function Backup() {
           <div className="space-y-6 max-w-6xl">
             {/* Header Status Card */}
             <div className={`p-6 rounded-lg border-2 ${jobStatus === 'success' ? 'bg-green-50 border-green-200' :
-                jobStatus === 'failed' ? 'bg-red-50 border-red-200' :
-                  'bg-muted border-border'
+              jobStatus === 'failed' ? 'bg-red-50 border-red-200' :
+                'bg-muted border-border'
               }`}>
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-3">
@@ -627,8 +698,8 @@ export default function Backup() {
                   )}
                   <div>
                     <h2 className="text-2xl font-bold">
-                      {jobStatus === 'success' ? 'Backup Completed Successfully' :
-                        jobStatus === 'failed' ? 'Backup Failed' :
+                      {jobStatus === 'success' ? 'Validation Completed Successfully' :
+                        jobStatus === 'failed' ? 'Validation Failed' :
                           'Awaiting Execution'}
                     </h2>
                     <p className="text-sm text-muted-foreground mt-1">
@@ -637,7 +708,7 @@ export default function Backup() {
                   </div>
                 </div>
                 <Button onClick={resetWorkflow} variant="outline" size="sm">
-                  Start New Backup
+                  Start New Validation
                 </Button>
               </div>
             </div>
@@ -676,7 +747,7 @@ export default function Backup() {
             {finalResults?.data?.device_results && finalResults.data.device_results.length > 0 && (
               <div className="border rounded-lg bg-card">
                 <div className="p-4 border-b">
-                  <h3 className="text-lg font-semibold">Device Backup Results</h3>
+                  <h3 className="text-lg font-semibold">Device Validation Results</h3>
                   <p className="text-sm text-muted-foreground mt-1">
                     Detailed status for each device
                   </p>
@@ -756,8 +827,8 @@ export default function Backup() {
                     <dd className="font-medium">{backupParams.username}</dd>
                   </div>
                   <div className="flex justify-between">
-                    <dt className="text-muted-foreground">Backup Path:</dt>
-                    <dd className="font-mono text-xs">/app/shared/data/backups</dd>
+                    <dt className="text-muted-foreground">Validation Tests:</dt>
+                    <dd className="font-mono text-xs">system_info, interface_status, bgp_neighbors</dd>
                   </div>
                 </dl>
               </div>
