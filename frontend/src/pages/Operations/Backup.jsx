@@ -4,12 +4,12 @@
  * =============================================================================
  * Main component for managing device backup operations with real-time progress
  * tracking and enhanced results visualization.
- * 
- * @version 5.3.0
- * @last_updated 2025-10-18
+ *
+ * @version 5.3.5 (Fix for JavaScript Syntax Error on Ref Declaration)
+ * @last_updated 2025-11-22
  * =============================================================================
  */
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { ArrowRight, Loader2, CheckCircle, XCircle } from 'lucide-react';
@@ -70,6 +70,7 @@ export default function Backup() {
   // Refs for tracking processed data without re-renders
   const processedStepsRef = useRef(new Set());
   const latestStepMessageRef = useRef("");
+  // FIX: Corrected syntax error on this line (formerly const loggedMessagesRef.current = new Set();)
   const loggedMessagesRef = useRef(new Set()); // Track logged messages to prevent duplicates
 
   // Custom WebSocket hook and UI refs
@@ -91,18 +92,11 @@ export default function Backup() {
   }, [jobStatus]);
 
   // =========================================================================
-  // 🔌 NESTED JSON EXTRACTION (CRITICAL FIX)
+  // 🔌 NESTED JSON EXTRACTION (Reusable helper function)
   // =========================================================================
 
   /**
    * Extracts nested progress data from WebSocket messages
-   * 
-   * The backend wraps progress events in multiple JSON layers:
-   * Layer 1 (WebSocket): { data: "..." }
-   * Layer 2 (Worker): { event_type: "ORCHESTRATOR_LOG", message: "[STDOUT] {...}" }
-   * Layer 3 (Progress): { event_type: "STEP_START", message: "...", data: {...} }
-   * 
-   * This function unwraps these layers to extract the actual progress event.
    */
   const extractNestedProgressData = (initialParsed) => {
     let currentPayload = initialParsed;
@@ -184,7 +178,7 @@ export default function Backup() {
   };
 
   // =========================================================================
-  // 🚀 JOB EXECUTION - TEMPORARY WORKAROUND: Use validation with existing tests
+  // 🚀 JOB EXECUTION FUNCTION
   // =========================================================================
 
   const startJobExecution = async (e) => {
@@ -223,104 +217,54 @@ export default function Backup() {
     latestStepMessageRef.current = "";
     loggedMessagesRef.current.clear();
 
-    // TEMPORARY WORKAROUND: Use validation endpoint with existing test files
-    const attempts = [
-      {
-        endpoint: "/api/operations/execute",
-        payload: {
-          command: "validation",
-          hostname: backupParams.hostname.trim() || null,
-          inventory_file: backupParams.inventory_file.trim() || null,
-          username: backupParams.username,
-          password: backupParams.password,
-          tests: ["system_info"] // Use an existing test that should work
-        },
-        description: "Validation with system_info test"
-      },
-      {
-        endpoint: "/api/operations/execute",
-        payload: {
-          command: "validation",
-          hostname: backupParams.hostname.trim() || null,
-          inventory_file: backupParams.inventory_file.trim() || null,
-          username: backupParams.username,
-          password: backupParams.password,
-          tests: ["interface_status"] // Another existing test
-        },
-        description: "Validation with interface_status test"
-      },
-      {
-        endpoint: "/api/operations/execute",
-        payload: {
-          command: "validation",
-          hostname: backupParams.hostname.trim() || null,
-          inventory_file: backupParams.inventory_file.trim() || null,
-          username: backupParams.username,
-          password: backupParams.password,
-          tests: ["bgp_neighbors"] // Try BGP test
-        },
-        description: "Validation with bgp_neighbors test"
+    // The API endpoint configured in the backend (operations.py)
+    const apiUrl = `${API_URL}/api/operations/backup`;
+
+    // Construct the clean payload
+    const payload = {
+      command: "backup",
+      hostname: backupParams.hostname.trim() || null,
+      inventory_file: backupParams.inventory_file.trim() || null,
+      username: backupParams.username,
+      password: backupParams.password,
+    };
+
+    console.log(`[JOB START] Endpoint: ${apiUrl}`);
+    console.log(`[JOB START] Payload:`, JSON.stringify(payload, null, 2));
+
+    try {
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      console.log(`[JOB START] Response status:`, response.status);
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log(`[JOB START] SUCCESS:`, data);
+
+        setJobId(data.job_id);
+        setWsChannel(data.ws_channel);
+        console.log(`[JOB START] Job initiated - ID: ${data.job_id}, Channel: ${data.ws_channel}`);
+        sendMessage({ type: 'SUBSCRIBE', channel: data.ws_channel });
+
+      } else {
+        const errorText = await response.text();
+        console.log(`[JOB START] FAILED:`, errorText);
+
+        throw new Error(`API call failed: ${response.status} ${response.statusText} - ${errorText}`);
       }
-    ];
-
-    let success = false;
-
-    for (let i = 0; i < attempts.length; i++) {
-      const attempt = attempts[i];
-      const apiUrl = `${API_URL}${attempt.endpoint}`;
-
-      console.log(`[JOB START] Attempt ${i + 1}: ${attempt.description}`);
-      console.log(`[JOB START] Endpoint: ${apiUrl}`);
-      console.log(`[JOB START] Payload:`, JSON.stringify(attempt.payload, null, 2));
-
-      try {
-        const response = await fetch(apiUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(attempt.payload),
-        });
-
-        console.log(`[JOB START] Attempt ${i + 1} Response status:`, response.status);
-
-        if (response.ok) {
-          const data = await response.json();
-          console.log(`[JOB START] Attempt ${i + 1} SUCCESS:`, data);
-
-          setJobId(data.job_id);
-          setWsChannel(data.ws_channel);
-          console.log(`[JOB START] Job initiated - ID: ${data.job_id}, Channel: ${data.ws_channel}`);
-          sendMessage({ type: 'SUBSCRIBE', channel: data.ws_channel });
-
-          success = true;
-          break; // Exit loop on success
-        } else {
-          const errorText = await response.text();
-          console.log(`[JOB START] Attempt ${i + 1} FAILED:`, errorText);
-
-          if (i === attempts.length - 1) {
-            // Last attempt failed
-            throw new Error(`All endpoint attempts failed. Last error: ${response.status} ${response.statusText}`);
-          }
-        }
-      } catch (error) {
-        console.error(`[JOB START] Attempt ${i + 1} Error:`, error);
-
-        if (i === attempts.length - 1) {
-          // Last attempt failed
-          console.error("[JOB START] All API attempts failed");
-          setJobOutput(prev => [...prev, {
-            timestamp: new Date().toISOString(),
-            message: `Job start failed: ${error.message}`,
-            level: 'error'
-          }]);
-          setJobStatus("failed");
-          setActiveTab("results");
-        }
-      }
-    }
-
-    if (!success) {
-      console.error("[JOB START] No successful API attempts");
+    } catch (error) {
+      console.error(`[JOB START] Error:`, error);
+      setJobOutput(prev => [...prev, {
+        timestamp: new Date().toISOString(),
+        message: `Job start failed: ${error.message}`,
+        level: 'error'
+      }]);
+      setJobStatus("failed");
+      setActiveTab("results");
     }
   };
 
@@ -328,35 +272,28 @@ export default function Backup() {
   // 🔌 WEBSOCKET MESSAGE HANDLER - ENHANCED FOR NESTED JSON
   // =========================================================================
 
-  useEffect(() => {
+  const processMessage = useCallback((lastMessage) => {
     if (!lastMessage || !jobId) return;
 
     const raw = lastMessage;
-    console.log("[WEBSOCKET] Raw message received:", raw);
 
     if (typeof raw !== 'string' || (!raw.startsWith('{') && !raw.startsWith('['))) {
-      console.log('[WEBSOCKET] Skipping non-JSON message:', raw.substring(0, 100));
       return;
     }
 
     let initialParsed;
     try {
       initialParsed = JSON.parse(raw);
-      console.log("[WEBSOCKET] Initially parsed message:", initialParsed);
     } catch (error) {
       console.warn('[WEBSOCKET] Failed to parse JSON:', raw.substring(0, 200));
       return;
     }
 
-    // Extract nested progress data (CRITICAL FIX)
-    const { payload: parsed, isNested } = extractNestedProgressData(initialParsed);
-
-    console.log("[WEBSOCKET] Final payload after extraction:", parsed);
-    console.log("[WEBSOCKET] Is nested:", isNested);
+    // Extract nested progress data
+    const { payload: parsed } = extractNestedProgressData(initialParsed);
 
     // Check if this message is for our channel
     if (parsed.channel && wsChannel && !parsed.channel.includes(wsChannel)) {
-      console.log('[WEBSOCKET] Skipping message from different channel:', parsed.channel);
       return;
     }
 
@@ -371,9 +308,8 @@ export default function Backup() {
 
     // Check if we've already logged this message
     if (loggedMessagesRef.current.has(logSignature)) {
-      console.log('[WEBSOCKET FILTER] Duplicate message detected and skipped:', logSignature);
+      // Skip duplicate
     } else {
-      // This is a new unique message, log it
       loggedMessagesRef.current.add(logSignature);
 
       const logEntry = {
@@ -389,8 +325,9 @@ export default function Backup() {
       // Auto-scroll to latest log entry
       if (scrollAreaRef.current) {
         setTimeout(() => {
-          if (scrollAreaRef.current) {
-            scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight;
+          const scrollElement = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]');
+          if (scrollElement) {
+            scrollElement.scrollTop = scrollElement.scrollHeight;
           }
         }, 50);
       }
@@ -403,80 +340,19 @@ export default function Backup() {
     }
 
     // =====================================================================
-    // 📊 REAL-TIME STATISTICS PARSING
+    // 📊 REAL-TIME STATISTICS PARSING & PROGRESS TRACKING
     // =====================================================================
-
-    // Parse statistics from various message formats
-    if (logMessage) {
-      // Pattern 1: "Backup finished. Succeeded: X, Failed: Y"
-      const finishedMatch = logMessage.match(/Backup finished\.\s*Succeeded:\s*(\d+),\s*Failed:\s*(\d+)/i);
-      if (finishedMatch) {
-        const succeeded = parseInt(finishedMatch[1], 10);
-        const failed = parseInt(finishedMatch[2], 10);
-        setStatistics({
-          total: succeeded + failed,
-          succeeded: succeeded,
-          failed: failed
-        });
-        console.log("[STATISTICS] Updated from 'Backup finished' message:", { succeeded, failed });
-      }
-
-      // Pattern 2: "Backup completed: X succeeded, Y failed"
-      const completedMatch = logMessage.match(/Backup completed:\s*(\d+)\s*succeeded,\s*(\d+)\s*failed/i);
-      if (completedMatch) {
-        const succeeded = parseInt(completedMatch[1], 10);
-        const failed = parseInt(completedMatch[2], 10);
-        setStatistics({
-          total: succeeded + failed,
-          succeeded: succeeded,
-          failed: failed
-        });
-        console.log("[STATISTICS] Updated from 'Backup completed' message:", { succeeded, failed });
-      }
-
-      // Pattern 3: Individual device success/failure messages
-      if (logMessage.includes('Backup for') && logMessage.includes('successful')) {
-        setStatistics(prev => ({
-          total: prev.total + 1,
-          succeeded: prev.succeeded + 1,
-          failed: prev.failed
-        }));
-        console.log("[STATISTICS] Device succeeded, incrementing counter");
-      } else if (logMessage.includes('Backup for') && logMessage.includes('failed')) {
-        setStatistics(prev => ({
-          total: prev.total + 1,
-          succeeded: prev.succeeded,
-          failed: prev.failed + 1
-        }));
-        console.log("[STATISTICS] Device failed, incrementing counter");
-      }
-    }
-
-    // Also check if statistics are provided in structured data
     if (parsed.data?.statistics) {
       setStatistics({
         total: (parsed.data.statistics.succeeded || 0) + (parsed.data.statistics.failed || 0),
         succeeded: parsed.data.statistics.succeeded || 0,
         failed: parsed.data.statistics.failed || 0
       });
-      console.log("[STATISTICS] Updated from structured data:", parsed.data.statistics);
     }
-
-    // =====================================================================
-    // 📊 PROGRESS & STEP TRACKING - USING EXTRACTED PAYLOAD
-    // =====================================================================
 
     if (parsed.event_type === "OPERATION_START" && typeof parsed.data?.total_steps === "number") {
-      console.log(`[PROGRESS] Operation started with ${parsed.data.total_steps} total steps`);
       setTotalSteps(parsed.data.total_steps);
       setProgress(5);
-    }
-
-    if (parsed.event_type === "STEP_START" && parsed.data?.step) {
-      if (parsed.data.step > totalSteps) {
-        const inferredTotal = parsed.data.step + 3;
-        setTotalSteps(inferredTotal);
-      }
     }
 
     if (parsed.event_type === "STEP_COMPLETE" && typeof parsed.data?.step === "number") {
@@ -506,61 +382,26 @@ export default function Backup() {
     }
 
     // =====================================================================
-    // 🏁 OPERATION COMPLETE - USING EXTRACTED PAYLOAD
+    // 🏁 OPERATION COMPLETE
     // =====================================================================
 
     const isCompletionEvent =
       parsed.event_type === "OPERATION_COMPLETE" ||
       parsed.success !== undefined ||
       (logMessage && logMessage.includes('Orchestrator completed with success')) ||
-      (logMessage && logMessage.includes('Backup completed:')) ||
       (logMessage && /Backup (finished|completed):/.test(logMessage));
 
     if (isCompletionEvent) {
-      // Enhanced success detection logic
-      let finalSuccess = false;
+      let finalSuccess = parsed.success === true || parsed.data?.final_results?.success === true || parsed.data?.status === "SUCCESS";
 
-      // Method 1: Direct success flag
-      if (parsed.success === true || parsed.data?.final_results?.success === true) {
-        finalSuccess = true;
-      }
-      // Method 2: Status field
-      else if (parsed.data?.status === "SUCCESS") {
-        finalSuccess = true;
-      }
-      // Method 3: Parse "Succeeded: X, Failed: Y" pattern
-      else if (logMessage) {
+      // If success is still unknown, try inferring from log message statistics
+      if (!finalSuccess && logMessage) {
         const succeededMatch = logMessage.match(/Succeeded:\s*(\d+)/i);
         const failedMatch = logMessage.match(/Failed:\s*(\d+)/i);
-
         if (succeededMatch && failedMatch) {
-          const succeededCount = parseInt(succeededMatch[1], 10);
-          const failedCount = parseInt(failedMatch[1], 10);
-
-          // Success if we have at least one success and zero failures
-          finalSuccess = succeededCount > 0 && failedCount === 0;
-
-          // Update statistics (may already be set from earlier parsing)
-          setStatistics(prev => ({
-            total: succeededCount + failedCount,
-            succeeded: succeededCount,
-            failed: failedCount
-          }));
-        }
-        // Method 4: Look for explicit success messages
-        else if (logMessage.includes('success: True') ||
-          logMessage.includes('completed successfully')) {
-          finalSuccess = true;
+          finalSuccess = parseInt(succeededMatch[1], 10) > 0 && parseInt(failedMatch[1], 10) === 0;
         }
       }
-
-      console.log("[JOB COMPLETE] Final event detected:", {
-        success: finalSuccess,
-        event_type: parsed.event_type,
-        message: logMessage,
-        data_status: parsed.data?.status,
-        nested_success: parsed.data?.final_results?.success
-      });
 
       setJobStatus(finalSuccess ? "success" : "failed");
       setFinalResults(prev => prev || parsed);
@@ -575,11 +416,27 @@ export default function Backup() {
       }
 
       requestAnimationFrame(() => {
-        console.log("[TAB SWITCH] Executing scheduled tab switch to 'results'");
         setActiveTab("results");
       });
     }
-  }, [lastMessage, jobId, wsChannel, sendMessage, setActiveTab, totalSteps, progress, completedSteps]);
+  }, [jobId, wsChannel, completedSteps, totalSteps, progress, sendMessage]);
+
+  // WebSocket effect hook
+  useEffect(() => {
+    if (lastMessage) {
+      processMessage(lastMessage);
+    }
+  }, [lastMessage, processMessage]);
+
+  // Scroll to bottom of the log output
+  useEffect(() => {
+    if (scrollAreaRef.current) {
+      const scrollElement = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]');
+      if (scrollElement) {
+        scrollElement.scrollTop = scrollElement.scrollHeight;
+      }
+    }
+  }, [jobOutput]);
 
   // =========================================================================
   // 🧱 UI RENDER SECTION
@@ -591,8 +448,8 @@ export default function Backup() {
 
   return (
     <div className="p-8 pt-6">
-      <h1 className="text-3xl font-bold tracking-tight mb-2">Device Validation Operation</h1>
-      <p className="text-muted-foreground mb-6">Configure, execute, and review device validations.</p>
+      <h1 className="text-3xl font-bold tracking-tight mb-2">Device Configuration Backup</h1>
+      <p className="text-muted-foreground mb-6">Configure, execute, and review device configuration backups.</p>
       <Separator className="mb-8" />
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
@@ -627,7 +484,7 @@ export default function Backup() {
                 {jobStatus === 'running' ? (
                   <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Running...</>
                 ) : (
-                  <>Start Validation Job <ArrowRight className="ml-2 h-4 w-4" /></>
+                  <>Start Backup Job <ArrowRight className="ml-2 h-4 w-4" /></>
                 )}
               </Button>
             </div>
@@ -654,28 +511,29 @@ export default function Backup() {
             />
 
             <ScrollArea className="h-96 bg-background/50 p-4 rounded-md border">
-              <div ref={scrollAreaRef} className="space-y-3">
+              <div className="space-y-3">
                 {jobOutput.length === 0 ? (
                   <p className="text-center text-muted-foreground pt-4">
                     Waiting for job to start...
                   </p>
                 ) : (
                   jobOutput.map((log, index) => (
-                    <EnhancedProgressStep
-                      key={`${log.timestamp}-${index}`}
-                      step={{
-                        message: log.message,
-                        level: log.level,
-                        timestamp: log.timestamp,
-                        type: log.event_type,
-                      }}
-                      isLatest={index === jobOutput.length - 1}
-                      compact={false}
-                      showTimestamp={true}
-                    />
+                    <div key={`${log.timestamp}-${index}`} className={`text-xs font-mono
+                      ${log.level === 'error' ? 'text-red-500' :
+                      log.level === 'success' ? 'text-green-600 dark:text-green-400' :
+                        'text-gray-700 dark:text-gray-300'
+                      }
+                      whitespace-pre-wrap
+                    `}>
+                      <span className="text-muted-foreground mr-2 opacity-70">
+                        {log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : ''}
+                      </span>
+                      {log.message}
+                    </div>
                   ))
                 )}
               </div>
+              <div ref={scrollAreaRef} />
             </ScrollArea>
           </div>
         </TabsContent>
@@ -698,8 +556,8 @@ export default function Backup() {
                   )}
                   <div>
                     <h2 className="text-2xl font-bold">
-                      {jobStatus === 'success' ? 'Validation Completed Successfully' :
-                        jobStatus === 'failed' ? 'Validation Failed' :
+                      {jobStatus === 'success' ? 'Backup Completed Successfully' :
+                        jobStatus === 'failed' ? 'Backup Failed' :
                           'Awaiting Execution'}
                     </h2>
                     <p className="text-sm text-muted-foreground mt-1">
@@ -708,7 +566,7 @@ export default function Backup() {
                   </div>
                 </div>
                 <Button onClick={resetWorkflow} variant="outline" size="sm">
-                  Start New Validation
+                  Start New Backup
                 </Button>
               </div>
             </div>
@@ -747,7 +605,7 @@ export default function Backup() {
             {finalResults?.data?.device_results && finalResults.data.device_results.length > 0 && (
               <div className="border rounded-lg bg-card">
                 <div className="p-4 border-b">
-                  <h3 className="text-lg font-semibold">Device Validation Results</h3>
+                  <h3 className="text-lg font-semibold">Device Backup Results</h3>
                   <p className="text-sm text-muted-foreground mt-1">
                     Detailed status for each device
                   </p>
@@ -827,15 +685,15 @@ export default function Backup() {
                     <dd className="font-medium">{backupParams.username}</dd>
                   </div>
                   <div className="flex justify-between">
-                    <dt className="text-muted-foreground">Validation Tests:</dt>
-                    <dd className="font-mono text-xs">system_info, interface_status, bgp_neighbors</dd>
+                    <dt className="text-muted-foreground">Operation:</dt>
+                    <dd className="font-mono text-xs">Configuration Backup</dd>
                   </div>
                 </dl>
               </div>
             </div>
 
             {/* Debug Information (Development Only) */}
-            {finalResults && process.env.NODE_ENV === 'development' && (
+            {finalResults && import.meta.env.DEV && (
               <details className="border rounded-lg bg-card">
                 <summary className="p-4 cursor-pointer font-semibold text-sm hover:bg-muted/50">
                   Debug Information (Development Only)

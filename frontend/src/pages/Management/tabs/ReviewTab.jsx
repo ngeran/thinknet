@@ -380,7 +380,7 @@ export default function ReviewTab({
               {/* ============================================================
                   DEBUG TOOLS
                   ============================================================ */}
-              {process.env.NODE_ENV === 'development' && (
+              {import.meta.env.DEV && (
                 <div className="mt-6">
                   <Button
                     onClick={onForceReview}
@@ -432,7 +432,7 @@ export default function ReviewTab({
           </div>
  
           {/* Debug button for testing (only in development) */}
-          {process.env.NODE_ENV === 'development' && (
+          {import.meta.env.DEV && (
             <Button
               onClick={onForceReview}
               variant="outline"

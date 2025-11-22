@@ -397,7 +397,7 @@ export default function ResultsTab({
       {/* ====================================================================
           DEBUG INFORMATION (Development Only)
           ==================================================================== */}
-      {finalResults && process.env.NODE_ENV === 'development' && (
+      {finalResults && import.meta.env.DEV && (
         <Card className="border-purple-200">
           <CardHeader>
             <CardTitle className="text-sm flex items-center gap-2">
