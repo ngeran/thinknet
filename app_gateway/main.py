@@ -9,6 +9,10 @@ Architecture:
 - Routes requests to appropriate backend services
 - Handles CORS for frontend communication
 - Manages service health monitoring
+
+UPDATES:
+- Added upgrade router for device software upgrades (2025-11-18 16:47:45 UTC)
+- Maintains separation between pre-check (code_upgrade.py) and upgrade (upgrade.py)
 """
 
 from fastapi import FastAPI
@@ -19,20 +23,23 @@ import sys
 # Import all API routers from their respective files.
 # Each router handles a specific functional domain of the application.
 from app_gateway.api.routers import (
-    automation,  # Automation workflow endpoints
-    proxy,  # Proxy requests to backend services
-    test_redis,  # Redis connection testing
-    inventory,  # Device inventory management
-    sidebar_metadata,  # Navigation and UI metadata
-    restore,  # Configuration restore operations
-    operations,  # Generic operations endpoint
-    software_images,  # Software image management
-    configuration_templates,  # Configuration template management
-    jsnapy_tests,  # JSNapy test execution
-    configuration_deployment,  # Configuration deployment
-    jsnapy_runner,  # Dedicated JSNapy job runner
-    file_uploader,  # File upload handling
-    code_upgrade,  # Device code upgrade operations with pre-check
+    automation,
+    code_upgrade,
+    configuration_deployment,
+    configuration_templates,
+    device_storage,
+    file_uploader,
+    inventory,
+    jsnapy_runner,  # JSNapy validation runner
+    jsnapy_tests,  # JSNapy test discovery and execution
+    operations,  # Backup and restore operations
+    pre_checks,  # PreChecks for code upgrade validation
+    proxy,  # Navigation proxy to Rust backend
+    restore,
+    sidebar_metadata,
+    software_images,
+    test_redis,  # Redis testing endpoint
+    upgrade,
 )
 
 from .core.config import settings
@@ -43,6 +50,7 @@ from .core.config import settings
 logger.info("🔧 [DEBUG] Starting application initialization...")
 logger.info(f"🔧 [DEBUG] Python path: {sys.path}")
 
+# Verify code_upgrade module (pre-check endpoint)
 try:
     from app_gateway.api.routers import code_upgrade
 
@@ -73,9 +81,40 @@ try:
 
 except ImportError as e:
     logger.error(f"❌ [DEBUG] Failed to import code_upgrade module: {e}")
-    # Don't exit - continue without this module; the router simply won't be registered.
 except Exception as e:
     logger.error(f"❌ [DEBUG] Unexpected error during import: {e}")
+
+# Verify upgrade module (upgrade execution endpoint) - NEW 2025-11-18 16:47:45 UTC
+try:
+    from app_gateway.api.routers import upgrade
+
+    logger.info("✅ [DEBUG] Successfully imported upgrade module")
+    logger.info(f"📁 [DEBUG] Module file location: {upgrade.__file__}")
+
+    # Inspect what router objects are available
+    available_routers = [
+        attr
+        for attr in dir(upgrade)
+        if not attr.startswith("_") and "router" in attr.lower()
+    ]
+    logger.info(f"🔍 [DEBUG] Available routers in upgrade module: {available_routers}")
+
+    # Check for specific router instances
+    if hasattr(upgrade, "upgrade_router"):
+        logger.info("✅ [DEBUG] 'upgrade_router' found!")
+        logger.info(f"🛣️  [DEBUG] Router prefix: {upgrade.upgrade_router.prefix}")
+    else:
+        logger.warning("⚠️ [DEBUG] 'upgrade_router' NOT found!")
+
+    if hasattr(upgrade, "router"):
+        logger.info("✅ [DEBUG] 'router' alias found!")
+    else:
+        logger.warning("⚠️ [DEBUG] 'router' alias NOT found!")
+
+except ImportError as e:
+    logger.error(f"❌ [DEBUG] Failed to import upgrade module: {e}")
+except Exception as e:
+    logger.error(f"❌ [DEBUG] Unexpected error during upgrade import: {e}")
 
 # =============================================================================
 # FASTAPI APPLICATION INITIALIZATION
@@ -106,7 +145,9 @@ app.add_middleware(
         # "http://localhost", # If testing directly from localhost without a specific port
     ],
     allow_credentials=True,  # Allow cookies and HTTP authentication headers to be sent.
-    allow_methods=["*"],  # Allow all HTTP methods (GET, POST, PUT, DELETE, OPTIONS, etc.).
+    allow_methods=[
+        "*"
+    ],  # Allow all HTTP methods (GET, POST, PUT, DELETE, OPTIONS, etc.).
     allow_headers=["*"],  # Allow all request headers.
 )
 
@@ -118,34 +159,63 @@ app.add_middleware(
 
 # 🥇 HIGH PRIORITY: JSNapy runner might define more specific or overarching routes
 # that should be handled before more generic 'operations' routes.
-app.include_router(jsnapy_runner.router, prefix="/api")
-logger.info("✅ Registered jsnapy_runner router with prefix /api")
+
 
 # 🥈 MEDIUM PRIORITY: Other JSNapy and operations endpoints.
 # Ensure that /operations routes are defined before very generic catch-alls.
+app.include_router(jsnapy_runner.router, prefix="/api")
+logger.info("✅ Registered jsnapy_runner router with prefix /api")
+
 app.include_router(jsnapy_tests.router, prefix="/api")
 logger.info("✅ Registered jsnapy_tests router with prefix /api")
 
 app.include_router(operations.router, prefix="/api")
 logger.info("✅ Registered operations router with prefix /api")
 
-# 🥈 MEDIUM PRIORITY: Code upgrade operations.
-# IMPORTANT: The `code_upgrade_router` might already define its own prefix (e.g., "/api/operations").
-# If so, do NOT add an additional prefix here to avoid duplicating it (e.g., "/api/api/operations").
+# 🥈 MEDIUM PRIORITY: Code upgrade operations (pre-check validation).
+# IMPORTANT: The `code_upgrade_router` already defines its own prefix (e.g., "/api/operations").
+# Do NOT add an additional prefix here to avoid duplicating it.
 try:
     if hasattr(code_upgrade, "code_upgrade_router"):
         # Assuming code_upgrade_router defines its own /api/operations prefix internally.
         # Final paths will look like: /api/operations/health, /api/operations/pre-check, etc.
         app.include_router(code_upgrade.code_upgrade_router)
-        logger.info("✅ Registered 'code_upgrade_router' without an additional prefix.")
+        logger.info("✅ Registered 'code_upgrade_router' (pre-check validation)")
     elif hasattr(code_upgrade, "router"):
         # Fallback to a generic 'router' alias if found, assuming it also defines its prefix.
         app.include_router(code_upgrade.router)
-        logger.info("✅ Registered generic 'router' alias for code_upgrade without an additional prefix.")
+        logger.info("✅ Registered generic 'router' alias for code_upgrade")
     else:
-        logger.warning("⚠️ No specific code upgrade router ('code_upgrade_router' or 'router') found for registration.")
+        logger.warning(
+            "⚠️ No specific code upgrade router ('code_upgrade_router' or 'router') found for registration."
+        )
 except Exception as e:
     logger.error(f"❌ Failed to register code upgrade router due to an exception: {e}")
+
+# 🥈 MEDIUM PRIORITY: Device upgrade operations (upgrade execution) - NEW 2025-11-18 16:47:45 UTC
+# IMPORTANT: The `upgrade_router` already defines its own prefix ("/api/operations").
+# Do NOT add an additional prefix here to avoid path duplication.
+try:
+    if hasattr(upgrade, "upgrade_router"):
+        # upgrade_router defines its own /api/operations prefix internally.
+        # Final paths will look like: /api/operations/upgrade, /api/operations/upgrade/health, etc.
+        app.include_router(upgrade.upgrade_router)
+        logger.info(
+            "✅ Registered 'upgrade_router' (device software upgrade execution)"
+        )
+        logger.info(
+            "   📍 Endpoints: POST /api/operations/upgrade, GET /api/operations/upgrade/health"
+        )
+    elif hasattr(upgrade, "router"):
+        # Fallback to generic 'router' alias if found
+        app.include_router(upgrade.router)
+        logger.info("✅ Registered generic 'router' alias for upgrade")
+    else:
+        logger.warning(
+            "⚠️ No specific upgrade router ('upgrade_router' or 'router') found for registration."
+        )
+except Exception as e:
+    logger.error(f"❌ Failed to register upgrade router due to an exception: {e}")
 
 # 🥉 STANDARD PRIORITY: Remaining core application routers.
 app.include_router(automation.router, prefix="/api")
@@ -156,6 +226,9 @@ logger.info("✅ Registered proxy router with prefix /api")
 
 app.include_router(test_redis.router, prefix="/api")
 logger.info("✅ Registered test_redis router with prefix /api")
+
+app.include_router(device_storage.router, prefix="/api")
+logger.info("✅ Registered device_storage router with prefix /api")
 
 app.include_router(inventory.router, prefix="/api")
 logger.info("✅ Registered inventory router with prefix /api")
@@ -172,11 +245,17 @@ logger.info("✅ Registered software_images router with prefix /api")
 app.include_router(configuration_templates.router, prefix="/api")
 logger.info("✅ Registered configuration_templates router with prefix /api")
 
+app.include_router(upgrade.router, prefix="/api")
+logger.info("✅ Registered upgrade router with prefix /api")
+
 app.include_router(configuration_deployment.router, prefix="/api")
 logger.info("✅ Registered configuration_deployment router with prefix /api")
 
 app.include_router(file_uploader.router, prefix="/api")
 logger.info("✅ Registered file_uploader router with prefix /api")
+
+app.include_router(pre_checks.router, prefix="/api")
+logger.info("✅ Registered pre_checks router with prefix /api")
 
 logger.info("🎉 All specified routers have been processed for registration.")
 
@@ -204,9 +283,13 @@ async def debug_routes():
         route_info = {
             "path": getattr(route, "path", None),
             "name": getattr(route, "name", None),
-            "methods": list(getattr(route, "methods", [])) if hasattr(route, "methods") else None,
+            "methods": list(getattr(route, "methods", []))
+            if hasattr(route, "methods")
+            else None,
         }
-        if route_info["path"] is not None: # Filter out non-endpoint routes like Swagger UI assets
+        if (
+            route_info["path"] is not None
+        ):  # Filter out non-endpoint routes like Swagger UI assets
             routes.append(route_info)
 
     # Sort routes by path for easier readability and debugging.
@@ -264,10 +347,21 @@ def health_check():
 # =============================================================================
 # APPLICATION STARTUP COMPLETE
 # =============================================================================
-logger.info("🚀 FastAPI application initialization complete. Gateway is ready to serve requests.")
+logger.info(
+    "🚀 FastAPI application initialization complete. Gateway is ready to serve requests."
+)
 logger.info("📚 API Documentation available at: http://localhost:8000/docs")
-logger.info("💡 Interactive API Explorer (ReDoc) available at: http://localhost:8000/redoc")
+logger.info(
+    "💡 Interactive API Explorer (ReDoc) available at: http://localhost:8000/redoc"
+)
 logger.info("🔧 Debug routes endpoint available at: http://localhost:8000/debug/routes")
+logger.info("=" * 80)
+logger.info("🎯 UPGRADE SYSTEM ENDPOINTS:")
+logger.info("  ✅ POST /api/operations/pre-check - Pre-check validation")
+logger.info("  ✅ POST /api/operations/upgrade - Device software upgrade")
+logger.info("  ✅ GET  /api/operations/health - Pre-check health")
+logger.info("  ✅ GET  /api/operations/upgrade/health - Upgrade health")
+logger.info("=" * 80)
 
 # =============================================================================
 # APPLICATION SHUTDOWN HANDLING (Optional)

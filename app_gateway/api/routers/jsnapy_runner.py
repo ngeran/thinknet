@@ -149,7 +149,7 @@ router = APIRouter(prefix="/operations", tags=["JSNAPy Validation"])
 # ====================================================================================
 # SECTION 5: VALIDATION EXECUTION ENDPOINT
 # ====================================================================================
-@router.post("/execute", response_model=ValidationResponse)
+@router.post("/validation/execute", response_model=ValidationResponse)
 async def execute_validation(validation_request: ValidationRequest):
     """
     Execute JSNAPy validation tests against target network devices.
