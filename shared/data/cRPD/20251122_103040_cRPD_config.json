@@ -1,0 +1,34 @@
+{
+    "configuration": {
+        "@": {
+            "xmlns": "http://xml.juniper.net/xnm/1.1/xnm",
+            "junos:changed-seconds": "1763770661",
+            "junos:changed-localtime": "2025-11-22 00:17:41 UTC"
+        },
+        "version": "20250924.203317_builder.r1513902",
+        "system": {
+            "host-name": "cRPD",
+            "root-authentication": {
+                "encrypted-password": "$6$4KyRX$NsA5Sdeay/V3j78MUNJA2F.idIVAnwhWy/zzBUwTrjJ1hAzZeSuytur5iphK.xWRuyUPtoEglWipG8FUTew/S0"
+            },
+            "login": {
+                "user": [
+                    {
+                        "name": "admin",
+                        "uid": 2000,
+                        "class": "super-user",
+                        "authentication": {
+                            "encrypted-password": "$6$olZuS$OD359n8NxUdYH/nlNuEOTu/2UMWjo4qPLd4GIIMtzbZUQmDiVD6B2lKkdtpAuC5Wz.HkFeRQ8n9jSrUboyhQK1"
+                        }
+                    }
+                ]
+            },
+            "services": {
+                "netconf": {
+                    "ssh": {}
+                },
+                "ssh": {}
+            }
+        }
+    }
+}
