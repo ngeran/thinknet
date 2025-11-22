@@ -1,5 +1,8 @@
 {
   "dependencies": {
-    "react-hot-toast": "^2.6.0"
+    "@radix-ui/react-switch": "^1.2.6",
+    "clsx": "^2.1.1",
+    "react-hot-toast": "^2.6.0",
+    "tailwind-merge": "^3.4.0"
   }
 }
