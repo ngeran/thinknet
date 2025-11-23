@@ -2,15 +2,15 @@
  * =============================================================================
  * FILE LOCATION: frontend/src/pages/Automation/Validation.jsx
  * DESCRIPTION:   Validation Workflow Component.
- *                FIXED: Removed invalid file headers and duplicate logic blocks.
+ *                FIXED: WebSocket registration race condition & message filtering.
  * =============================================================================
  */
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   CheckCircle, XCircle, Loader2, ArrowRight, Search, ChevronDown, 
   ChevronRight, X, CheckCircle2, AlertCircle, Table, FileText, 
-  Download, Terminal, Bug, ListChecks 
+  ListChecks, Bug 
 } from 'lucide-react';
 
 // UI Components
@@ -29,11 +29,11 @@ import LiveLogViewer from '@/components/realTimeProgress/LiveLogViewer';
 
 // Custom Hooks & Utils
 import { useTestDiscovery } from '@/hooks/useTestDiscovery';
+import { useJobWebSocket } from '@/hooks/useJobWebSocket'; 
 import { processLogMessage } from '@/lib/logProcessor';
 
 // API Configuration
 const API_URL = import.meta.env.VITE_API_GATEWAY_URL || 'http://localhost:8000';
-const WS_BASE = import.meta.env.VITE_WS_GATEWAY_URL || 'ws://localhost:3100/ws';
 
 // =========================================================================================
 // SECTION 1: SUB-COMPONENT - TEST SELECTION PANEL
@@ -308,37 +308,6 @@ const UserFriendlyResults = ({ finalResults, jobId }) => {
                                 </div>
                               )}
                               
-                              {/* Test Details/Variables */}
-                              {testDetails && (
-                                <div className="mt-2 space-y-1">
-                                  {testDetails.status && (
-                                    <div className="text-xs text-slate-600 dark:text-slate-400">
-                                      Status: <span className={`font-medium ${hasError ? 'text-rose-700 dark:text-rose-300' : 'text-emerald-700 dark:text-emerald-300'}`}>{testDetails.status}</span>
-                                    </div>
-                                  )}
-                                  
-                                  {/* Display extracted variables like product-model, junos-version */}
-                                  {testDetails['product-model'] && (
-                                    <div className="text-xs text-slate-600 dark:text-slate-400">
-                                      Device Model: <span className="font-mono bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded text-slate-800 dark:text-slate-200">{testDetails['product-model']}</span>
-                                    </div>
-                                  )}
-                                  
-                                  {testDetails['junos-version'] && (
-                                    <div className="text-xs text-slate-600 dark:text-slate-400">
-                                      Junos Version: <span className="font-mono bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded text-slate-800 dark:text-slate-200">{testDetails['junos-version']}</span>
-                                    </div>
-                                  )}
-                                  
-                                  {/* Any other test data */}
-                                  {testDetails.note && (
-                                    <div className="text-xs text-sky-600 dark:text-sky-400 italic">
-                                      {testDetails.note}
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                              
                               {/* Legacy data array support */}
                               {test.data && Array.isArray(test.data) && test.data.length > 0 && (
                                 <div className="mt-2 text-xs text-slate-600 dark:text-slate-400">
@@ -479,7 +448,6 @@ export default function Validation() {
   // Workflow State
   const [jobStatus, setJobStatus] = useState("idle"); // idle, running, success, failed
   const [jobId, setJobId] = useState(null);
-  const [wsConnection, setWsConnection] = useState(null);
   const [finalResults, setFinalResults] = useState(null);
 
   // Logging & UI State
@@ -487,10 +455,12 @@ export default function Validation() {
   const [activeStep, setActiveStep] = useState(null);
   const [showTechnical, setShowTechnical] = useState(false);
   const [showResults, setShowResults] = useState(false);
-  const [viewMode, setViewMode] = useState('summary');
 
   // Data Fetching
   const { categorizedTests, loading: testsLoading, error: testsError } = useTestDiscovery("validation");
+
+  // WebSocket Hook (Global)
+  const { lastMessage, isConnected, sendMessage } = useJobWebSocket();
 
   // --- HANDLERS ---
   const handleParamChange = (name, value) => setValidationParams(prev => ({ ...prev, [name]: value }));
@@ -502,25 +472,65 @@ export default function Validation() {
   };
 
   const resetWorkflow = () => {
-    if (wsConnection) wsConnection.close();
     setJobStatus("idle");
     setLogHistory([]);
     setFinalResults(null);
     setJobId(null);
-    setWsConnection(null);
     setActiveTab("config");
     setActiveStep(null);
     setShowResults(false);
   };
 
   // ---------------------------------------------------------------------------------------
-  // AUTO-SHOW RESULTS EFFECT
+  // WEB SOCKET MESSAGE HANDLING
   // ---------------------------------------------------------------------------------------
   useEffect(() => {
-    if (jobStatus === 'success' && finalResults) {
-      setShowResults(true);
+    // 1. Basic Check
+    if (!lastMessage || !jobId) return;
+
+    // 2. Filter Logic (Permissive)
+    if (lastMessage.job_id && lastMessage.job_id !== jobId) return;
+
+    const normalizedLog = processLogMessage(lastMessage);
+    setLogHistory(prev => [...prev, normalizedLog]);
+
+    if (normalizedLog.type === 'STEP_PROGRESS') {
+      setActiveStep(normalizedLog.message.replace(/^Step \d+: /, ''));
     }
-  }, [jobStatus, finalResults]);
+
+    // Check for Completion/Results
+    const originalEvent = normalizedLog.originalEvent || lastMessage;
+    
+    // CASE A: Results Received (True Success)
+    if (originalEvent.type === 'result' && originalEvent.data) {
+        setFinalResults(originalEvent.data);
+        setJobStatus('success');
+        setShowResults(true);
+        if (sendMessage && jobId) sendMessage({ type: "UNSUBSCRIBE" });
+    }
+    // CASE B: Job Finished Signal
+    else if (originalEvent.type === 'job_status' && originalEvent.status === 'finished') {
+        // FIX: Check if we actually have results before marking success
+        if (finalResults) {
+            setJobStatus('success');
+        } else {
+            // Job finished but no results = FAILURE (e.g., file not found)
+            setJobStatus('failed');
+            setLogHistory(prev => [...prev, {
+                type: 'ERROR',
+                message: 'Job finished but produced no results. Check test file paths.',
+                id: Date.now(),
+                timestamp: new Date().toISOString()
+            }]);
+        }
+    }
+    // CASE C: Explicit Error
+    else if (originalEvent.type === 'error') {
+        setJobStatus('failed');
+        if (sendMessage && jobId) sendMessage({ type: "UNSUBSCRIBE" });
+    }
+
+  }, [lastMessage, jobId, finalResults]); // <--- Added finalResults dependency
 
   // --- EXECUTION LOGIC ---
   const startValidation = async () => {
@@ -529,8 +539,7 @@ export default function Validation() {
     if (!validationParams.hostname && !validationParams.inventory_file) return alert("Target required");
     if (!validationParams.tests?.length) return alert("Select at least one test");
 
-    // 2. Reset
-    if (wsConnection) wsConnection.close();
+    // 2. Reset UI
     setJobStatus("running");
     setLogHistory([]);
     setFinalResults(null);
@@ -545,13 +554,11 @@ export default function Validation() {
       username: validationParams.username,
       password: validationParams.password,
       tests: validationParams.tests,
+      mode: "check"
     };
 
-    let ws;
-    let intendedClose = false;
-
     try {
-      // 4. API Call
+      // 4. API Call (Trigger Job)
       const response = await fetch(`${API_URL}/api/operations/validation/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -560,113 +567,27 @@ export default function Validation() {
 
       if (!response.ok) throw new Error(await response.text());
       const data = await response.json();
-      const { job_id, ws_channel } = data;
-      setJobId(job_id);
+      
+      // 5. Store Job ID
+      setJobId(data.job_id);
 
-      // 5. WebSocket Connection
-      ws = new WebSocket(WS_BASE);
-      setWsConnection(ws);
+      // 6. IMMEDIATE SUBSCRIPTION (CRITICAL FIX)
+      // Subscribe right here to avoid race conditions with useEffect
+      if (data.ws_channel && sendMessage) {
+          console.log(`Subscribing to channel: ${data.ws_channel}`);
+          sendMessage({ 
+              type: 'SUBSCRIBE', 
+              channel: data.ws_channel 
+          });
+      } else {
+          console.warn("WS Channel missing or sendMessage unavailable");
+      }
 
-      ws.onopen = () => {
-        ws.send(JSON.stringify({ type: 'SUBSCRIBE', channel: ws_channel }));
-        setLogHistory(prev => [...prev, processLogMessage({ 
-          message: `Connected to job channel: ${ws_channel}`, 
+      // Log start
+      setLogHistory(prev => [...prev, processLogMessage({ 
+          message: `Job started with ID: ${data.job_id}`, 
           event_type: 'SYSTEM_INFO' 
-        })]);
-      };
-
-      // 6. Message Handling
-      ws.onmessage = (event) => {
-        const normalizedLog = processLogMessage(event.data);
-        setLogHistory(prev => [...prev, normalizedLog]);
-
-        if (normalizedLog.type === 'STEP_PROGRESS') {
-          setActiveStep(normalizedLog.message.replace(/^Step \d+: /, ''));
-        }
-
-        const originalEvent = normalizedLog.originalEvent;
-        
-        // ------------------------------------------------------------------------
-        // RESULT DETECTION LOGIC
-        // ------------------------------------------------------------------------
-        const isResult = originalEvent.type === 'result' || 
-                         originalEvent.results_by_host || 
-                         (originalEvent.data && originalEvent.data.results_by_host) ||
-                         (typeof originalEvent === 'object' && Object.keys(originalEvent).some(key => key.includes('result')));
-
-        if (isResult) {
-            // Extract result data from various possible structures
-            let resultData = null;
-            
-            if (originalEvent.results_by_host) {
-                resultData = originalEvent;
-            } else if (originalEvent.data && originalEvent.data.results_by_host) {
-                resultData = originalEvent.data;
-            } else if (originalEvent.data) {
-                resultData = originalEvent.data;
-            } else {
-                resultData = originalEvent;
-            }
-            
-            setFinalResults(resultData);
-            setJobStatus('success');
-            intendedClose = true;
-            ws.close();
-        }
-        else if (originalEvent.event_type === 'OPERATION_COMPLETE') {
-            const success = originalEvent.data?.status === 'SUCCESS';
-            
-            // BACKEND ISSUE: Results are not being sent, so create mock results for demo
-            if (success && !finalResults) {
-                const mockResults = {
-                    results_by_host: [
-                        {
-                            hostname: validationParams.hostname || validationParams.inventory_file || 'Unknown Device',
-                            test_results: validationParams.tests.map((testId, index) => ({
-                                title: `Test ${index + 1}: ${testId}`,
-                                error: null,
-                                data: {
-                                    status: 'PASSED',
-                                    message: 'Test completed successfully but detailed results were not provided by backend WebSocket. Check backend logs for full results.',
-                                    note: 'This is a placeholder result - the backend should send actual test results data.'
-                                }
-                            })) || [
-                                {
-                                    title: 'Validation Tests',
-                                    error: null,
-                                    data: {
-                                        status: 'COMPLETED',
-                                        message: 'Validation completed successfully but detailed results were not provided by the backend.',
-                                        note: 'Backend should send actual test results through WebSocket.'
-                                    }
-                                }
-                            ]
-                        }
-                    ]
-                };
-                setFinalResults(mockResults);
-            }
-            
-            setJobStatus(success ? 'success' : 'failed');
-            if (success) {
-                intendedClose = true;
-                ws.close();
-            }
-        }
-      };
-
-      ws.onerror = () => {
-        if (!intendedClose) {
-            setLogHistory(prev => [...prev, processLogMessage({ message: "Connection Error", event_type: "ERROR" })]);
-            setJobStatus("failed");
-        }
-      };
-
-      ws.onclose = () => {
-        if (!intendedClose) {
-             setLogHistory(prev => [...prev, processLogMessage({ message: "Connection closed unexpectedly", event_type: "ERROR" })]);
-        }
-      };
+      })]);
 
     } catch (error) {
       console.error(error);
@@ -674,8 +595,6 @@ export default function Validation() {
       setLogHistory(prev => [...prev, processLogMessage({ message: `API Error: ${error.message}`, event_type: "ERROR" })]);
     }
   };
-
-  useEffect(() => { return () => { if (wsConnection) wsConnection.close(); }; }, [wsConnection]);
 
   const isRunning = jobStatus === 'running';
   const isComplete = jobStatus === 'success';
@@ -813,7 +732,7 @@ export default function Validation() {
                        {/* Live Log Viewer */}
                        <LiveLogViewer 
                            logs={logHistory} 
-                           isConnected={!!wsConnection} 
+                           isConnected={isConnected} 
                            height="h-96" 
                            title="Validation Logs"
                            showTechnical={showTechnical}

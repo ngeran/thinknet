@@ -1,146 +1,286 @@
 #!/usr/bin/env python3
 # ====================================================================================
-# FILE: jsnapy_runner/run.py (v3.24 - Data Consistency Fix)
-# DESCRIPTION: Scans /app/shared/data/tests for .yml files matching test names.
-#              FIXED: Added 'name' to STEP_COMPLETE events to fix UI 'undefined' msgs.
+# FILE: jsnapy_runner/run.py (v4.1 - Stable Production)
+# DESCRIPTION:
+#   - Executed by JSNAPyService via subprocess.
+#   - Performs PyEZ connections, RPC execution, and Snapshotting.
+#   - Outputs strictly JSON events to STDOUT for WebSocket streaming.
+#
+# USAGE:
+#   python3 run.py --hostname 1.1.1.1 --username admin --password ... --tests test_storage_check
 # ====================================================================================
 
-import argparse
 import sys
 import json
-import asyncio
-from pathlib import Path
-from datetime import datetime
-import traceback
-import yaml
-import socket
+import time
+import os
+
+# ------------------------------------------------------------------------------------
+# 1. IMMEDIATE BOOT MESSAGE
+# ------------------------------------------------------------------------------------
+# This is CRITICAL. It tells the UI that the subprocess started successfully
+# before we even attempt heavy imports (which can take 1-2 seconds).
+print(
+    json.dumps(
+        {
+            "type": "progress",
+            "event_type": "SCRIPT_BOOT",
+            "message": "Worker script initialized...",
+            "data": {},
+        }
+    ),
+    file=sys.stdout,
+    flush=True,
+)
+
+
+# ------------------------------------------------------------------------------------
+# 2. SAFE IMPORTS
+# ------------------------------------------------------------------------------------
+try:
+    import argparse
+    import asyncio
+    from pathlib import Path
+    import yaml
+
+    # Third-party Network Libraries
+    from lxml import etree
+    from jnpr.junos import Device
+    from jnpr.junos.exception import ConnectError, ConnectAuthError
+
+except ImportError as e:
+    # If libraries are missing in the Docker container, report it as a JSON error
+    # so the UI shows a readable error message instead of a silent crash.
+    print(
+        json.dumps(
+            {
+                "type": "error",
+                "message": f"Python Import Error: {str(e)}. Please check 'requirements.txt'.",
+            }
+        ),
+        file=sys.stdout,
+        flush=True,
+    )
+    sys.exit(1)
 
 
 # ====================================================================================
-# HELPER: PROGRESS REPORTING
+# CONSTANTS & CONFIGURATION
 # ====================================================================================
-def send_progress(event_type, data, message=""):
-    progress_update = {
+# Paths where data is stored. These must match your Docker volume mounts.
+SNAPSHOT_DIR = Path("/app/shared/data/jsnapy/snapshots")
+TESTS_ROOT = Path("/app/shared/data/tests")
+
+# Ensure snapshot directory exists. If we can't create it, fail early.
+try:
+    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+except Exception as e:
+    print(
+        json.dumps(
+            {
+                "type": "error",
+                "message": f"Filesystem Error: Could not create {SNAPSHOT_DIR} - {e}",
+            }
+        ),
+        file=sys.stdout,
+        flush=True,
+    )
+    sys.exit(1)
+
+
+# ====================================================================================
+# HELPER: EVENT EMISSION
+# ====================================================================================
+def send_event(event_type, data, message=""):
+    """
+    Emits a structured JSON event to stdout.
+    The Service Layer captures this and forwards it to the WebSocket.
+    """
+    payload = {
         "type": "progress",
         "event_type": event_type,
         "message": message,
         "data": data,
     }
-    print(f"{json.dumps(progress_update)}", file=sys.stdout, flush=True)
+    # flush=True is required for real-time streaming in Python subprocesses
+    print(f"{json.dumps(payload)}", file=sys.stdout, flush=True)
 
 
 # ====================================================================================
-# CORE LOGIC
+# CORE LOGIC: SNAPSHOTS
 # ====================================================================================
+def save_snapshot(hostname, test_name, tag, xml_data):
+    """
+    Saves the raw XML RPC response to the shared storage volume.
+    Returns the file path if successful.
+    """
+    timestamp = int(time.time())
+    filename = f"{hostname}_{test_name}_{tag}_{timestamp}.xml"
+    file_path = SNAPSHOT_DIR / filename
 
-
-def run_single_test(device, test_definition):
-    """Executes one test definition against a device."""
     try:
-        if "rpc" not in test_definition:
-            raise ValueError("Invalid test definition: Missing 'rpc' key")
+        # Convert lxml object to string
+        xml_str = etree.tostring(xml_data, pretty_print=True, encoding="unicode")
+        with open(file_path, "w") as f:
+            f.write(xml_str)
+        return str(file_path)
+    except Exception as e:
+        send_event("ERROR", {}, f"Failed to save snapshot: {e}")
+        return None
 
-        rpc_to_call_name = test_definition["rpc"].replace("-", "_")
-        if not hasattr(device.rpc, rpc_to_call_name):
-            raise ValueError(f"RPC '{rpc_to_call_name}' not found on device")
 
-        rpc_to_call = getattr(device.rpc, rpc_to_call_name)
-        rpc_args = test_definition.get("rpc_args", {})
-        xml_data = rpc_to_call(**rpc_args)
+# ====================================================================================
+# CORE LOGIC: ACTION EXECUTION (Check vs Snapshot)
+# ====================================================================================
+def run_single_action(device, test_name, test_def, mode, tag):
+    """
+    Executes a single test definition against a connected device.
 
+    Args:
+        device: Connected jnpr.junos.Device object
+        test_name: Name of the test file (e.g. 'test_storage_check')
+        test_def: Parsed YAML content of the test
+        mode: 'check' (extract fields) or 'snapshot' (save XML)
+        tag: Snapshot tag (e.g., 'pre', 'post')
+    """
+    try:
+        # 1. Validate Definition
+        if "rpc" not in test_def:
+            raise ValueError(f"Test '{test_name}' is missing 'rpc' key")
+
+        # 2. Resolve RPC Method
+        # Example: 'get-system-storage-information' -> 'get_system_storage_information'
+        rpc_name = test_def["rpc"].replace("-", "_")
+
+        if not hasattr(device.rpc, rpc_name):
+            raise ValueError(f"RPC '{rpc_name}' not found on device model")
+
+        rpc_func = getattr(device.rpc, rpc_name)
+        rpc_args = test_def.get("rpc_args", {})
+
+        # 3. Execute RPC (Network Call)
+        xml_data = rpc_func(**rpc_args)
+
+        # -------------------------------------------------------
+        # MODE: SNAPSHOT
+        # -------------------------------------------------------
+        if mode == "snapshot":
+            saved_path = save_snapshot(device.hostname, test_name, tag, xml_data)
+            return {
+                "title": test_name,
+                "status": "success",
+                "message": f"Snapshot saved to {saved_path}",
+                "snapshot_path": saved_path,
+            }
+
+        # -------------------------------------------------------
+        # MODE: CHECK (Validation)
+        # -------------------------------------------------------
         table_data = []
-        headers = list(test_definition.get("fields", {}).keys())
+        headers = list(test_def.get("fields", {}).keys())
+        xpath = test_def.get("xpath")
 
-        xpath = test_definition.get("xpath")
+        # Parse XML using XPath from definition
         if xpath:
             for item in xml_data.findall(xpath):
-                row = {
-                    header: item.findtext(xml_tag, "N/A")
-                    for header, xml_tag in zip(
-                        headers, test_definition["fields"].values()
-                    )
-                }
+                row = {}
+                for header, xml_tag in zip(headers, test_def["fields"].values()):
+                    # Extract text safely, default to "N/A" if missing
+                    val = item.findtext(xml_tag)
+
+                    # Handling attributes if defined (e.g., @name)
+                    if val is None and "@" in xml_tag:
+                        attr_name = xml_tag.replace("@", "")
+                        val = item.get(attr_name)
+
+                    row[header] = val if val is not None else "N/A"
+
                 table_data.append(row)
 
-        title = f"{test_definition.get('title', 'Untitled Test')}"
-        return {"title": title, "headers": headers, "data": table_data, "error": None}
-
-    except Exception as e:
-        # Return a clean error object instead of crashing
         return {
-            "title": test_definition.get("title", "Unknown Test"),
-            "headers": [],
-            "data": [],
-            "error": str(e),
+            "title": test_def.get("title", test_name),
+            "headers": headers,
+            "data": table_data,
+            "error": None,
         }
 
+    except Exception as e:
+        # Return error structure rather than crashing
+        return {"title": test_name, "error": str(e), "headers": [], "data": []}
 
-async def run_tests_on_host(hostname, username, password, tests_to_run, host_index):
-    """Async worker for a single host."""
-    from jnpr.junos import Device
 
-    connection_step = (host_index * 2) - 1
-    execution_step = host_index * 2
+# ====================================================================================
+# WORKER: HOST PROCESSING
+# ====================================================================================
+async def process_host(hostname, username, password, tests_map, mode, tag, idx):
+    """
+    Manages the lifecycle of a single host connection:
+    Connect -> Run All Tests -> Disconnect -> Return Results
+    """
+    # Calculate progress step numbers for UI
+    step_connect = (idx * 2) - 1
+    step_exec = idx * 2
 
-    send_progress(
+    send_event(
         "STEP_START",
-        {"step": connection_step, "name": f"Connect to {hostname}"},
+        {"step": step_connect, "name": f"Connect {hostname}"},
         f"Connecting to {hostname}...",
     )
 
     try:
+        # TIMEOUT=10 is critical to prevent hanging on offline devices
         with Device(host=hostname, user=username, passwd=password, timeout=10) as dev:
-            # FIXED: Added 'name' to data payload
-            send_progress(
+            # Notify UI: Connected
+            send_event(
                 "STEP_COMPLETE",
                 {
-                    "step": connection_step,
+                    "step": step_connect,
                     "status": "COMPLETED",
-                    "name": f"Connect to {hostname}",
+                    "name": f"Connect {hostname}",
                 },
                 f"Connected to {hostname}",
             )
 
-            send_progress(
+            # Notify UI: Starting Execution
+            send_event(
                 "STEP_START",
-                {"step": execution_step, "name": f"Run Tests on {hostname}"},
-                f"Running {len(tests_to_run)} tests...",
+                {"step": step_exec, "name": f"Execute {mode}"},
+                f"Running {len(tests_map)} operations...",
             )
 
-            host_results = []
-            for test_name, test_def in tests_to_run.items():
-                try:
-                    result = run_single_test(dev, test_def)
-                    host_results.append(result)
-                except Exception as e:
-                    host_results.append({"title": test_name, "error": str(e)})
+            results = []
 
-            # FIXED: Added 'name' to data payload
-            send_progress(
+            # Iterate through requested tests
+            for t_name, t_def in tests_map.items():
+                res = run_single_action(dev, t_name, t_def, mode, tag)
+                results.append(res)
+
+            # Notify UI: Finished
+            send_event(
                 "STEP_COMPLETE",
-                {
-                    "step": execution_step,
-                    "status": "COMPLETED",
-                    "name": f"Run Tests on {hostname}",
-                },
-                f"Tests finished on {hostname}",
+                {"step": step_exec, "status": "COMPLETED", "name": f"Execute {mode}"},
+                f"Completed operations on {hostname}",
             )
 
-            return {
-                "hostname": hostname,
-                "status": "success",
-                "test_results": host_results,
-            }
+            return {"hostname": hostname, "status": "success", "results": results}
+
+    except (ConnectError, ConnectAuthError) as e:
+        # Handle Connection/Auth failures gracefully
+        err_msg = f"Connection Failed: {str(e)}"
+        send_event(
+            "STEP_COMPLETE",
+            {"step": step_connect, "status": "FAILED", "name": f"Connect {hostname}"},
+            err_msg,
+        )
+        return {"hostname": hostname, "status": "error", "message": str(e)}
 
     except Exception as e:
-        send_progress(
+        # Handle unexpected crashes
+        err_msg = f"Unexpected Error: {str(e)}"
+        send_event(
             "STEP_COMPLETE",
-            {
-                "step": connection_step,
-                "status": "FAILED",
-                "name": f"Connect to {hostname}",
-            },
-            str(e),
+            {"step": step_connect, "status": "FAILED", "name": f"Connect {hostname}"},
+            err_msg,
         )
         return {"hostname": hostname, "status": "error", "message": str(e)}
 
@@ -148,101 +288,136 @@ async def run_tests_on_host(hostname, username, password, tests_to_run, host_ind
 # ====================================================================================
 # MAIN ORCHESTRATOR
 # ====================================================================================
-
-
 async def main_async(args):
-    TESTS_ROOT = Path("/app/shared/data/tests")
+    """
+    Main Async Entry Point.
+    1. Loads Test Definitions
+    2. Launches Host Tasks
+    3. Gathers Results
+    4. Prints Final JSON
+    """
 
-    if not TESTS_ROOT.exists():
-        raise FileNotFoundError(f"Tests directory not found at {TESTS_ROOT}")
+    # --- 1. LOAD TESTS ---
+    loaded_tests = {}
+    requested_tests = [t.strip() for t in args.tests.split(",")] if args.tests else []
 
-    # 1. Find requested tests
-    tests_to_run = {}
-    if args.tests:
-        requested_stems = {Path(t.strip()).stem for t in args.tests.split(",")}
-        for yml_file in TESTS_ROOT.rglob("*.yml"):
-            if yml_file.stem in requested_stems:
-                try:
-                    with open(yml_file, "r") as f:
-                        tests_to_run[yml_file.stem] = yaml.safe_load(f)
-                except Exception as e:
-                    print(f"[WARN] Failed to load {yml_file}: {e}", file=sys.stderr)
+    # Recursive glob to find .yml files in subdirectories
+    for yml_file in TESTS_ROOT.rglob("*.yml"):
+        # If specific tests requested, filter. Otherwise load all (risky, but allowed).
+        if not requested_tests or yml_file.stem in requested_tests:
+            try:
+                with open(yml_file) as f:
+                    loaded_tests[yml_file.stem] = yaml.safe_load(f)
+            except Exception as e:
+                send_event("WARN", {}, f"Failed to load test {yml_file.name}: {e}")
 
-        if not tests_to_run:
-            raise ValueError(f"No matching test files found.")
-
-    # 2. Parse Targets
-    hostnames = []
-    if args.hostname:
-        hostnames = [h.strip() for h in args.hostname.split(",")]
-    elif args.inventory_file:
-        with open(args.inventory_file, "r") as f:
-            inv = yaml.safe_load(f)
-
-            def find_ips(data):
-                if isinstance(data, dict):
-                    for k, v in data.items():
-                        if k == "ip_address":
-                            hostnames.append(v)
-                        else:
-                            find_ips(v)
-                elif isinstance(data, list):
-                    for item in data:
-                        find_ips(item)
-
-            find_ips(inv)
-
-    if not hostnames:
-        raise ValueError("No target hosts found.")
-
-    # 3. Execute
-    send_progress(
-        "OPERATION_START",
-        {"total_steps": len(hostnames) * 2},
-        f"Starting validation on {len(hostnames)} hosts",
-    )
-
-    tasks = [
-        asyncio.create_task(
-            run_tests_on_host(h, args.username, args.password, tests_to_run, i + 1)
+    # Critical Check: Did we find what the user asked for?
+    if not loaded_tests:
+        print(
+            json.dumps(
+                {
+                    "type": "error",
+                    "message": f"No matching test files found. Searched for: {requested_tests} in {TESTS_ROOT}",
+                }
+            ),
+            file=sys.stdout,
+            flush=True,
         )
-        for i, h in enumerate(hostnames)
+        return
+
+    # --- 2. TARGET RESOLUTION ---
+    # Currently supports single hostname via args.
+    # TODO: Add inventory file parsing logic here if needed.
+    hosts = [args.hostname] if args.hostname else []
+
+    if not hosts:
+        print(
+            json.dumps({"type": "error", "message": "No hostname provided."}),
+            file=sys.stdout,
+            flush=True,
+        )
+        return
+
+    # --- 3. EXECUTION ---
+    # Create a task for each host (allows parallel execution)
+    tasks = [
+        process_host(
+            hostname=h,
+            username=args.username,
+            password=args.password,
+            tests_map=loaded_tests,
+            mode=args.mode,
+            tag=args.tag,
+            idx=i + 1,
+        )
+        for i, h in enumerate(hosts)
     ]
 
+    # Wait for all hosts to finish
     results = await asyncio.gather(*tasks)
 
-    final_data = {"results_by_host": results}
-    send_progress("OPERATION_COMPLETE", {"status": "SUCCESS"}, "Validation completed")
+    # --- 4. FINAL OUTPUT ---
+    # This specific structure is what Validation.jsx and ImageUploads.jsx look for
+    final_payload = {
+        "type": "result",
+        "data": {
+            "results_by_host": [
+                {"hostname": r["hostname"], "test_results": r.get("results", [])}
+                for r in results
+            ]
+        },
+    }
+    print(json.dumps(final_payload), file=sys.stdout, flush=True)
 
-    return {"type": "result", "data": final_data}
+
+# ====================================================================================
+# DISCOVERY MODE (For UI Dropdowns)
+# ====================================================================================
+def list_tests():
+    """
+    Scans the tests directory and returns a JSON list of available tests.
+    Used by the frontend 'TestSelectionPanel'.
+    """
+    tests = []
+    for f in TESTS_ROOT.rglob("*.yml"):
+        tests.append(
+            {
+                "id": f.stem,
+                "path": str(f),
+                "group": f.parent.name,
+                "description": f"Test from {f.parent.name}",  # Placeholder description
+            }
+        )
+    print(json.dumps({"discovered_tests": tests}), file=sys.stdout, flush=True)
 
 
-def main():
+# ====================================================================================
+# ENTRY POINT
+# ====================================================================================
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--hostname")
-    parser.add_argument("--inventory_file")
     parser.add_argument("--username")
     parser.add_argument("--password")
     parser.add_argument("--tests")
+    parser.add_argument("--mode", default="check", choices=["check", "snapshot"])
+    parser.add_argument("--tag", default="snap")
     parser.add_argument("--list_tests", action="store_true")
+
     args = parser.parse_args()
 
     try:
         if args.list_tests:
-            tests = []
-            for f in Path("/app/shared/data/tests").rglob("*.yml"):
-                tests.append({"id": f.stem, "path": str(f)})
-            print(json.dumps({"discovered_tests": tests}))
-            return
-
-        final = asyncio.run(main_async(args))
-        print(json.dumps(final))
+            list_tests()
+        else:
+            asyncio.run(main_async(args))
     except Exception as e:
-        err = {"type": "error", "message": str(e)}
-        send_progress("OPERATION_COMPLETE", {"status": "FAILED"}, str(e))
-        print(json.dumps(err))
-        sys.exit(0)
-
-
-if __name__ == "__main__":
-    main()
+        # Global Catch-All
+        print(
+            json.dumps(
+                {"type": "error", "message": f"Critical Script Failure: {str(e)}"}
+            ),
+            file=sys.stdout,
+            flush=True,
+        )
+        sys.exit(1)

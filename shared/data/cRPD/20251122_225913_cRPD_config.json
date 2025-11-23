@@ -1,0 +1,74 @@
+{
+    "configuration": {
+        "@": {
+            "xmlns": "http://xml.juniper.net/xnm/1.1/xnm",
+            "junos:changed-seconds": "1763849231",
+            "junos:changed-localtime": "2025-11-22 22:07:11 UTC"
+        },
+        "version": "20250924.203317_builder.r1513902",
+        "system": {
+            "host-name": "cRPD",
+            "root-authentication": {
+                "encrypted-password": "$6$PsOWY$O7v6F5gpPObkfh.L/OoGuMpls8k57gq8odwcE9Bbo1yetYBNCN9E4at7jzhUNKzkqRm8FCoFJLqCi1dI6htf5."
+            },
+            "login": {
+                "user": [
+                    {
+                        "name": "admin",
+                        "uid": 2000,
+                        "class": "super-user",
+                        "authentication": {
+                            "encrypted-password": "$6$G9qkF$qPQvmtMGaMhIrjkG4RrKhSpMAQdmYQ3HyXtUPzx8kigNoCpfUID///Jok3cCxX9MEdDv9Kk9kxA2uOyRUOzVS0"
+                        }
+                    }
+                ]
+            },
+            "services": {
+                "netconf": {
+                    "ssh": {}
+                },
+                "ssh": {}
+            }
+        },
+        "interfaces": {
+            "interface": [
+                {
+                    "name": "eth10",
+                    "description": "ETH|SRX",
+                    "unit": [
+                        {
+                            "name": 0,
+                            "family": {
+                                "inet": {
+                                    "address": [
+                                        {
+                                            "name": "1.1.1.1/30"
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "eth2",
+                    "description": "ETH|SRX210",
+                    "unit": [
+                        {
+                            "name": 0,
+                            "family": {
+                                "inet": {
+                                    "address": [
+                                        {
+                                            "name": "10.100.100.1/30"
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+}

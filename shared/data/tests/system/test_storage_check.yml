@@ -1,0 +1,9 @@
+test_storage_check:
+  - rpc: get-system-storage-information
+    iterate:
+      xpath: //filesystem
+      id: mounted-on
+      tests:
+        - is-gt: available-blocks, 1000000
+          err: "Low Disk Space: {{post['available-blocks']}} blocks"
+          info: "Disk OK: {{post['available-blocks']}} blocks"
