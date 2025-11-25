@@ -1,0 +1,10 @@
+test_include:
+  - test_storage_check
+
+test_storage_check:
+  - command: show system storage
+    iterate:
+      xpath: //filesystem
+      tests:
+      - less-than: available-blocks, 500000
+        err: "Disk space is criticaly low on filesystem <filesystem-name>"
