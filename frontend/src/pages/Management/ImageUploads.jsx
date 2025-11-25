@@ -2,7 +2,7 @@
  * =============================================================================
  * FILE LOCATION: frontend/src/components/ImageUploads.jsx
  * DESCRIPTION:   Compact Dashboard for Image Uploads & Storage Validation.
- *                FIXED: Added WebSocket Subscription & RPC Error Handling.
+ *                UPDATED: Now points to 'execute-v2' to use JSNAPy Module backend.
  * =============================================================================
  */
 
@@ -208,7 +208,7 @@ export default function ImageUploader({
     setIsCheckingStorage(true);
     setStorageCheckError(null);
     setStorageCheck(null);
-    setTerminalLogs([{ id: 'init', type: 'INFO', message: `Connecting to ${parameters.hostname}...` }]);
+    setTerminalLogs([{ id: 'init', type: 'INFO', message: `Connecting to ${parameters.hostname} (JSNAPy V2)...` }]);
 
     try {
         const payload = {
@@ -216,10 +216,15 @@ export default function ImageUploader({
             username: parameters.username,
             password: parameters.password,
             tests: ["test_storage_check"],
-            mode: "check"
+            // Mode and Tag are handled by V2 backend defaults, but we keep them for compatibility
+            mode: "check",
+            tag: "snap" 
         };
 
-        const res = await fetch(`${API_BASE}/api/operations/validation/execute`, {
+        // =====================================================================
+        // UPDATE: Pointing to 'execute-v2' to use the JSNAPy Module backend
+        // =====================================================================
+        const res = await fetch(`${API_BASE}/api/operations/validation/execute-v2`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -291,7 +296,7 @@ export default function ImageUploader({
     <div className="flex flex-col h-[calc(100vh-1rem)] md:h-screen w-full bg-zinc-50 text-zinc-950 overflow-hidden font-sans">
       
       {/* APP BAR */}
-      <div className="flex-none h-14 bg-white border-b border-zinc-200 flex items-center justify-between px-4 shadow-sm z-20">
+      <div className="flex-none h-14  bg-white border-b border-zinc-200 flex items-center justify-between px-4 shadow-sm z-20">
         <div className="flex items-center gap-3">
           <div className="bg-black text-white p-1.5 rounded-md"><LayoutDashboard className="h-4 w-4" /></div>
           <h1 className="text-lg font-bold tracking-tight text-zinc-900">Image<span className="font-light text-zinc-500">Deployer</span></h1>

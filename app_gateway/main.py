@@ -13,6 +13,7 @@ Architecture:
 UPDATES:
 - Added upgrade router for device software upgrades (2025-11-18 16:47:45 UTC)
 - Maintains separation between pre-check (code_upgrade.py) and upgrade (upgrade.py)
+- Added JSNAPy V2 Module router (jsnapy.py)
 """
 
 from fastapi import FastAPI
@@ -30,7 +31,8 @@ from app_gateway.api.routers import (
     device_storage,
     file_uploader,
     inventory,
-    jsnapy_runner,  # JSNapy validation runner
+    jsnapy,  # <--- NEW: JSNAPy V2 Module Router
+    jsnapy_runner,  # Legacy JSNapy validation runner
     jsnapy_tests,  # JSNapy test discovery and execution
     operations,  # Backup and restore operations
     pre_checks,  # PreChecks for code upgrade validation
@@ -160,9 +162,12 @@ app.add_middleware(
 # 🥇 HIGH PRIORITY: JSNapy runner might define more specific or overarching routes
 # that should be handled before more generic 'operations' routes.
 
+# <--- NEW: Register the V2 JSNAPy Router --->
+# This handles the new /operations/validation/execute-v2 endpoint
+app.include_router(jsnapy.router, prefix="/api")
+logger.info("✅ Registered jsnapy (V2) router with prefix /api")
 
-# 🥈 MEDIUM PRIORITY: Other JSNapy and operations endpoints.
-# Ensure that /operations routes are defined before very generic catch-alls.
+# Legacy/Existing JSNAPy routers
 app.include_router(jsnapy_runner.router, prefix="/api")
 logger.info("✅ Registered jsnapy_runner router with prefix /api")
 
