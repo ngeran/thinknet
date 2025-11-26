@@ -1,10 +1,14 @@
-tests_include:
-- test_storage_check
-test_storage_check:
-- command: show system storage
-- iterate:
-  xpath: //filesystem
-  id: 'filesystem-name'
-  tests:
-  - not-null: used-percent
-    info: "Storage information retrieved successfully for {{post['filesystem-name']}}"
+# ====================================================================
+# TEST: System Storage Check (Based on test_simple_system.yml format)
+# DESCRIPTION: Retrieves filesystem storage information from Juniper device
+# ====================================================================
+
+rpc: get-system-storage
+title: "System Storage Check"
+
+fields:
+  filesystem-name: filesystem-name
+  used-percent: used-percent
+  available-blocks: available-blocks
+  total-blocks: total-blocks
+  mounted-on: mounted-on

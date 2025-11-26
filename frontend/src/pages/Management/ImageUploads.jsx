@@ -1,976 +1,904 @@
 /**
  * =============================================================================
- * FILE LOCATION: frontend/src/components/ImageUploads-DEBUG.jsx
- * DESCRIPTION:   Complete Diagnostic Tool for WebSocket & Storage Check
- *                Comprehensive debugging to identify connection issues
- *                REDESIGN: Modern, space-efficient UI with enhanced UX
- * VERSION:       1.1.0 - Modern Redesign
- * AUTHOR:        nikos-geranios_vgi
- * DATE:          2025-11-25
+ * FILE LOCATION: frontend/src/components/ImageUploads.jsx
+ * DESCRIPTION:   Production Image Upload Component with Storage Validation
+ * VERSION:       2.0.0 - Enhanced Storage Validation with File Size Comparison
+ * AUTHOR:        nikos
+ * DATE:          2025-11-26
+ * =============================================================================
+ *
+ * OVERVIEW:
+ *   This component provides a complete file upload workflow for Juniper devices
+ *   with integrated storage validation. It implements a two-phase approach:
+ *     Phase 1: Storage Validation (JSNAPy V2)
+ *     Phase 2: File Upload (run. py via SCP)
+ *
+ * NEW IN VERSION 2.0.0:
+ *   - Sends file size to validation endpoint for accurate space checking
+ *   - Processes PRE_CHECK_COMPLETE events with validation_passed boolean
+ *   - Updates UI based on actual validation results
+ *   - Prevents upload when validation fails
+ *   - Shows detailed error messages with recommendations
+ *
+ * ARCHITECTURE FLOW:
+ *
+ *   1. User selects file and enters credentials
+ *   2. Component automatically triggers storage validation (debounced)
+ *   3. POST /api/operations/validation/execute-v2 with file_size
+ *   4. Subscribe to WebSocket channel for real-time updates
+ *   5. Receive PRE_CHECK_COMPLETE event with validation_passed
+ *   6. Update UI: Enable upload button if validation passed
+ *   7. User clicks upload button
+ *   8.  POST /api/files/upload with file data
+ *   9. Subscribe to upload WebSocket channel
+ *   10.  Show upload progress and completion status
+ *
+ * WEBSOCKET MESSAGE HANDLING:
+ *
+ *   The component listens for WebSocket messages in this format:
+ *   {
+ *       "channel": "ws_channel:job:jsnapy-UUID",
+ *       "data": "{\"type\":\"result\",\"event_type\":\"PRE_CHECK_COMPLETE\",\"data\":{... }}"
+ *   }
+ *
+ *   After unwrapping:
+ *   {
+ *       "type": "result",
+ *       "event_type": "PRE_CHECK_COMPLETE",
+ *       "message": "✅ Sufficient space on /var/tmp.. .",
+ *       "data": {
+ *           "validation_passed": true,
+ *           "required_mb": 120.0,
+ *           "available_mb": 5000.0,
+ *           "best_filesystem": {... },
+ *           "recommendations": [...]
+ *       }
+ *   }
+ *
+ * INTEGRATION POINTS:
+ *   - API Endpoints: /api/operations/validation/execute-v2, /api/files/upload
+ *   - WebSocket: Custom useJobWebSocket hook
+ *   - Shared Components: DeviceAuthFields, DeviceTargetSelector, FileSelection
+ *   - Utilities: logProcessor.js for event formatting
+ *
  * =============================================================================
  */
-
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+ 
+// =============================================================================
+// SECTION 1: IMPORTS
+// =============================================================================
+ 
+import React, { useState, useEffect, useRef } from 'react';
 import {
-  Loader2, HardDrive, Play, FileText, Terminal,
-  LayoutDashboard, Activity, Server, CheckCircle2, XCircle,
-  AlertCircle, Info, Copy, Download, RefreshCw,
-  ChevronDown, ChevronUp, Settings, Wifi, WifiOff
+  Loader2, HardDrive, Upload, CheckCircle2, XCircle,
+  AlertCircle, Terminal, FileText
 } from 'lucide-react';
-
+ 
+// UI Components
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Separator } from '@/components/ui/separator';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-
+import { Separator } from '@/components/ui/separator';
+import { Progress } from '@/components/ui/progress';
+ 
+// Shared Form Components
 import DeviceAuthFields from '@/shared/DeviceAuthFields';
 import DeviceTargetSelector from '@/shared/DeviceTargetSelector';
 import FileSelection from '@/shared/FileSelection';
-
+ 
+// Custom Hooks and Services
+import { useJobWebSocket } from '@/hooks/useJobWebSocket';
+import { processLogMessage } from '@/lib/logProcessor';
+ 
+// Live Log Viewer Component
+import LiveLogViewer from '@/components/realTimeProgress/LiveLogViewer';
+ 
+// =============================================================================
+// SECTION 2: CONFIGURATION CONSTANTS
+// =============================================================================
+ 
+// API Gateway URL from environment variables (set in docker-compose.yml)
 const API_BASE = import.meta.env.VITE_API_GATEWAY_URL || 'http://localhost:8000';
-const WS_BASE = import.meta.env.VITE_RUST_WS_URL || 'ws://localhost:3100/ws';
-
-// =========================================================================
-// COLOR-CODED DEBUG LOGGER (UNCHANGED)
-// =========================================================================
-
-const DEBUG_LOGGER = {
-  ws: (msg, data = null) => {
-    console.log(`%c[WS]%c ${msg}`, 'background: #3b82f6; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold;', 'color: #3b82f6;', data || '');
-  },
-  check: (msg, data = null) => {
-    console.log(`%c[STORAGE_CHECK]%c ${msg}`, 'background: #10b981; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold;', 'color: #10b981;', data || '');
-  },
-  api: (msg, data = null) => {
-    console.log(`%c[API]%c ${msg}`, 'background: #f59e0b; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold;', 'color: #f59e0b;', data || '');
-  },
-  msg: (msg, data = null) => {
-    console.log(`%c[MESSAGE]%c ${msg}`, 'background: #8b5cf6; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold;', 'color: #8b5cf6;', data || '');
-  },
-  error: (msg, data = null) => {
-    console.error(`%c[ERROR]%c ${msg}`, 'background: #ef4444; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold;', 'color: #ef4444;', data || '');
-  },
-  state: (msg, data = null) => {
-    console.log(`%c[STATE]%c ${msg}`, 'background: #ec4899; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold;', 'color: #ec4899;', data || '');
-  },
-  success: (msg, data = null) => {
-    console.log(`%c[SUCCESS]%c ${msg}`, 'background: #22c55e; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold;', 'color: #22c55e;', data || '');
-  }
-};
-
-export default function ImageUploaderDebug({
+ 
+// Debounce delay for automatic storage validation (milliseconds)
+// After user stops typing credentials, wait this long before validating
+const VALIDATION_DEBOUNCE_DELAY = 2000;
+ 
+// =============================================================================
+// SECTION 3: COMPONENT DEFINITION
+// =============================================================================
+ 
+export default function ImageUploads({
+  // Optional props for external state management
   parameters: externalParameters,
   onParamChange: externalOnParamChange,
   selectedFile: externalSelectedFile,
   setSelectedFile: externalSetSelectedFile,
   onUpload,
-  isUploading: externalIsUploading
+  isRunning = false,
+  isUploading: externalIsUploading,
+  uploadProgress: externalUploadProgress
 }) {
-  // =========================================================================
-  // SECTION 1: STATE MANAGEMENT (ENHANCED WITH UI STATES)
-  // =========================================================================
-
+ 
+  // ===========================================================================
+  // SECTION 4: STATE MANAGEMENT
+  // ===========================================================================
+ 
+  // Internal state (used when props are not provided)
   const [internalSelectedFile, setInternalSelectedFile] = useState(null);
   const [internalParameters, setInternalParameters] = useState({
-    hostname: '', inventory_file: '', username: '', password: ''
+    hostname: '',
+    username: '',
+    password: ''
   });
-
-  // Storage Validation State
+ 
+  // Storage validation state
+  const [checkJobId, setCheckJobId] = useState(null);
   const [storageCheck, setStorageCheck] = useState(null);
   const [isCheckingStorage, setIsCheckingStorage] = useState(false);
   const [storageCheckError, setStorageCheckError] = useState(null);
-  const [internalIsUploading, setInternalIsUploading] = useState(false);
-
-  // Terminal/Log State
+ 
+  // Upload state
+  const [uploadJobId, setUploadJobId] = useState(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+ 
+  // Terminal logs state
   const [terminalLogs, setTerminalLogs] = useState([]);
+  const [showTechnicalLogs, setShowTechnicalLogs] = useState(false);
   const terminalEndRef = useRef(null);
-
-  // WebSocket State
-  const [wsConnection, setWsConnection] = useState(null);
-  const [wsError, setWsError] = useState(null);
-  const [wsStatus, setWsStatus] = useState('disconnected');
-
-  // Diagnostic State
-  const [diagnostics, setDiagnostics] = useState([]);
-  const [isRunningDiagnostics, setIsRunningDiagnostics] = useState(false);
-
-  // NEW: UI State for collapsible sections and layout
-  const [isConfigExpanded, setIsConfigExpanded] = useState(false);
-  const [isTerminalExpanded, setIsTerminalExpanded] = useState(true);
-  const [activeTab, setActiveTab] = useState('main');
-
-  // =========================================================================
-  // SECTION 2: PROPS RESOLUTION (UNCHANGED)
-  // =========================================================================
-
+ 
+  // ===========================================================================
+  // SECTION 5: PROPS RESOLUTION
+  // ===========================================================================
+  //
+  // This component can be used in two modes:
+  //   1.  Standalone: Uses internal state
+  //   2.  Controlled: Uses external state passed via props
+  //
+  // This section resolves which state to use based on prop availability
+  // ===========================================================================
+ 
   const selectedFile = externalSelectedFile !== undefined ? externalSelectedFile : internalSelectedFile;
   const parameters = externalParameters || internalParameters;
-  const isUploading = externalIsUploading || internalIsUploading;
+  const isUploadingResolved = externalIsUploading !== undefined ? externalIsUploading : isUploading;
+  const uploadProgressResolved = externalUploadProgress !== undefined ? externalUploadProgress : uploadProgress;
+ 
   const setSelectedFile = externalSetSelectedFile || setInternalSelectedFile;
   const setParameters = externalOnParamChange
     ? (name, value) => externalOnParamChange(name, value)
     : (name, value) => setInternalParameters(prev => ({ ...prev, [name]: value }));
-
-  // =========================================================================
-  // SECTION 3: DIAGNOSTIC LOGGING (UNCHANGED)
-  // =========================================================================
-
-  const addDiagnosticLog = useCallback((category, message, type = 'info', data = null) => {
-    const timestamp = new Date().toLocaleTimeString();
-    const logEntry = { id: Date.now() + Math.random(), category, message, type, timestamp, data };
-
-    setDiagnostics(prev => [...prev, logEntry]);
-
-    // Also log to console
-    switch(type) {
-      case 'error':
-        DEBUG_LOGGER.error(`[${category}] ${message}`, data);
-        break;
-      case 'success':
-        DEBUG_LOGGER.success(`[${category}] ${message}`, data);
-        break;
-      case 'warning':
-        console.warn(`[${category}] ${message}`, data);
-        break;
-      default:
-        console.log(`[${category}] ${message}`, data);
+ 
+  // ===========================================================================
+  // SECTION 6: WEBSOCKET INTEGRATION
+  // ===========================================================================
+  //
+  // useJobWebSocket hook provides:
+  //   - sendMessage(msg): Send commands to WebSocket (SUBSCRIBE/UNSUBSCRIBE)
+  //   - lastMessage: Most recent WebSocket message received
+  //   - isConnected: WebSocket connection status
+  //
+  // Message flow:
+  //   1. Backend publishes to Redis: ws_channel:job:{job_id}
+  //   2.  Rust Hub receives via pattern subscription
+  //   3. Rust Hub wraps message: {channel: ".. .", data: "..."}
+  //   4.  Rust Hub sends to subscribed WebSocket clients
+  //   5.  Frontend receives via this hook
+  //   6. lastMessage updates, triggering useEffect below
+  // ===========================================================================
+ 
+  const { sendMessage, lastMessage, isConnected } = useJobWebSocket();
+ 
+  // ===========================================================================
+  // SECTION 7: WEBSOCKET MESSAGE PROCESSING
+  // ===========================================================================
+  //
+  // This effect processes incoming WebSocket messages and routes them to
+  // appropriate handlers based on job_id and event_type.
+  //
+  // Message structure (from Rust Hub):
+  //   {
+  //       "channel": "ws_channel:job:jsnapy-UUID",
+  //       "data": "{\"type\":\"result\",\"event_type\":\"PRE_CHECK_COMPLETE\",... }"
+  //   }
+  //
+  // We need to:
+  //   1. Parse the outer wrapper (channel + data)
+  //   2.  Parse the inner JSON string (actual event)
+  //   3.  Determine if this message is for our current job
+  //   4. Route to validation or upload handler
+  // ===========================================================================
+ 
+  useEffect(() => {
+    if (!lastMessage) return;
+ 
+    try {
+      // Parse the message data
+      let messageData;
+ 
+      if (typeof lastMessage === 'string') {
+        messageData = JSON.parse(lastMessage);
+      } else {
+        messageData = lastMessage;
+      }
+ 
+      // Unwrap the data field if it's a string (Rust Hub wrapper format)
+      let eventData = messageData;
+      if (messageData.data && typeof messageData. data === 'string') {
+        try {
+          eventData = JSON. parse(messageData.data);
+        } catch (e) {
+          // If parsing fails, use the original messageData
+          eventData = messageData;
+        }
+      } else if (messageData.data && typeof messageData.data === 'object') {
+        eventData = messageData.data;
+      }
+ 
+      // Process the event using logProcessor for consistent formatting
+      const processedLog = processLogMessage(eventData);
+ 
+      // Add to terminal logs for display
+      setTerminalLogs(prev => [... prev, processedLog]);
+ 
+      // ===========================================================================
+      // VALIDATION MESSAGE HANDLING
+      // ===========================================================================
+      //
+      // Check if this message is for our storage validation job
+      // We look for the PRE_CHECK_COMPLETE event which contains validation results
+      // ===========================================================================
+ 
+      if (checkJobId && eventData.event_type === 'PRE_CHECK_COMPLETE') {
+        console.log('✅ Received PRE_CHECK_COMPLETE event:', eventData);
+ 
+        const validationData = eventData.data;
+ 
+        if (validationData && typeof validationData. validation_passed === 'boolean') {
+          // Extract validation result
+          const validationPassed = validationData.validation_passed;
+          const validationMessage = eventData.message || validationData.message;
+ 
+          console.log(`Validation result: ${validationPassed ? 'PASSED' : 'FAILED'}`);
+ 
+          // Update storage check state
+          setStorageCheck({
+            has_sufficient_space: validationPassed,
+            message: validationMessage,
+            required_mb: validationData.required_mb,
+            available_mb: validationData.available_mb,
+            best_filesystem: validationData. best_filesystem,
+            recommendations: validationData.recommendations || []
+          });
+ 
+          // Clear checking state
+          setIsCheckingStorage(false);
+ 
+          // Handle validation failure
+          if (!validationPassed) {
+            setStorageCheckError(validationMessage);
+ 
+            // Add error log to terminal
+            setTerminalLogs(prev => [...prev, {
+              id: `validation_failed_${Date.now()}`,
+              timestamp: new Date().toLocaleTimeString(),
+              type: 'ERROR',
+              message: validationMessage,
+              isTechnical: false,
+              originalEvent: eventData
+            }]);
+          } else {
+            // Clear any previous error
+            setStorageCheckError(null);
+ 
+            // Add success log to terminal
+            setTerminalLogs(prev => [...prev, {
+              id: `validation_passed_${Date.now()}`,
+              timestamp: new Date(). toLocaleTimeString(),
+              type: 'SUCCESS',
+              message: '✅ Storage validation passed - Ready to upload',
+              isTechnical: false,
+              originalEvent: eventData
+            }]);
+          }
+        }
+      }
+ 
+      // ===========================================================================
+      // UPLOAD MESSAGE HANDLING
+      // ===========================================================================
+      //
+      // Check if this message is for our file upload job
+      // Track progress updates and completion status
+      // ===========================================================================
+ 
+      if (uploadJobId) {
+        // Handle progress updates
+        if (eventData.event_type === 'PROGRESS_UPDATE' && eventData.data?. progress) {
+          setUploadProgress(eventData.data.progress);
+        }
+ 
+        // Handle upload completion
+        if (eventData. event_type === 'OPERATION_COMPLETE') {
+          setIsUploading(false);
+ 
+          const success = eventData.data?. success !== false && eventData.data?.status !== 'FAILED';
+ 
+          if (success) {
+            setUploadProgress(100);
+            setUploadError(null);
+ 
+            // Add success log
+            setTerminalLogs(prev => [...prev, {
+              id: `upload_success_${Date.now()}`,
+              timestamp: new Date().toLocaleTimeString(),
+              type: 'SUCCESS',
+              message: '✅ File uploaded successfully',
+              isTechnical: false,
+              originalEvent: eventData
+            }]);
+          } else {
+            const errorMsg = eventData.message || eventData.data?.error || 'Upload failed';
+            setUploadError(errorMsg);
+ 
+            // Add error log
+            setTerminalLogs(prev => [...prev, {
+              id: `upload_failed_${Date.now()}`,
+              timestamp: new Date(). toLocaleTimeString(),
+              type: 'ERROR',
+              message: `❌ ${errorMsg}`,
+              isTechnical: false,
+              originalEvent: eventData
+            }]);
+          }
+        }
+      }
+ 
+    } catch (err) {
+      console.error('Error processing WebSocket message:', err);
+      setTerminalLogs(prev => [...prev, {
+        id: `parse_error_${Date.now()}`,
+        timestamp: new Date(). toLocaleTimeString(),
+        type: 'ERROR',
+        message: `Failed to parse message: ${err.message}`,
+        isTechnical: true,
+        originalEvent: { error: err. message }
+      }]);
     }
-  }, []);
-
-  // =========================================================================
-  // SECTION 4: AUTO-SCROLL EFFECT (UNCHANGED)
-  // =========================================================================
-
+  }, [lastMessage, checkJobId, uploadJobId]);
+ 
+  // ===========================================================================
+  // SECTION 8: AUTO-SCROLL TERMINAL
+  // ===========================================================================
+ 
   useEffect(() => {
     terminalEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [terminalLogs]);
-
-  // =========================================================================
-  // SECTION 5: COMPREHENSIVE WEBSOCKET DIAGNOSTICS (UNCHANGED)
-  // =========================================================================
-
-  const runFullDiagnostics = async () => {
-    setIsRunningDiagnostics(true);
-    setDiagnostics([]);
-    addDiagnosticLog('DIAGNOSTIC', 'Starting comprehensive WebSocket diagnostics...', 'info');
-    addDiagnosticLog('ENVIRONMENT', `VITE_RUST_WS_URL: ${WS_BASE}`, 'info');
-    addDiagnosticLog('ENVIRONMENT', `VITE_API_GATEWAY_URL: ${API_BASE}`, 'info');
-
-    try {
-      // Step 1: Check Network Connectivity
-      addDiagnosticLog('NETWORK', 'Checking network connectivity...', 'info');
-
-      try {
-        await fetch('http://localhost:3100/health', {
-          method: 'HEAD',
-          mode: 'no-cors'
-        });
-        addDiagnosticLog('NETWORK', `HTTP HEAD to localhost:3100 succeeded`, 'success');
-      } catch (err) {
-        addDiagnosticLog('NETWORK', `HTTP connectivity check failed: ${err.message}`, 'warning', err);
-      }
-
-      // Step 2: Test API Gateway
-      addDiagnosticLog('API', 'Testing API Gateway connection...', 'info');
-      try {
-        const apiRes = await fetch(`${API_BASE}/api/tests`, {
-          method: 'GET'
-        });
-        if (apiRes.ok) {
-          addDiagnosticLog('API', `API Gateway is reachable (status: ${apiRes.status})`, 'success');
-        } else {
-          addDiagnosticLog('API', `API Gateway returned status: ${apiRes.status}`, 'warning');
-        }
-      } catch (err) {
-        addDiagnosticLog('API', `API Gateway connection failed: ${err.message}`, 'error', err);
-      }
-
-      // Step 3: Test WebSocket Connection
-      addDiagnosticLog('WEBSOCKET', `Attempting connection to ${WS_BASE}...`, 'info');
-
-      let ws;
-      let timeoutId;
-
-      const wsPromise = new Promise((resolve, reject) => {
-        try {
-          ws = new WebSocket(WS_BASE);
-          addDiagnosticLog('WEBSOCKET', `WebSocket object created (readyState: ${ws.readyState})`, 'info');
-
-          timeoutId = setTimeout(() => {
-            if (ws.readyState === WebSocket.CONNECTING) {
-              addDiagnosticLog('WEBSOCKET', 'Connection timeout - stuck in CONNECTING state for 10 seconds', 'error');
-              ws.close();
-              reject(new Error('Connection timeout'));
-            }
-          }, 10000);
-
-          ws.onopen = () => {
-            clearTimeout(timeoutId);
-            addDiagnosticLog('WEBSOCKET', '✅ WebSocket connection established!', 'success');
-            addDiagnosticLog('WEBSOCKET', `ReadyState: ${ws.readyState} (OPEN)`, 'success');
-
-            // Test sending a message
-            try {
-              const testMsg = JSON.stringify({ type: 'SUBSCRIBE', channel: 'diagnostic-test' });
-              ws.send(testMsg);
-              addDiagnosticLog('WEBSOCKET', 'Test SUBSCRIBE message sent successfully', 'success');
-            } catch (sendErr) {
-              addDiagnosticLog('WEBSOCKET', `Failed to send test message: ${sendErr.message}`, 'error', sendErr);
-            }
-
-            resolve('connected');
-            setTimeout(() => ws.close(), 2000);
-          };
-
-          ws.onmessage = (event) => {
-            addDiagnosticLog('WEBSOCKET', `Message received: ${event.data.substring(0, 100)}...`, 'success');
-          };
-
-          ws.onerror = (err) => {
-            clearTimeout(timeoutId);
-            const errorMsg = err.message || 'Unknown WebSocket error';
-            addDiagnosticLog('WEBSOCKET', `WebSocket error: ${errorMsg}`, 'error', err);
-            reject(new Error(errorMsg));
-          };
-
-          ws.onclose = (closeEvent) => {
-            clearTimeout(timeoutId);
-            const reason = closeEvent.reason || 'No reason provided';
-            addDiagnosticLog('WEBSOCKET', `Connection closed (code: ${closeEvent.code}, reason: ${reason})`,
-              closeEvent.code === 1000 ? 'success' : 'warning');
-          };
-
-        } catch (createErr) {
-          clearTimeout(timeoutId);
-          addDiagnosticLog('WEBSOCKET', `Failed to create WebSocket: ${createErr.message}`, 'error', createErr);
-          reject(createErr);
-        }
-      });
-
-      try {
-        await wsPromise;
-      } catch (wsErr) {
-        addDiagnosticLog('WEBSOCKET', `WebSocket connection failed: ${wsErr.message}`, 'error');
-      }
-
-      // Step 4: Summary
-      addDiagnosticLog('DIAGNOSTIC', 'Diagnostics completed', 'success');
-
-    } catch (err) {
-      addDiagnosticLog('DIAGNOSTIC', `Diagnostic exception: ${err.message}`, 'error', err);
-    }
-
-    setIsRunningDiagnostics(false);
-  };
-
-  // =========================================================================
-  // SECTION 6: WEBSOCKET LIFECYCLE (UNCHANGED)
-  // =========================================================================
-
-  useEffect(() => {
-    addDiagnosticLog('INIT', `Initializing WebSocket to ${WS_BASE}`, 'info');
-
-    let ws;
-    let intendedClose = false;
-    let messageCount = 0;
-
-    try {
-      ws = new WebSocket(WS_BASE);
-      setWsConnection(ws);
-      setWsStatus('connecting');
-      addDiagnosticLog('WEBSOCKET', 'WebSocket object created', 'info');
-
-      ws.onopen = () => {
-        addDiagnosticLog('WEBSOCKET', '✅ Connected to Rust Hub', 'success');
-        setWsStatus('connected');
-        setWsError(null);
-      };
-
-      ws.onmessage = (event) => {
-        messageCount++;
-        const messagePreview = event.data.substring(0, 150);
-        addDiagnosticLog('WEBSOCKET', `Message #${messageCount} received (${event.data.length} bytes)`, 'info', messagePreview);
-
-        // Process message
-        try {
-          let msgData;
-          let eventData;
-          
-          // First, parse the outer RedisMessage wrapper
-          const parsedData = JSON.parse(event.data);
-          
-          if (parsedData.data) {
-            // This is a RedisMessage wrapper - parse the inner data
-            eventData = JSON.parse(parsedData.data);
-            msgData = eventData;
-            addDiagnosticLog('MESSAGE', `Parsed RedisMessage wrapper: type=${msgData.type}, event_type=${msgData.event_type}`, 'info');
-          } else {
-            // Direct message (no wrapper)
-            msgData = parsedData;
-            eventData = parsedData;
-            addDiagnosticLog('MESSAGE', `Parsed direct message: type=${msgData.type}, event_type=${msgData.event_type}`, 'info');
-          }
-
-          // Handle different message formats
-          let eventType = eventData.event_type || 'INFO';
-          let message = eventData.message || JSON.stringify(eventData).substring(0, 100);
-
-          // Special handling for JSNAPy results
-          if (eventData.type === 'result' && eventData.data && eventData.data.results_by_host) {
-            addDiagnosticLog('STORAGE_CHECK', `Processing result message: ${JSON.stringify(eventData.data).substring(0, 200)}...`, 'info');
-            const hostResult = eventData.data.results_by_host[0];
-            if (hostResult && hostResult.test_results) {
-              const storageTest = hostResult.test_results.find(t => t.title === 'storage_check');
-              addDiagnosticLog('STORAGE_CHECK', `Found storage test: ${storageTest ? JSON.stringify(storageTest).substring(0, 150) : 'null'}`, 'info');
-              if (storageTest) {
-                if (storageTest.status === 'success' && storageTest.data && storageTest.data.length > 0) {
-                  // Process storage check results
-                  const hasSufficientSpace = storageTest.data.some(fs => 
-                    parseInt(fs['available-blocks']) > 1000000
-                  );
-                  
-                  setStorageCheck({
-                    has_sufficient_space: hasSufficientSpace,
-                    details: storageTest.data
-                  });
-                  setIsCheckingStorage(false);
-                  
-                  eventType = 'SUCCESS';
-                  message = `Storage check completed. Sufficient space: ${hasSufficientSpace}`;
-                } else if (storageTest.error) {
-                  setStorageCheckError(storageTest.error);
-                  setIsCheckingStorage(false);
-                  setStorageCheck(null);
-                  eventType = 'ERROR';
-                  message = `Storage check failed: ${storageTest.error}`;
-                } else if (storageTest.status === 'success' && (!storageTest.data || storageTest.data.length === 0)) {
-                  setStorageCheckError('No storage data received from device');
-                  setIsCheckingStorage(false);
-                  setStorageCheck(null);
-                  eventType = 'ERROR';
-                  message = 'No storage data received from device';
-                }
-              }
-            }
-          }
-
-          // Add to terminal logs
-          setTerminalLogs(prev => [...prev, {
-              id: Date.now() + Math.random(),
-              type: eventType,
-              message: message,
-              timestamp: new Date().toLocaleTimeString()
-          }]);
-        } catch (parseErr) {
-          addDiagnosticLog('MESSAGE', `Failed to parse JSON: ${parseErr.message}`, 'error');
-        }
-      };
-
-      ws.onerror = (err) => {
-        addDiagnosticLog('WEBSOCKET', `❌ WebSocket error: ${err.message || 'Unknown'}`, 'error');
-        setWsStatus('error');
-        setWsError(err.message || 'Unknown error');
-      };
-
-      ws.onclose = (closeEvent) => {
-        addDiagnosticLog('WEBSOCKET', `Connection closed (code: ${closeEvent.code})`,
-          closeEvent.code === 1000 ? 'info' : 'warning');
-        setWsStatus('disconnected');
-        if (!intendedClose) {
-          addDiagnosticLog('WEBSOCKET', '⚠️ Connection closed unexpectedly', 'warning');
-        }
-      };
-
-    } catch (err) {
-        addDiagnosticLog('WEBSOCKET', `Failed to create WebSocket: ${err.message}`, 'error', err);
-        setWsStatus('error');
-        setWsError(err.message);
-    }
-
-    return () => {
-      intendedClose = true;
-      if (ws) {
-        addDiagnosticLog('CLEANUP', 'Closing WebSocket connection', 'info');
-        ws.close();
-      }
-    };
-  }, [addDiagnosticLog]);
-
-  // =========================================================================
-  // SECTION 7: STORAGE CHECK (UNCHANGED)
-  // =========================================================================
-
-  const startStorageCheck = useCallback(async () => {
-    addDiagnosticLog('STORAGE_CHECK', 'Starting storage check...', 'info');
-
-    if (!selectedFile || !parameters.hostname || !parameters.username || !parameters.password) {
-      addDiagnosticLog('STORAGE_CHECK', 'Validation failed - missing required fields', 'warning');
+ 
+  // ===========================================================================
+  // SECTION 9: STORAGE VALIDATION FUNCTION
+  // ===========================================================================
+  //
+  // This function triggers the storage validation workflow:
+  //   1. Validate prerequisites (file, hostname, credentials)
+  //   2. POST to validation endpoint with file_size
+  //   3. Subscribe to WebSocket channel for results
+  //   4. Update UI state to show "checking" status
+  //
+  // CRITICAL: This function now includes file_size in the request payload
+  // This enables accurate validation based on actual file size requirements
+  // ===========================================================================
+ 
+  const startStorageCheck = async () => {
+    console.log('🔍 Starting storage validation...');
+ 
+    // Validate prerequisites
+    if (!selectedFile) {
+      console.warn('No file selected for validation');
       return;
     }
-
+ 
+    if (!parameters.hostname || !parameters.username || !parameters. password) {
+      console.warn('Missing required credentials for validation');
+      return;
+    }
+ 
+    // Reset state
     setIsCheckingStorage(true);
     setStorageCheckError(null);
     setStorageCheck(null);
     setTerminalLogs([{
-      id: 'init',
+      id: 'validation_start',
       type: 'INFO',
-      message: `Connecting to ${parameters.hostname}...`,
-      timestamp: new Date().toLocaleTimeString()
+      message: `🔍 Validating storage on ${parameters.hostname}... `,
+      timestamp: new Date(). toLocaleTimeString(),
+      isTechnical: false
     }]);
-
+ 
     try {
-        const payload = {
-            hostname: parameters.hostname,
-            username: parameters.username,
-            password: parameters.password,
-            tests: ["test_storage_check"],
-            mode: "check",
-            tag: "snap"
-        };
-
-        addDiagnosticLog('API', `Sending POST to ${API_BASE}/api/operations/validation/execute-v2`, 'info');
-        addDiagnosticLog('API', `Payload: ${JSON.stringify(payload)}`, 'info');
-
-        const res = await fetch(`${API_BASE}/api/operations/validation/execute-v2`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+      // Build validation request payload
+      // CRITICAL: Include file_size for accurate validation
+      const payload = {
+        hostname: parameters.hostname,
+        username: parameters.username,
+        password: parameters.password,
+        tests: ["test_storage_check"],
+        mode: "check",
+        tag: "snap",
+        file_size: selectedFile.size  // ✅ NEW: Send file size in bytes
+      };
+ 
+      console.log('📤 Sending validation request:', {
+        hostname: payload.hostname,
+        file_size: payload.file_size,
+        file_size_mb: (payload.file_size / (1024 * 1024)).toFixed(2)
+      });
+ 
+      // Send POST request to validation endpoint
+      const response = await fetch(`${API_BASE}/api/operations/validation/execute-v2`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+ 
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Validation request failed: ${errorText}`);
+      }
+ 
+      const data = await response.json();
+      console.log('✅ Validation job queued:', data);
+ 
+      const { job_id, ws_channel } = data;
+ 
+      // Store job ID for message filtering
+      setCheckJobId(job_id);
+ 
+      // Subscribe to WebSocket channel for real-time updates
+      // Channel format: "job:jsnapy-UUID"
+      // Rust Hub will add "ws_channel:" prefix internally
+      if (ws_channel && isConnected) {
+        console.log(`📡 Subscribing to validation channel: ${ws_channel}`);
+        sendMessage({
+          type: 'SUBSCRIBE',
+          channel: ws_channel
         });
-
-        addDiagnosticLog('API', `Response status: ${res.status}`, res.ok ? 'success' : 'error');
-
-        if (!res.ok) {
-          const errorText = await res.text();
-          throw new Error(errorText);
-        }
-
-        const data = await res.json();
-        addDiagnosticLog('API', `Response: job_id=${data.job_id}, ws_channel=${data.ws_channel}`, 'success');
-
-        const returnedJobId = data.job_id;
-        const returnedChannel = data.ws_channel;
-
-
-
-        // Subscribe
-        if (returnedChannel && wsConnection && wsConnection.readyState === WebSocket.OPEN) {
-            addDiagnosticLog('SUBSCRIBE', `Subscribing to channel: ${returnedChannel}`, 'info');
-
-            wsConnection.send(JSON.stringify({
-                type: 'SUBSCRIBE',
-                channel: returnedChannel
-            }));
-
-            addDiagnosticLog('SUBSCRIBE', '✅ Subscription message sent', 'success');
-        } else {
-            addDiagnosticLog('SUBSCRIBE', '❌ WebSocket not ready', 'error', {
-              wsExists: !!wsConnection,
-              readyState: wsConnection?.readyState,
-              readyStateDescription: wsConnection?.readyState === WebSocket.CONNECTING ? 'CONNECTING' :
-                                   wsConnection?.readyState === WebSocket.OPEN ? 'OPEN' :
-                                   wsConnection?.readyState === WebSocket.CLOSING ? 'CLOSING' :
-                                   wsConnection?.readyState === WebSocket.CLOSED ? 'CLOSED' : 'UNKNOWN'
-            });
-        }
-
-        setTerminalLogs(prev => [...prev, {
-            id: 'job_start',
-            type: 'INFO',
-            message: `Job Started (${returnedJobId}). Waiting for results...`,
-            timestamp: new Date().toLocaleTimeString()
+ 
+        setTerminalLogs(prev => [... prev, {
+          id: 'validation_subscribed',
+          type: 'INFO',
+          message: `Subscribed to validation updates (${job_id})`,
+          timestamp: new Date().toLocaleTimeString(),
+          isTechnical: true
         }]);
-
-    } catch (e) {
-        addDiagnosticLog('STORAGE_CHECK', `Error: ${e.message}`, 'error', e);
-        setStorageCheckError(e.message);
-        setIsCheckingStorage(false);
-        setTerminalLogs(prev => [...prev, {
-          id: 'api_fail',
-          type: 'ERROR',
-          message: e.message,
-          timestamp: new Date().toLocaleTimeString()
-        }]);
+      } else {
+        console.error('❌ Cannot subscribe: WebSocket not connected');
+        throw new Error('WebSocket not connected - cannot receive validation results');
+      }
+ 
+    } catch (error) {
+      console. error('❌ Storage validation error:', error);
+      setStorageCheckError(error.message);
+      setIsCheckingStorage(false);
+ 
+      setTerminalLogs(prev => [... prev, {
+        id: 'validation_error',
+        type: 'ERROR',
+        message: `Validation failed: ${error.message}`,
+        timestamp: new Date(). toLocaleTimeString(),
+        isTechnical: false
+      }]);
     }
-  }, [selectedFile, parameters, wsConnection, addDiagnosticLog]);
-
-  // =========================================================================
-  // SECTION 8: DEBOUNCE EFFECT (UNCHANGED)
-  // =========================================================================
-
+  };
+ 
+  // ===========================================================================
+  // SECTION 10: AUTOMATIC VALIDATION TRIGGER (DEBOUNCED)
+  // ===========================================================================
+  //
+  // This effect automatically triggers storage validation when:
+  //   - User selects a file
+  //   - User enters hostname and credentials
+  //   - All required fields are filled
+  //
+  // Debouncing prevents excessive validation requests while user is typing.
+  // ===========================================================================
+ 
   useEffect(() => {
-    const isReady = selectedFile && parameters.hostname && parameters.username && parameters.password;
-
-    if (isReady) {
+    // Check if all required fields are present
+    const isReady = selectedFile &&
+                    parameters.hostname &&
+                    parameters.username &&
+                    parameters.password;
+ 
+    if (isReady && ! isCheckingStorage && !storageCheck) {
+      console.log('📋 All fields ready - scheduling automatic validation...');
+ 
+      // Debounce: Wait for user to stop typing before validating
       const timer = setTimeout(() => {
-          if (!isCheckingStorage && !storageCheck) {
-            startStorageCheck();
-          }
-      }, 1500);
-
-      return () => clearTimeout(timer);
-    } else {
+        console.log('⏰ Debounce timer expired - triggering validation');
+        startStorageCheck();
+      }, VALIDATION_DEBOUNCE_DELAY);
+ 
+      // Cleanup: Cancel timer if fields change before debounce completes
+      return () => {
+        console.log('🚫 Debounce timer cancelled - fields changed');
+        clearTimeout(timer);
+      };
+    } else if (! isReady) {
+      // If fields become incomplete, reset validation state
       setStorageCheck(null);
       setStorageCheckError(null);
     }
-  }, [selectedFile, parameters.hostname, parameters.username, parameters.password, isCheckingStorage, storageCheck, startStorageCheck, addDiagnosticLog]);
-
-  // =========================================================================
-  // SECTION 9: UI HELPER FUNCTIONS (ENHANCED)
-  // =========================================================================
-
-  const getWsStatusColor = () => {
-    switch(wsStatus) {
-      case 'connected': return 'text-green-600 bg-green-100';
-      case 'connecting': return 'text-blue-600 bg-blue-100';
-      case 'error': return 'text-red-600 bg-red-100';
-      default: return 'text-gray-600 bg-gray-100';
+  }, [selectedFile, parameters.hostname, parameters.username, parameters.password]);
+ 
+  // ===========================================================================
+  // SECTION 11: FILE UPLOAD FUNCTION
+  // ===========================================================================
+  //
+  // This function handles the actual file upload after validation passes:
+  //   1. Build FormData with file and parameters
+  //   2. POST to upload endpoint
+  //   3. Subscribe to upload WebSocket channel
+  //   4.  Track progress and completion
+  // ===========================================================================
+ 
+  const handleUpload = async () => {
+    console.log('📤 Starting file upload...');
+ 
+    if (!selectedFile || !parameters.hostname || !parameters. username || !parameters.password) {
+      console.error('Missing required fields for upload');
+      return;
+    }
+ 
+    // Reset upload state
+    setIsUploading(true);
+    setUploadError(null);
+    setUploadProgress(0);
+    setTerminalLogs(prev => [...prev, {
+      id: 'upload_start',
+      type: 'INFO',
+      message: `📤 Starting upload of ${selectedFile.name} to ${parameters.hostname}...`,
+      timestamp: new Date().toLocaleTimeString(),
+      isTechnical: false
+    }]);
+ 
+    try {
+      // Build multipart form data
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+      formData.append('hostname', parameters.hostname);
+      formData.append('username', parameters.username);
+      formData. append('password', parameters.password);
+      formData.append('protocol', 'scp');
+      formData.append('scriptId', `image_upload_${Date.now()}`);
+      formData.append('wsClientId', 'web_client');
+      formData.append('remote_filename', selectedFile.name);
+ 
+      console.log('📤 Sending upload request.. .');
+ 
+      // Send upload request
+      const response = await fetch(`${API_BASE}/api/files/upload`, {
+        method: 'POST',
+        body: formData
+      });
+ 
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Upload request failed: ${errorText}`);
+      }
+ 
+      const data = await response.json();
+      console. log('✅ Upload job queued:', data);
+ 
+      const { job_id, ws_channel } = data;
+ 
+      // Store upload job ID
+      setUploadJobId(job_id);
+ 
+      // Subscribe to upload WebSocket channel
+      if (ws_channel && isConnected) {
+        console.log(`📡 Subscribing to upload channel: ${ws_channel}`);
+        sendMessage({
+          type: 'SUBSCRIBE',
+          channel: ws_channel
+        });
+      }
+ 
+    } catch (error) {
+      console.error('❌ Upload error:', error);
+      setUploadError(error.message);
+      setIsUploading(false);
+ 
+      setTerminalLogs(prev => [...prev, {
+        id: 'upload_error',
+        type: 'ERROR',
+        message: `Upload failed: ${error.message}`,
+        timestamp: new Date().toLocaleTimeString(),
+        isTechnical: false
+      }]);
     }
   };
-
-  const getWsStatusIcon = () => {
-    switch(wsStatus) {
-      case 'connected': return <Wifi className="h-3 w-3" />;
-      case 'connecting': return <Loader2 className="h-3 w-3 animate-spin" />;
-      case 'error': return <WifiOff className="h-3 w-3" />;
-      default: return <WifiOff className="h-3 w-3" />;
+ 
+  // ===========================================================================
+  // SECTION 12: UI HELPER FUNCTIONS
+  // ===========================================================================
+ 
+  const getStorageStatusIcon = () => {
+    if (isCheckingStorage) {
+      return <Loader2 className="h-5 w-5 animate-spin text-blue-600" />;
     }
+    if (storageCheckError || (storageCheck && !storageCheck.has_sufficient_space)) {
+      return <XCircle className="h-5 w-5 text-red-600" />;
+    }
+    if (storageCheck && storageCheck.has_sufficient_space) {
+      return <CheckCircle2 className="h-5 w-5 text-green-600" />;
+    }
+    return <HardDrive className="h-5 w-5 text-gray-400" />;
   };
-
-  const copyDiagnosticsToClipboard = () => {
-    const text = diagnostics.map(d => `[${d.timestamp}] ${d.category}: ${d.message}`).join('\n');
-    navigator.clipboard.writeText(text);
+ 
+  const getStorageStatusText = () => {
+    if (isCheckingStorage) return 'Validating storage...';
+    if (storageCheckError) return 'Validation failed';
+    if (storageCheck && !storageCheck.has_sufficient_space) return 'Insufficient space';
+    if (storageCheck && storageCheck.has_sufficient_space) return 'Storage validated';
+    return 'Pending validation';
   };
-
-  const exportDiagnostics = () => {
-    const text = JSON.stringify(diagnostics, null, 2);
-    const blob = new Blob([text], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'diagnostics.json';
-    a.click();
-    URL.revokeObjectURL(url);
+ 
+  const getStorageStatusColor = () => {
+    if (isCheckingStorage) return 'border-blue-200 bg-blue-50';
+    if (storageCheckError || (storageCheck && !storageCheck.has_sufficient_space)) {
+      return 'border-red-200 bg-red-50';
+    }
+    if (storageCheck && storageCheck. has_sufficient_space) {
+      return 'border-green-200 bg-green-50';
+    }
+    return 'border-gray-200 bg-gray-50';
   };
-
-  // =========================================================================
-  // SECTION 10: MODERN UI RENDER (REDESIGNED)
-  // =========================================================================
-
+ 
+  const canUpload = () => {
+    return selectedFile &&
+           parameters.hostname &&
+           parameters.username &&
+           parameters.password &&
+           storageCheck &&
+           storageCheck.has_sufficient_space &&
+           ! isCheckingStorage &&
+           !isUploadingResolved;
+  };
+ 
+  // ===========================================================================
+  // SECTION 13: RENDER UI
+  // ===========================================================================
+ 
   return (
-    <div className="flex flex-col h-screen w-full bg-gradient-to-br from-slate-50 to-blue-50 text-slate-900 overflow-hidden font-sans">
-
-      {/* COMPACT APP BAR WITH GLASS EFFECT */}
-      <div className="flex-none h-12 bg-white/80 backdrop-blur-md border-b border-slate-200 flex items-center justify-between px-4 shadow-sm z-20">
-        <div className="flex items-center gap-3">
-          <div className="bg-gradient-to-br from-blue-600 to-purple-600 text-white p-1.5 rounded-lg shadow-sm">
-            <LayoutDashboard className="h-4 w-4" />
-          </div>
-          <div>
-            <h1 className="text-sm font-bold tracking-tight text-slate-900">
-              Image<span className="font-light text-slate-600">Deployer</span>
-            </h1>
-            <div className="flex items-center gap-2">
-              <Badge variant="outline" className="text-[10px] h-4 px-1 bg-red-50 text-red-700 border-red-200">
-                DEBUG
-              </Badge>
-              <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${getWsStatusColor()}`}>
-                {getWsStatusIcon()}
-                <span className="uppercase tracking-wider">{wsStatus}</span>
-              </div>
-            </div>
-          </div>
+    <div className="w-full max-w-6xl mx-auto p-6 space-y-6">
+ 
+      {/* PAGE HEADER */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">Image Upload</h1>
+          <p className="text-sm text-gray-600 mt-1">
+            Upload firmware images and configuration files to Juniper devices
+          </p>
         </div>
-
-        <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={runFullDiagnostics}
-            disabled={isRunningDiagnostics}
-            className="h-8 text-xs"
-          >
-            {isRunningDiagnostics ? (
-              <Loader2 className="h-3 w-3 animate-spin mr-1" />
-            ) : (
-              <Activity className="h-3 w-3 mr-1" />
-            )}
-            Diagnostics
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setActiveTab('logs')}
-            className="h-8 text-xs"
-          >
-            <Terminal className="h-3 w-3 mr-1" />
-            Logs
-          </Button>
-        </div>
+ 
+        {/* WebSocket Connection Status */}
+        <Badge variant={isConnected ? "success" : "destructive"}>
+          {isConnected ? '🟢 Connected' : '🔴 Disconnected'}
+        </Badge>
       </div>
-
-      {/* MAIN CONTENT - COMPACT LAYOUT */}
-      <div className="flex-1 overflow-hidden p-3">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-full">
-          
-          {/* LEFT COLUMN: CONFIGURATION & CONTROLS */}
-          <div className="flex flex-col gap-4">
-            
-            {/* QUICK STATUS CARD */}
-            <Card className="bg-white/70 backdrop-blur-sm border-slate-200 shadow-sm">
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <Server className="h-4 w-4 text-slate-600" />
-                    <span className="text-sm font-semibold">Connection Status</span>
-                  </div>
-                  <Badge variant={wsStatus === 'connected' ? 'default' : 'secondary'} className="text-xs">
-                    {wsStatus}
+ 
+      <Separator />
+ 
+      {/* MAIN CONTENT GRID */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+ 
+        {/* LEFT COLUMN: Configuration */}
+        <div className="space-y-6">
+ 
+          {/* FILE SELECTION */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FileText className="h-5 w-5" />
+                File Selection
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <FileSelection
+                selectedFile={selectedFile}
+                setSelectedFile={setSelectedFile}
+                isRunning={isRunning || isUploadingResolved}
+              />
+            </CardContent>
+          </Card>
+ 
+          {/* DEVICE CONFIGURATION */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Device Configuration</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <DeviceTargetSelector
+                parameters={parameters}
+                onParamChange={setParameters}
+              />
+ 
+              <Separator />
+ 
+              <DeviceAuthFields
+                parameters={parameters}
+                onParamChange={setParameters}
+              />
+            </CardContent>
+          </Card>
+ 
+          {/* STORAGE VALIDATION STATUS */}
+          <Card className={`border-2 ${getStorageStatusColor()}`}>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                {getStorageStatusIcon()}
+                Storage Validation
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium">{getStorageStatusText()}</span>
+                {isCheckingStorage && (
+                  <Badge variant="outline" className="text-blue-600">
+                    <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                    Checking...
                   </Badge>
-                </div>
-                <div className="grid grid-cols-2 gap-3 text-xs">
-                  <div>
-                    <p className="text-slate-500 text-[10px] uppercase tracking-wide">API</p>
-                    <p className="font-mono truncate bg-slate-50 p-1.5 rounded text-[10px]">{API_BASE}</p>
-                  </div>
-                  <div>
-                    <p className="text-slate-500 text-[10px] uppercase tracking-wide">WebSocket</p>
-                    <p className="font-mono truncate bg-slate-50 p-1.5 rounded text-[10px]">{WS_BASE}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* COLLAPSIBLE CONFIGURATION CARD */}
-            <Card className="bg-white/70 backdrop-blur-sm border-slate-200 shadow-sm">
-              <CardHeader 
-                className="p-4 cursor-pointer hover:bg-slate-50/50 transition-colors rounded-t-lg"
-                onClick={() => setIsConfigExpanded(!isConfigExpanded)}
-              >
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm flex items-center gap-2">
-                    <Settings className="h-4 w-4" />
-                    Configuration
-                  </CardTitle>
-                  {isConfigExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                </div>
-              </CardHeader>
-              
-              {isConfigExpanded && (
-                <CardContent className="p-4 pt-0 space-y-4">
-                  <div>
-                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 mb-2 block">
-                      File Selection
-                    </label>
-                    <FileSelection
-                      selectedFile={selectedFile}
-                      setSelectedFile={setSelectedFile}
-                      isRunning={false}
-                    />
-                  </div>
-
-                  <Separator />
-
-                  <div className="grid grid-cols-1 gap-4">
-                    <DeviceTargetSelector parameters={parameters} onParamChange={setParameters} />
-                    <DeviceAuthFields parameters={parameters} onParamChange={setParameters} />
-                  </div>
-
-                  <div className="flex gap-2">
-                    <Button 
-                      onClick={startStorageCheck} 
-                      disabled={isCheckingStorage}
-                      variant="outline"
-                      size="sm"
-                      className="flex-1"
-                    >
-                      {isCheckingStorage ? (
-                        <>
-                          <Loader2 className="mr-2 h-3 w-3 animate-spin" />
-                          Checking...
-                        </>
-                      ) : (
-                        'Check Storage'
-                      )}
-                    </Button>
-                    
-                    <Button 
-                      onClick={runFullDiagnostics}
-                      disabled={isRunningDiagnostics}
-                      size="sm"
-                      className="flex-1"
-                    >
-                      {isRunningDiagnostics ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : (
-                        <Activity className="h-3 w-3" />
-                      )}
-                    </Button>
-                  </div>
-                </CardContent>
-              )}
-            </Card>
-
-            {/* STORAGE CHECK RESULTS */}
-            {(storageCheck || storageCheckError) && (
-              <Card className={`border-l-4 ${
-                storageCheck?.has_sufficient_space 
-                  ? 'bg-green-50/70 border-green-400' 
-                  : storageCheckError 
-                  ? 'bg-red-50/70 border-red-400'
-                  : 'bg-yellow-50/70 border-yellow-400'
-              } backdrop-blur-sm shadow-sm`}>
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-3">
-                    {storageCheck?.has_sufficient_space ? (
-                      <CheckCircle2 className="h-5 w-5 text-green-600" />
-                    ) : storageCheckError ? (
-                      <XCircle className="h-5 w-5 text-red-600" />
-                    ) : (
-                      <AlertCircle className="h-5 w-5 text-yellow-600" />
-                    )}
-                    <div className="flex-1">
-                      <p className={`text-sm font-semibold ${
-                        storageCheck?.has_sufficient_space ? 'text-green-800' : 
-                        storageCheckError ? 'text-red-800' : 'text-yellow-800'
-                      }`}>
-                        {storageCheck?.has_sufficient_space 
-                          ? '✅ Storage Check Passed' 
-                          : storageCheckError 
-                          ? '❌ Storage Check Failed'
-                          : '⚠️ Storage Check In Progress'}
-                      </p>
-                      <p className="text-xs text-slate-600 mt-1">
-                        {storageCheck?.has_sufficient_space 
-                          ? 'Sufficient space available for upload'
-                          : storageCheckError 
-                          ? storageCheckError
-                          : 'Checking device storage...'}
-                      </p>
-                    </div>
-                  </div>
-                  
-                  {storageCheck?.details && (
-                    <details className="mt-3">
-                      <summary className="text-xs text-slate-600 cursor-pointer hover:text-slate-800">
-                        View storage details
-                      </summary>
-                      <div className="mt-2 space-y-1 text-xs font-mono bg-white/50 p-2 rounded">
-                        {storageCheck.details.map((fs, idx) => (
-                          <div key={idx} className="flex justify-between">
-                            <span>{fs['mounted-on']}:</span>
-                            <span>{fs['available-blocks']} blocks</span>
+                )}
+              </div>
+ 
+              {/* Storage Check Result Details */}
+              {storageCheck && (
+                <div className="space-y-2 text-sm">
+                  {storageCheck.has_sufficient_space ?  (
+                    <Alert className="bg-green-50 border-green-200">
+                      <CheckCircle2 className="h-4 w-4 text-green-600" />
+                      <AlertDescription className="text-green-800">
+                        <div className="font-medium mb-1">✅ Storage Check Passed</div>
+                        {storageCheck.required_mb && storageCheck.available_mb && (
+                          <div className="text-xs space-y-1">
+                            <div>Required: {storageCheck.required_mb. toFixed(2)} MB</div>
+                            <div>Available: {storageCheck.available_mb.toFixed(2)} MB</div>
+                            {storageCheck.best_filesystem && (
+                              <div>Filesystem: {storageCheck.best_filesystem['mounted-on']}</div>
+                            )}
                           </div>
-                        ))}
-                      </div>
-                    </details>
+                        )}
+                      </AlertDescription>
+                    </Alert>
+                  ) : (
+                    <Alert className="bg-red-50 border-red-200">
+                      <XCircle className="h-4 w-4 text-red-600" />
+                      <AlertDescription className="text-red-800">
+                        <div className="font-medium mb-1">❌ Insufficient Storage</div>
+                        {storageCheck.message && (
+                          <div className="text-xs whitespace-pre-wrap">{storageCheck.message}</div>
+                        )}
+                        {storageCheck.recommendations && storageCheck.recommendations.length > 0 && (
+                          <div className="mt-2 text-xs space-y-1">
+                            <div className="font-semibold">Recommendations:</div>
+                            {storageCheck. recommendations.map((rec, idx) => (
+                              <div key={idx}>• {rec}</div>
+                            ))}
+                          </div>
+                        )}
+                      </AlertDescription>
+                    </Alert>
                   )}
-                </CardContent>
-              </Card>
-            )}
-
-            {/* UPLOAD BUTTON - PROMINENT PLACEMENT */}
-            <Button 
-              onClick={async () => {
-                addDiagnosticLog('UPLOAD', `Upload clicked. Storage check: ${JSON.stringify(storageCheck)}, Selected file: ${selectedFile ? selectedFile.name : 'none'}`, 'info');
-                
-                if (!storageCheck?.has_sufficient_space) {
-                  addDiagnosticLog('UPLOAD', 'Upload blocked: Insufficient storage space', 'error');
-                  return;
-                }
-                
-                if (!selectedFile) {
-                  addDiagnosticLog('UPLOAD', 'Upload blocked: No file selected', 'error');
-                  return;
-                }
-                
-                if (!parameters.hostname || !parameters.username || !parameters.password) {
-                  addDiagnosticLog('UPLOAD', 'Upload blocked: Missing device credentials', 'error');
-                  return;
-                }
-                
-                try {
-                  setInternalIsUploading(true);
-                  addDiagnosticLog('UPLOAD', 'Starting image upload...', 'info');
-                  
-                  const formData = new FormData();
-                  formData.append('file', selectedFile);
-                  formData.append('hostname', parameters.hostname);
-                  formData.append('username', parameters.username);
-                  formData.append('password', parameters.password);
-                  
-                  const response = await fetch(`${API_BASE}/api/files/upload`, {
-                    method: 'POST',
-                    body: formData
-                  });
-                  
-                  if (response.ok) {
-                    const result = await response.json();
-                    addDiagnosticLog('UPLOAD', `✅ Image upload completed successfully: ${result.message}`, 'success');
-                    if (result.job_id) {
-                      addDiagnosticLog('UPLOAD', `Upload job ID: ${result.job_id}`, 'info');
-                      
-                      // Subscribe to upload progress channel
-                      if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
-                        addDiagnosticLog('UPLOAD', `Subscribing to upload channel: ${result.ws_channel}`, 'info');
-                        
-                        wsConnection.send(JSON.stringify({
-                          type: 'SUBSCRIBE',
-                          channel: result.ws_channel
-                        }));
-                        
-                        addDiagnosticLog('UPLOAD', '✅ Subscribed to upload progress channel', 'success');
-                      }
-                    }
-                  } else {
-                    const errorText = await response.text();
-                    addDiagnosticLog('UPLOAD', `❌ Upload failed: ${errorText}`, 'error');
-                  }
-                } catch (error) {
-                  addDiagnosticLog('UPLOAD', `❌ Upload error: ${error.message}`, 'error');
-                } finally {
-                  setInternalIsUploading(false);
-                }
-                
-                if (onUpload) {
-                  onUpload();
-                }
-              }}
-              disabled={!storageCheck?.has_sufficient_space || isUploading || !selectedFile}
-              className={`w-full h-12 font-semibold shadow-lg ${
-                storageCheck?.has_sufficient_space 
-                  ? 'bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700' 
-                  : 'bg-slate-400 cursor-not-allowed'
-              } text-white transition-all duration-200`}
-            >
-              {isUploading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Uploading Image...
-                </>
-              ) : (
-                <>
-                  <HardDrive className="mr-2 h-4 w-4" />
-                  Upload Image to Device
-                </>
-              )}
-            </Button>
-          </div>
-
-          {/* RIGHT COLUMN: TERMINAL OUTPUT */}
-          <div className="flex flex-col h-full">
-            <Card className="bg-slate-900 border-slate-700 shadow-lg flex-1 flex flex-col">
-              <CardHeader 
-                className="p-3 border-b border-slate-700 cursor-pointer hover:bg-slate-800/50 transition-colors"
-                onClick={() => setIsTerminalExpanded(!isTerminalExpanded)}
-              >
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm flex items-center gap-2 text-slate-200">
-                    <Terminal className="h-4 w-4" />
-                    Terminal Output
-                    {terminalLogs.length > 0 && (
-                      <Badge variant="secondary" className="bg-slate-700 text-slate-300 text-[10px]">
-                        {terminalLogs.length}
-                      </Badge>
-                    )}
-                  </CardTitle>
-                  {isTerminalExpanded ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
                 </div>
-              </CardHeader>
-              
-              {isTerminalExpanded && (
-                <CardContent className="p-0 flex-1 flex flex-col">
-                  <div className="flex-1 overflow-y-auto p-3 space-y-1.5 font-mono text-xs">
-                    {terminalLogs.length === 0 ? (
-                      <p className="text-slate-500 italic">Waiting for output... Storage check will auto-start when form is complete.</p>
-                    ) : (
-                      terminalLogs.map(log => (
-                        <div key={log.id} className="flex gap-2 group hover:bg-slate-800/50 p-1 rounded">
-                          <span className="text-slate-500 flex-shrink-0 text-[10px]">{log.timestamp}</span>
-                          <span className={`flex-shrink-0 font-bold text-[10px] px-1 rounded ${
-                            log.type === 'ERROR' ? 'text-red-400 bg-red-400/10' :
-                            log.type === 'SUCCESS' ? 'text-green-400 bg-green-400/10' :
-                            'text-blue-400 bg-blue-400/10'
-                          }`}>
-                            {log.type}
-                          </span>
-                          <span className="flex-1 break-words text-slate-300">{log.message}</span>
-                        </div>
-                      ))
-                    )}
-                    <div ref={terminalEndRef} />
-                  </div>
-                  
-                  {/* TERMINAL CONTROLS */}
-                  <div className="flex justify-between items-center p-2 border-t border-slate-700 bg-slate-800/50">
-                    <div className="flex gap-1">
-                      <Button 
-                        size="sm" 
-                        variant="ghost" 
-                        className="h-6 text-xs text-slate-400 hover:text-slate-200"
-                        onClick={() => setTerminalLogs([])}
-                      >
-                        Clear
-                      </Button>
-                      <Button 
-                        size="sm" 
-                        variant="ghost" 
-                        className="h-6 text-xs text-slate-400 hover:text-slate-200"
-                        onClick={() => terminalEndRef.current?.scrollIntoView({ behavior: "smooth" })}
-                      >
-                        Scroll to Bottom
-                      </Button>
-                    </div>
-                    <div className="text-[10px] text-slate-500">
-                      {terminalLogs.length} messages
-                    </div>
-                  </div>
-                </CardContent>
               )}
-            </Card>
-          </div>
+ 
+              {/* Storage Check Error */}
+              {storageCheckError && (
+                <Alert className="bg-red-50 border-red-200">
+                  <AlertCircle className="h-4 w-4 text-red-600" />
+                  <AlertDescription className="text-red-800">
+                    {storageCheckError}
+                  </AlertDescription>
+                </Alert>
+              )}
+ 
+              {/* Manual Retry Button */}
+              {(storageCheckError || (storageCheck && !storageCheck.has_sufficient_space)) && (
+                <Button
+                  onClick={startStorageCheck}
+                  disabled={isCheckingStorage}
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                >
+                  {isCheckingStorage ?  (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Rechecking...
+                    </>
+                  ) : (
+                    'Retry Validation'
+                  )}
+                </Button>
+              )}
+            </CardContent>
+          </Card>
+ 
+          {/* UPLOAD BUTTON */}
+          <Button
+            onClick={handleUpload}
+            disabled={!canUpload()}
+            className="w-full"
+            size="lg"
+          >
+            {isUploadingResolved ? (
+              <>
+                <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                Uploading...  {uploadProgressResolved. toFixed(0)}%
+              </>
+            ) : (
+              <>
+                <Upload className="mr-2 h-5 w-5" />
+                Upload File
+              </>
+            )}
+          </Button>
+ 
+          {/* Upload Progress Bar */}
+          {isUploadingResolved && uploadProgressResolved > 0 && (
+            <div className="space-y-2">
+              <Progress value={uploadProgressResolved} className="w-full" />
+              <p className="text-xs text-center text-gray-600">
+                {uploadProgressResolved.toFixed(1)}% complete
+              </p>
+            </div>
+          )}
+ 
+          {/* Upload Error */}
+          {uploadError && (
+            <Alert className="bg-red-50 border-red-200">
+              <AlertCircle className="h-4 w-4 text-red-600" />
+              <AlertDescription className="text-red-800">
+                {uploadError}
+              </AlertDescription>
+            </Alert>
+          )}
+        </div>
+ 
+        {/* RIGHT COLUMN: Live Terminal */}
+        <div className="space-y-4">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2">
+                  <Terminal className="h-5 w-5" />
+                  Live Execution Log
+                </CardTitle>
+ 
+                {/* Debug Mode Toggle */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowTechnicalLogs(!showTechnicalLogs)}
+                >
+                  {showTechnicalLogs ? '🔧 Debug: ON' : '🔧 Debug: OFF'}
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <LiveLogViewer
+                logs={terminalLogs}
+                isConnected={isConnected}
+                height="h-[600px]"
+                showTechnical={showTechnicalLogs}
+              />
+            </CardContent>
+          </Card>
         </div>
       </div>
-
-      {/* FLOATING DIAGNOSTICS PANEL - ONLY SHOWS WHEN ACTIVE */}
-      {activeTab === 'diagnostics' && (
-        <div className="absolute inset-4 bg-white/95 backdrop-blur-md rounded-lg border border-slate-200 shadow-2xl z-50 flex flex-col">
-          <div className="flex items-center justify-between p-4 border-b border-slate-200">
-            <h3 className="text-lg font-semibold">Diagnostic Results</h3>
-            <div className="flex gap-2">
-              <Button size="sm" variant="outline" onClick={copyDiagnosticsToClipboard}>
-                <Copy className="h-4 w-4 mr-1" /> Copy
-              </Button>
-              <Button size="sm" variant="outline" onClick={exportDiagnostics}>
-                <Download className="h-4 w-4 mr-1" /> Export
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => setActiveTab('main')}>
-                Close
-              </Button>
-            </div>
-          </div>
-          <div className="flex-1 overflow-y-auto p-4 bg-slate-900 text-slate-300 font-mono text-sm">
-            {diagnostics.length === 0 ? (
-              <p className="text-slate-500">No diagnostics run yet. Click the Diagnostics button to start.</p>
-            ) : (
-              diagnostics.map(log => (
-                <div key={log.id} className="flex gap-3 py-1 border-b border-slate-700 last:border-b-0">
-                  <span className="text-slate-500 flex-shrink-0 text-xs">{log.timestamp}</span>
-                  <span className={`flex-shrink-0 font-bold w-24 ${
-                    log.type === 'error' ? 'text-red-400' :
-                    log.type === 'success' ? 'text-green-400' :
-                    log.type === 'warning' ? 'text-yellow-400' :
-                    'text-blue-400'
-                  }`}>
-                    [{log.category}]
-                  </span>
-                  <span className="flex-1">{log.message}</span>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
