@@ -5,6 +5,8 @@ import os
 import argparse
 import glob
 import time
+import subprocess
+import tempfile
 from lxml import etree
 
 # ------------------------------------------------------------------------------------
@@ -168,19 +170,61 @@ def main():
         # Flush stdout before running C-based libraries to keep stream clean
         sys.stdout.flush()
 
-        # Run Snapcheck
-        js.snapcheck(config_yaml, unique_tag)
+        # Use command line JSNAPy instead of Python API for better reliability
+        try:
+            # Write config to temporary file
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".yml", delete=False
+            ) as config_file:
+                config_file.write(config_yaml)
+                config_file_path = config_file.name
+
+            send_event("INFO", "Creating snapshot using JSNAPy command line...")
+
+            # Run JSNAPy snapcheck command (snapshot + check in one operation)
+            cmd = ["jsnapy", "--snapcheck", unique_tag, "-f", config_file_path, "-v"]
+
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
+            if result.returncode != 0:
+                send_event("ERROR", f"JSNAPy command failed: {result.stderr}")
+                raise Exception(
+                    f"JSNAPy command failed with return code {result.returncode}"
+                )
+
+            send_event("INFO", f"JSNAPy snapcheck completed successfully")
+
+            # Clean up temp file
+            os.unlink(config_file_path)
+
+        except Exception as e:
+            error_msg = str(e)
+            if "ConnectAuthError" in error_msg or "AuthenticationError" in error_msg:
+                send_event(
+                    "ERROR",
+                    f"❌ Authentication failed for {args.hostname}. Please check username and password.",
+                )
+                send_event(
+                    "ERROR",
+                    f"💡 Correct credentials for this device are typically: admin/manolis1",
+                )
+            else:
+                send_event("ERROR", f"JSNAPy operation failed: {e}")
+            raise Exception(f"JSNAPy operation failed: {e}")
 
         send_event(
             "STEP_COMPLETE", "JSNAPy execution finished. Parsing storage data..."
         )
 
         # 3. Data Extraction
-        # JSNAPy saves files as <hostname>_<test>_<tag>.xml
-        # We search specifically for the file we just generated
-        search_pattern = f"*{args.hostname}*{unique_tag}*.xml"
+        # JSNAPy --snapcheck saves files with pattern: <hostname>_test_snapcheck_tag_show_system_storage.xml
+        # Since we use --snapcheck, look for the specific file pattern it creates
+        search_pattern = f"*{args.hostname}_test_snapcheck_tag_show_system_storage.xml"
 
         potential_files = glob.glob(f"{SNAPSHOT_DIR}/{search_pattern}")
+
+        send_event("DEBUG", f"Looking for files with pattern: {search_pattern}")
+        send_event("DEBUG", f"Found files: {potential_files}")
 
         extracted_rows = []
 
@@ -193,14 +237,28 @@ def main():
 
                 for filesystem in root.findall(".//filesystem"):
                     mount_point = filesystem.findtext("mounted-on")
-                    # Filter for /var or root, which are usually relevant for uploads
-                    if mount_point and ("/var" in mount_point or mount_point == "/"):
+                    # Filter for /var, root, or /.mount (Juniper), which are usually relevant for uploads
+                    if mount_point and (
+                        "/var" in mount_point
+                        or mount_point == "/"
+                        or "/.mount" in mount_point
+                    ):
                         row = {
-                            "filesystem-name": filesystem.findtext("filesystem-name"),
-                            "total-blocks": filesystem.findtext("total-blocks"),
-                            "used-blocks": filesystem.findtext("used-blocks"),
-                            "available-blocks": filesystem.findtext("available-blocks"),
-                            "used-percent": filesystem.findtext("used-percent"),
+                            "filesystem-name": (
+                                filesystem.findtext("filesystem-name") or ""
+                            ).strip(),
+                            "total-blocks": (
+                                filesystem.findtext("total-blocks") or ""
+                            ).strip(),
+                            "used-blocks": (
+                                filesystem.findtext("used-blocks") or ""
+                            ).strip(),
+                            "available-blocks": (
+                                filesystem.findtext("available-blocks") or ""
+                            ).strip(),
+                            "used-percent": (
+                                filesystem.findtext("used-percent") or ""
+                            ).strip(),
                             "mounted-on": mount_point,
                         }
                         extracted_rows.append(row)

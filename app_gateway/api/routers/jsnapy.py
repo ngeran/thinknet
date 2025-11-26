@@ -29,21 +29,19 @@ class ValidationReq(BaseModel):
 async def execute_validation_v2(req: ValidationReq, background_tasks: BackgroundTasks):
     job_id = f"job-{uuid.uuid4()}"
 
-    # We define a wrapper to force the websocket service to use our V2 Service
-    async def run_v2_wrapper():
-        # This duplicates logic from websocket_service but uses JSNAPyServiceV2
-        process = await JSNAPyServiceV2.run_job(
-            hosts=[req.hostname],
+    # Use the proper streaming function that handles Redis publishing
+    async def run_validation_job():
+        await websocket_service.execute_jsnapy_and_stream(
+            job_id=job_id,
+            hostname=req.hostname,
             username=req.username,
             password=req.password,
             tests=req.tests,
             mode=req.mode,
             tag=req.tag,
         )
-        # Re-use the existing stream broadcaster from your project
-        await websocket_service.broadcast_process_output(job_id, process)
 
-    background_tasks.add_task(run_v2_wrapper)
+    background_tasks.add_task(run_validation_job)
 
     return {
         "job_id": job_id,

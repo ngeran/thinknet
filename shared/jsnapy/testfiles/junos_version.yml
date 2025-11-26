@@ -1,0 +1,13 @@
+tests_include:
+- test_version_check
+test_version_check:
+- command: show version invoke-on all-routing-engines
+- iterate:
+xpath: //software-information
+id: 'junos-version'
+tests:
+- no-diff: junos-version
+info: "Test Succeeded!! {{post['host-name']}} has Junos version \"{{post['junos-
+version']}}\" "
+err: "Test Failed!!! Junos version does not match earlier it was \"{{pre['junos-
+version']}}\" and now it is \"{{post['junos-version']}}\""

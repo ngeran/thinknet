@@ -105,6 +105,13 @@ services:
       - ./frontend/py_scripts:/app/app_gateway/py_scripts
       - ./shared/data:/backups
       - temp_upload_storage:/tmp/uploads  ## --> ADDED: Worker reads from here
+      # --- JSNAPy MAPPINGS ---
+      # 1. Config (where logging.yml will be auto-created)
+      - ./shared/jsnapy/config:/etc/jsnapy
+      # 2. Snapshots (so you can view XMLs on your host)
+      - ./shared/jsnapy/snapshots:/usr/local/share/jsnapy/snapshots
+      # 3. Logs (so you can debug failures on your host)
+      - ./shared/jsnapy/logs:/var/log/jsnapy
     networks:
       # Only needs the internal network to talk to Redis and devices (via crpd-net)
       - internal_net
