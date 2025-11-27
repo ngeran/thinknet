@@ -1,0 +1,37 @@
+<system-storage-information style="brief"><filesystem><filesystem-name>
+/dev/gpt/junos
+</filesystem-name><total-blocks format="5.3G">
+11106216
+</total-blocks><used-blocks format="1.8G">
+3865576
+</used-blocks><available-blocks format="3.0G">
+6352144
+</available-blocks><used-percent>
+ 38
+</used-percent><mounted-on>
+/.mount
+</mounted-on></filesystem><filesystem><filesystem-name>
+tmpfs
+</filesystem-name><total-blocks format="1.5G">
+3114608
+</total-blocks><used-blocks format="20K">
+40
+</used-blocks><available-blocks format="1.5G">
+3114568
+</available-blocks><used-percent>
+  0
+</used-percent><mounted-on>
+/.mount/tmp
+</mounted-on></filesystem><filesystem><filesystem-name>
+tmpfs
+</filesystem-name><total-blocks format="668M">
+1368064
+</total-blocks><used-blocks format="2.8M">
+5664
+</used-blocks><available-blocks format="665M">
+1362400
+</available-blocks><used-percent>
+  0
+</used-percent><mounted-on>
+/.mount/mfs
+</mounted-on></filesystem></system-storage-information>

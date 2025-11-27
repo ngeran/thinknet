@@ -430,10 +430,12 @@ export default function ImageUploads({
         file_size: selectedFile.size  // ✅ NEW: Send file size in bytes
       };
  
-      console.log('📤 Sending validation request:', {
+console.log('📤 Sending validation request:', {
         hostname: payload.hostname,
         file_size: payload.file_size,
-        file_size_mb: (payload.file_size / (1024 * 1024)).toFixed(2)
+        file_size_mb: (payload.file_size / (1024 * 1024)).toFixed(2),
+        selectedFile: selectedFile,
+        selectedFileSize: selectedFile ? selectedFile.size : 'NO FILE'
       });
  
       // Send POST request to validation endpoint

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import List, Dict, AsyncGenerator
 from loguru import logger
 
-# POINT TO THE NEW SCRIPT
+# POINT TO THE ORIGINAL SCRIPT (NOW FIXED)
 SCRIPT_PATH = Path(
     "/app/app_gateway/py_scripts/scripts/jsnapy_runner/run_jsnapy_module.py"
 )

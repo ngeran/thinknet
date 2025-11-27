@@ -1,0 +1,12 @@
+tests_include:
+- test_storage_check
+
+test_storage_check:
+- command: show system storage
+- iterate:
+  xpath: //filesystem-information/filesystem
+  id: 'fs'
+  tests:
+  - list-not-empty: fs
+    info: "Test Succeeded!! Retrieved filesystem information from {{post['host-name']}}"
+    err: "Test Failed!! Could not retrieve filesystem information from {{post['host-name']}}"
