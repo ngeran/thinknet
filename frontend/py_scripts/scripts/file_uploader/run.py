@@ -391,6 +391,7 @@ class JuniperDeviceManager:
         """
         logger.info("Performing enhanced pre-flight checks...")
 
+        # Initialize dictionary with default values to prevent NameError
         analysis = {
             "file_size_bytes": 0,
             "required_space_bytes": 0,
@@ -405,9 +406,11 @@ class JuniperDeviceManager:
             file_size_bytes = os.path.getsize(local_file_path)
             required_space_bytes = int(file_size_bytes * SPACE_CHECK_SAFETY_MARGIN)
 
+            # Update the dictionary with actual values
             analysis["file_size_bytes"] = file_size_bytes
             analysis["required_space_bytes"] = required_space_bytes
 
+            # Only send storage analysis if file has actual size
             send_event(
                 "PROGRESS_UPDATE",
                 f"Analyzing storage requirements: {format_bytes_to_mb(required_space_bytes)} MB needed",

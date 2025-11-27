@@ -114,26 +114,46 @@ The application uses a dynamic navigation system where routes are defined in YAM
 - Frontend connects to WebSocket for live updates
 
 ### Worker Pattern
-Background jobs (network automation tasks) are handled by a dedicated FastAPI worker service that polls Redis for new tasks, ensuring the main API Gateway remains responsive.
+Background jobs (network automation tasks) are handled by a dedicated FastAPI worker service that polls Redis for new tasks, ensuring the main API Gateway remains responsive. Jobs use the pattern `ws_channel:job:{uuid}` for WebSocket communication and follow a specific event structure for status updates.
 
 ### Multi-network Architecture
 - `internal_net`: Internal service communication
 - `crpd-net`: External network for device communication (cRPD lab integration)
+
+### Router Priority System
+In `app_gateway/main.py`, router registration order is critical for route resolution. More specific routes must be registered before generic ones to prevent conflicts.
+
+### Job Processing Pattern
+Background jobs follow a specific communication pattern:
+1. Job queued to Redis with UUID
+2. Worker processes job and publishes status via WebSocket channel
+3. Stream processing distinguishes between JSON events (status updates) and stderr logs (command output)
+4. Frontend receives real-time updates through WebSocket connection
 
 ### JSNAPy Integration
 - JSNAPy configuration files stored in `shared/jsnapy/config/`
 - Test snapshots saved to `shared/jsnapy/snapshots/`
 - Debug logs available in `shared/jsnapy/logs/`
 
-## Testing
+## Development Workflow
 
-### Frontend Tests
+### Local Development Setup
+1. Start Redis and wait for it to be ready: `docker-compose up -d redis_broker`
+2. Start Rust backend: `cd backend && cargo run` (serves navigation YAMLs and WebSocket)
+3. Start API Gateway: `cd app_gateway && uvicorn main:app --host 0.0.0.0 --port 8000 --reload`
+4. Start Frontend: `cd frontend && npm run dev`
+5. Start Worker (for background jobs): `cd app_gateway && python worker.py`
+
+### Testing
+Integration testing requires all services running due to microservices architecture.
+
+#### Frontend Tests
 ```bash
 cd frontend
 npm test          # Run tests if configured
 ```
 
-### Backend Tests
+#### Backend Tests
 ```bash
 cd backend
 cargo test        # Run Rust tests
@@ -152,3 +172,20 @@ API documentation available at:
 3. **Dynamic Routes Not Loading**: Verify YAML files exist in `shared/data/`
 4. **JSNAPy Failures**: Check mount permissions for jsnapy directories
 5. **Permission Issues**: Ensure Docker volumes have proper read/write permissions
+6. **Route Conflicts**: Generic routes catching specific paths - check router registration order
+7. **Job Status Not Updating**: Verify WebSocket connection and Redis pub/sub connectivity
+8. **Worker Not Processing Jobs**: Check worker logs and Redis job queue status
+
+## Debugging Workflows
+
+### Cross-Service Debugging
+- Use Redis pub/sub channels to trace message flow between services
+- WebSocket connections can be monitored via browser dev tools (Network tab)
+- API Gateway logs show both HTTP requests and WebSocket client activity
+- Rust backend logs show WebSocket connection management and YAML serving
+
+### Job Processing Debugging
+1. Check job appears in Redis queue after API submission
+2. Monitor worker logs for job pickup and execution
+3. Verify WebSocket channel `ws_channel:job:{uuid}` receives status updates
+4. Check frontend receives real-time job status updates

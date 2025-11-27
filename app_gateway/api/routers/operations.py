@@ -126,7 +126,7 @@ BACKUP_RESTORE_SCRIPT_PATH = Path(
     "/app/app_gateway/py_scripts/scripts/backup_and_restore/run. py"
 )
 JSNAPY_RUNNER_SCRIPT_PATH = Path(
-    "/app/app_gateway/py_scripts/scripts/jsnapy_runner/simple_storage_check.py"
+    "/app/app_gateway/py_scripts/scripts/jsnapy_runner/run_jsnapy_module.py"
 )
 
 # Global Redis connection (singleton pattern)
