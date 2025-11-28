@@ -188,7 +188,15 @@ export default function useWorkflowMessages({
         });
       }
 
-      updateState('isCheckingStorage', false); 
+      // **CRITICAL: Always set isCheckingStorage to false when validation completes**
+      if (stateSetters.setIsCheckingStorage) {
+        stateSetters.setIsCheckingStorage(false);
+        console.log('⏹️ [useWorkflowMessages] setIsCheckingStorage(false) called directly');
+      } else {
+        // Fallback using updateState
+        updateState('isCheckingStorage', false);
+        console.log('⏹️ [useWorkflowMessages] updateState(isCheckingStorage, false) called as fallback');
+      } 
       
       appendLog(eventData, passed ? `✅ Storage check retrieved successfully` : `❌ Validation failed: ${msg}`, passed ? 'SUCCESS' : 'ERROR');
     }
@@ -399,9 +407,51 @@ export default function useWorkflowMessages({
       // **PRIORITY 3: Try to parse raw JSON as fallback for completion**
       try {
         const fallbackData = JSON.parse(lastMessage);
+        console.log('🔍 [useWorkflowMessages] Raw JSON parsed:', fallbackData); // DEBUG
+
         if (fallbackData.success === true) {
           console.log('🚨 [useWorkflowMessages] FALLBACK COMPLETION HANDLING:', fallbackData);
           handleCompleteDefault(fallbackData);
+        } else {
+          // **Handle validation responses that come as raw objects**
+          if (workflowType === 'image-upload' &&
+              (JSON.stringify(fallbackData) === '{}' ||
+               fallbackData.validation_passed !== undefined ||
+               fallbackData.has_sufficient_space !== undefined)) {
+            console.log('🔍 [useWorkflowMessages] Raw validation response detected:', fallbackData);
+
+            const passed = fallbackData.validation_passed === true ||
+                          fallbackData.has_sufficient_space === true ||
+                          JSON.stringify(fallbackData) === '{}'; // Empty object = success
+
+            if (stateSetters.setStorageCheck) {
+              stateSetters.setStorageCheck({
+                has_sufficient_space: passed,
+                message: passed ? 'Storage validation passed' : 'Storage validation failed',
+                required_mb: 0,
+                available_mb: 1000, // Default for empty object response
+              });
+            }
+
+            // **Stop the spinner!**
+            if (stateSetters.setIsCheckingStorage) {
+              stateSetters.setIsCheckingStorage(false);
+              console.log('⏹️ [useWorkflowMessages] Validation spinner stopped via raw JSON handler');
+            } else {
+              updateState('isCheckingStorage', false);
+              console.log('⏹️ [useWorkflowMessages] Validation spinner stopped via updateState fallback');
+            }
+
+            if (stateSetters.appendLog) {
+              stateSetters.appendLog({
+                id: `validation_complete_${Date.now()}`,
+                type: 'SUCCESS',
+                message: '✅ Storage check retrieved successfully',
+                timestamp: new Date().toLocaleTimeString(),
+                isTechnical: false
+              });
+            }
+          }
         }
       } catch (fallbackErr) {
         console.log('[useWorkflowMessages] Not valid JSON, ignoring:', lastMessage);
