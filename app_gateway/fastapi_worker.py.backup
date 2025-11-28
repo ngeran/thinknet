@@ -72,9 +72,6 @@ RECOGNIZED_EVENT_TYPES: Set[str] = {
     "STEP_PROGRESS",
     "DEVICE_PROGRESS",
     "UPGRADE_PROGRESS",
-    "PROGRESS_UPDATE",  # ← ADDED: Fix for progress bar double-escaping issue
-    "UPLOAD_COMPLETE",  # ← ADDED: Fix for completion events in stderr
-    "UPLOAD_START",     # ← ADDED: Fix for upload start events
 }
  
 # =============================================================================
