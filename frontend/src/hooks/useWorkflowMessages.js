@@ -21,6 +21,7 @@
 
 import { useEffect, useCallback, useRef } from 'react';
 import { processLogMessage, extractLogPayload } from '@/lib/logProcessor';
+import { validateMessage } from '@/schemas/messageSchemas';
 
 // =============================================================================
 // SECTION 1: CONFIGURATION
@@ -322,6 +323,19 @@ export default function useWorkflowMessages({
     try {
       const eventData = extractLogPayload(lastMessage);
       const eventType = eventData.event_type;
+
+      // **PHASE 2 ENHANCEMENT: Message validation using schemas**
+      const validation = validateMessage(eventData, eventType);
+      if (!validation.isValid) {
+        console.warn(`⚠️ [useWorkflowMessages] Invalid message structure:`, {
+          eventType,
+          errors: validation.errors,
+          eventData
+        });
+        // Still process the message for now, but log the issue
+      } else {
+        console.log(`✅ [useWorkflowMessages] Message validation passed:`, eventType);
+      }
 
       console.log(`📨 [useWorkflowMessages] Processing message:`, { eventType, eventData }); // DEBUG
 
