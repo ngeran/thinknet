@@ -115,13 +115,13 @@ export default function ImageUploads({
   const stateSetters = useMemo(() => ({
     // Mapped keys for 'image-upload' config in hook - MUST MATCH stateMap in useWorkflowMessages
     uploadJobId: setUploadJobId,
-    uploadProgress: setUploadProgress, 
+    uploadProgress: setUploadProgress,
     isUploading: setIsUploading,
     uploadComplete: setUploadComplete,
     uploadError: setUploadError,
     terminalLogs: setTerminalLogs,
     // Custom keys specific to this component's logic
-    setStorageCheck, 
+    setStorageCheck,
     setStorageCheckError,
     setIsCheckingStorage
   }), []);
@@ -137,49 +137,8 @@ export default function ImageUploads({
   });
 
   // ===========================================================================
-  // SECTION 5A: DIRECT PROGRESS HANDLING FALLBACK
+  // SECTION 5A: AUTO-SCROLL LOGS
   // ===========================================================================
-
-  /**
-   * DIRECT FIX: Handle progress updates directly as a fallback
-   * This ensures progress updates work even if the hook has issues
-   */
-  useEffect(() => {
-    if (!lastMessage) return;
-
-    try {
-      const eventData = JSON.parse(lastMessage);
-      
-      // Handle PROGRESS_UPDATE events directly
-      if (eventData.event_type === 'PROGRESS_UPDATE') {
-        const progress = eventData.data?.progress;
-        console.log('🔄 [DIRECT] PROGRESS_UPDATE received:', progress, '%'); // DEBUG
-        
-        if (typeof progress === 'number' && progress >= 0 && progress <= 100) {
-          console.log('✅ [DIRECT] Setting upload progress:', progress, '%'); // DEBUG
-          setUploadProgress(progress);
-        }
-      }
-      
-      // Handle completion events directly
-      if (eventData.event_type === 'UPLOAD_COMPLETE' || eventData.success === true) {
-        console.log('✅ [DIRECT] Upload complete detected'); // DEBUG
-        setUploadProgress(100);
-        setUploadComplete(true);
-        setIsUploading(false);
-      }
-      
-      // Handle error events directly
-      if (eventData.event_type === 'ERROR') {
-        console.log('❌ [DIRECT] Error detected:', eventData.message); // DEBUG
-        setUploadError(eventData.message);
-        setIsUploading(false);
-      }
-      
-    } catch (err) {
-      // Not JSON, ignore - this is normal for some log messages
-    }
-  }, [lastMessage]);
 
   // Auto-scroll logs
   useEffect(() => {
@@ -264,15 +223,11 @@ export default function ImageUploads({
   const handleUpload = async () => {
     if (!selectedFile || !parameters.hostname || !parameters.username || !parameters.password) return;
 
-    // FIX: Explicitly clear the storage check states before starting upload.
-    setIsCheckingStorage(false);
-    setStorageCheckError(null);
-    
     setIsUploading(true);
     setUploadError(null);
     setUploadProgress(0);
     setUploadComplete(false);
-    
+
     setTerminalLogs(prev => [...prev, {
       id: 'upload_start',
       type: 'INFO',
@@ -438,7 +393,7 @@ export default function ImageUploads({
 
       {/* Main Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        
+
         {/* Step 1: File */}
         <Card className={currentStep >= UPLOAD_STEPS.FILE_SELECTION ? 'border-gray-900 shadow-lg' : 'border-gray-200'}>
           <CardHeader className="pb-4 bg-gray-50/50">
@@ -531,7 +486,7 @@ export default function ImageUploads({
                     </div>
                 </div>
               )}
-              
+
               {(storageCheckError || (storageCheck && !storageCheck.has_sufficient_space)) && (
                  <Button onClick={startStorageCheck} disabled={isCheckingStorage} variant="outline" size="sm" className="w-full mt-3">
                    Retry Validation
@@ -556,7 +511,7 @@ export default function ImageUploads({
               ) : (
                 <Button onClick={handleReset} className="w-full bg-gray-900">Upload Another File</Button>
               )}
-              
+
               {uploadError && (
                 <Alert className="bg-red-50 border-red-200">
                   <AlertCircle className="h-4 w-4 text-red-600" />

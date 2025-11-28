@@ -114,15 +114,16 @@ export default function useWorkflowMessages({
    */
   const updateState = useCallback((key, value) => {
     const specificKey = config.stateMap[key] || key;
-    
-    console.log(`🛠️ [useWorkflowMessages] updateState called:`, { 
-      workflowType, 
-      key, 
-      specificKey, 
+
+    console.log(`🛠️ [useWorkflowMessages] updateState called:`, {
+      workflowType,
+      key,
+      specificKey,
       value,
+      stateMap: config.stateMap,
       availableSetters: Object.keys(stateSetters)
     }); // DEBUG
-    
+
     // Use the provided setter function
     if (stateSetters[specificKey]) {
       console.log(`✅ [useWorkflowMessages] Calling setter for: ${specificKey} with value:`, value); // DEBUG
@@ -195,56 +196,39 @@ export default function useWorkflowMessages({
 
   /**
    * Default handler for PROGRESS_UPDATE.
-   * Implements the CRITICAL FIX: ref-based progress tracking and debouncing.
+   * Simplified for better reliability - immediate updates without complex debouncing.
    */
   const handleProgressDefault = useCallback((eventData) => {
     const rawProgress = eventData.data?.progress ?? eventData.progress;
-    
+
     // 1. Numeric Coercion and Validation
     const progress = parseFloat(rawProgress);
 
-    console.log(`🔄 [useWorkflowMessages] PROGRESS EVENT:`, { 
-      rawProgress, 
-      progress, 
+    console.log(`🔄 [useWorkflowMessages] PROGRESS EVENT:`, {
+      rawProgress,
+      progress,
       eventType: eventData.event_type,
-      message: eventData.message 
+      message: eventData.message,
+      workflowType,
+      stateMap: config.stateMap
     }); // DEBUG
 
-    if (!Number.isFinite(progress)) {
+    if (!Number.isFinite(progress) || progress < 0 || progress > 100) {
         console.log('❌ [useWorkflowMessages] Invalid progress value:', rawProgress); // DEBUG
         return;
     }
-    
-    // 2. CRITICAL FIX: Always store the maximum progress value seen so far.
-    // This captures intermediate progress during an extremely fast burst.
-    latestProgressRef.current = Math.max(latestProgressRef.current, progress);
 
-    console.log(`📈 [useWorkflowMessages] Latest progress ref updated to:`, latestProgressRef.current); // DEBUG
-
-    // 3. Priority 1: Update to 100% immediately (clears all pending updates)
-    if (progress >= 100.0) {
-        if (progressTimeoutRef.current) {
-            clearTimeout(progressTimeoutRef.current);
-            progressTimeoutRef.current = null;
-        }
-        console.log('✅ [useWorkflowMessages] Setting progress to 100% immediately'); // DEBUG
-        updateState('progress', 100.0);
-        latestProgressRef.current = 100.0; // Reset ref for the next job
-        return;
+    // Clear any pending timeout for immediate update
+    if (progressTimeoutRef.current) {
+        clearTimeout(progressTimeoutRef.current);
+        progressTimeoutRef.current = null;
     }
 
-    // 4. Priority 2: Implement Debouncing
-    // If a timeout is NOT already scheduled, schedule one to fire after 100ms.
-    if (!progressTimeoutRef.current) {
-        console.log('⏰ [useWorkflowMessages] Scheduling progress update'); // DEBUG
-        progressTimeoutRef.current = setTimeout(() => {
-            const valueToUpdate = latestProgressRef.current;
-            console.log(`🚀 [useWorkflowMessages] Actually updating progress to: ${valueToUpdate}%`); // DEBUG
-            updateState('progress', valueToUpdate);
-            progressTimeoutRef.current = null;
-        }, PROGRESS_DEBOUNCE_MS);
-    }
-  }, [updateState]);
+    // Update progress immediately
+    console.log(`📈 [useWorkflowMessages] Updating progress to: ${progress}%`); // DEBUG
+    updateState('progress', progress);
+
+  }, [updateState, workflowType, config]);
 
   /**
    * Default handler for OPERATION_COMPLETE/UPLOAD_COMPLETE.
@@ -253,26 +237,50 @@ export default function useWorkflowMessages({
     const success = eventData.success === true || (eventData.data?.success !== false && eventData.data?.status !== 'FAILED');
     const msg = eventData.message || eventData.details?.summary || (success ? 'Operation Complete' : 'Operation Failed');
 
-    console.log(`🏁 [useWorkflowMessages] COMPLETE EVENT:`, { success, msg }); // DEBUG
+    console.log(`🏁 [useWorkflowMessages] COMPLETE EVENT HANDLER CALLED:`, {
+      success,
+      msg,
+      eventData,
+      workflowType,
+      stateMap: config.stateMap,
+      stateSetters: Object.keys(stateSetters)
+    }); // DEBUG
 
-    // Ensure state reflects completion
-    updateState('isRunning', false);
+    // **FORCE immediate state updates for completion**
+    console.log('🔧 [useWorkflowMessages] FORCING COMPLETION STATE UPDATES:');
+
+    // Set progress to 100% first
     updateState('progress', 100);
+    console.log('✅ [useWorkflowMessages] Progress set to 100%');
+
+    // Set completion status
     updateState('complete', success);
-    
+    console.log(`✅ [useWorkflowMessages] Complete set to: ${success}`);
+
+    // Stop running state
+    updateState('isRunning', false);
+    console.log('✅ [useWorkflowMessages] isRunning set to false');
+
     if (!success) {
       updateState('error', msg);
+      console.log(`❌ [useWorkflowMessages] Error set: ${msg}`);
     }
 
-    // Clear any pending progress debounce timeout and reset ref
+    // Clear any pending progress timeout
     if (progressTimeoutRef.current) {
         clearTimeout(progressTimeoutRef.current);
         progressTimeoutRef.current = null;
+        console.log('🧹 [useWorkflowMessages] Progress timeout cleared');
     }
-    latestProgressRef.current = 0; // Reset for a new run
+    latestProgressRef.current = 0; // Reset for next run
 
+    // Add completion log
     appendLog(eventData, success ? `✅ ${msg}` : `❌ ${msg}`, success ? 'SUCCESS' : 'ERROR');
-  }, [updateState, appendLog]);
+    console.log('📝 [useWorkflowMessages] Completion log added');
+
+    console.log('🎉 [useWorkflowMessages] COMPLETION HANDLER FINISHED');
+
+  }, [updateState, appendLog, workflowType, config, stateSetters]);
 
   // ===========================================================================
   // SECTION 5: LIFECYCLE MANAGEMENT & MAIN LOOP
@@ -301,24 +309,40 @@ export default function useWorkflowMessages({
     if (lastMessage === lastProcessedStringRef.current) return;
     lastProcessedStringRef.current = lastMessage;
 
+    console.log(`🔍 [useWorkflowMessages] Raw message received:`, lastMessage); // DEBUG
+
     try {
       const eventData = extractLogPayload(lastMessage);
       const eventType = eventData.event_type;
 
       console.log(`📨 [useWorkflowMessages] Processing message:`, { eventType, eventData }); // DEBUG
 
+      // **PRIORITY 1: Handle final success messages that have no event_type**
       if (!eventType && eventData.success === true) {
+         console.log('✅ [useWorkflowMessages] FINAL SUCCESS MESSAGE DETECTED:', eventData); // DEBUG
          handleCompleteDefault(eventData);
          return;
       }
 
-      if (!eventType || !config.recognizedEvents.has(eventType)) {
-        console.log(`⚠️ [useWorkflowMessages] Unrecognized or missing event type: ${eventType}`); // DEBUG
+      // **PRIORITY 2: Handle completion events with event_type**
+      if (eventType === 'OPERATION_COMPLETE' || eventType === 'UPLOAD_COMPLETE') {
+        console.log('🏁 [useWorkflowMessages] COMPLETION EVENT DETECTED:', eventData); // DEBUG
+        handleCompleteDefault(eventData);
         return;
       }
 
-      const sig = eventData.data?.sequence 
-        ? `${eventType}-${eventData.data.sequence}` 
+      if (!eventType || !config.recognizedEvents.has(eventType)) {
+        console.log(`⚠️ [useWorkflowMessages] Unrecognized or missing event type: ${eventType}`); // DEBUG
+        // Still try to handle as completion if it has success flag
+        if (eventData.success === true) {
+          console.log('🔄 [useWorkflowMessages] Fallback completion handling for:', eventData);
+          handleCompleteDefault(eventData);
+        }
+        return;
+      }
+
+      const sig = eventData.data?.sequence
+        ? `${eventType}-${eventData.data.sequence}`
         : `${eventType}-${eventData.timestamp || Date.now()}`;
 
       if (processedEventsRef.current.has(sig)) {
@@ -335,7 +359,6 @@ export default function useWorkflowMessages({
         case 'PROGRESS_UPDATE':
           handleProgressDefault(eventData);
           break;
-        case 'OPERATION_COMPLETE':
         case 'UPLOAD_COMPLETE':
           handleCompleteDefault(eventData);
           break;
@@ -345,6 +368,24 @@ export default function useWorkflowMessages({
            updateState('isRunning', false);
            break;
         case 'LOG_MESSAGE':
+          // **CRITICAL FIX: Check if LOG_MESSAGE contains double-escaped final success**
+          if (eventData.message && typeof eventData.message === 'string') {
+            try {
+              const innerData = JSON.parse(eventData.message);
+              console.log('🔍 [useWorkflowMessages] LOG_MESSAGE contains parsed JSON:', innerData); // DEBUG
+
+              if (innerData.success === true) {
+                console.log('🎉 [useWorkflowMessages] FOUND DOUBLE-ESCAPED FINAL SUCCESS!'); // DEBUG
+                handleCompleteDefault(innerData);
+                return;
+              }
+            } catch (parseErr) {
+              // Not valid JSON, continue as normal LOG_MESSAGE
+            }
+          }
+          // Normal LOG_MESSAGE handling
+          appendLog(eventData);
+          break;
         case 'UPLOAD_START':
         case 'STEP_START':
         default:
@@ -353,15 +394,26 @@ export default function useWorkflowMessages({
       }
 
     } catch (err) {
-      console.error('[useWorkflowMessages] Parsing Error:', err);
+      console.error('[useWorkflowMessages] Parsing Error:', err, 'Raw message:', lastMessage);
+
+      // **PRIORITY 3: Try to parse raw JSON as fallback for completion**
+      try {
+        const fallbackData = JSON.parse(lastMessage);
+        if (fallbackData.success === true) {
+          console.log('🚨 [useWorkflowMessages] FALLBACK COMPLETION HANDLING:', fallbackData);
+          handleCompleteDefault(fallbackData);
+        }
+      } catch (fallbackErr) {
+        console.log('[useWorkflowMessages] Not valid JSON, ignoring:', lastMessage);
+      }
     }
   }, [
-    lastMessage, 
-    config, 
-    handlePreCheckDefault, 
-    handleProgressDefault, 
-    handleCompleteDefault, 
-    appendLog, 
+    lastMessage,
+    config,
+    handlePreCheckDefault,
+    handleProgressDefault,
+    handleCompleteDefault,
+    appendLog,
     updateState
   ]);
 
