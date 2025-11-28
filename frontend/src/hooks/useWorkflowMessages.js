@@ -387,6 +387,13 @@ export default function useWorkflowMessages({
                 handleCompleteDefault(innerData);
                 return;
               }
+
+              // **CRITICAL FIX: Check if LOG_MESSAGE contains double-escaped PROGRESS_UPDATE**
+              if (innerData.event_type === 'PROGRESS_UPDATE') {
+                console.log('🔄 [useWorkflowMessages] FOUND DOUBLE-ESCAPED PROGRESS_UPDATE!'); // DEBUG
+                handleProgressDefault(innerData);
+                return;
+              }
             } catch (parseErr) {
               // Not valid JSON, continue as normal LOG_MESSAGE
             }
