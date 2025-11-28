@@ -235,6 +235,101 @@ const EVENT_SCHEMAS = {
         message: { type: 'string' }
       }
     }
+  },
+
+  // =============================================================================
+  // TEMPLATE DEPLOYMENT EVENTS - Template deployment specific events
+  // =============================================================================
+
+  // Template deployment start events - initialization of template deployment
+  TEMPLATE_DEPLOY_START: {
+    extends: BASE_MESSAGE_SCHEMA,
+    required: ['event_type', 'timestamp', 'job_id'],
+    optional: ['data', 'message'],
+    data: {
+      required: ['template_name', 'template_path', 'target_device'],
+      optional: ['template_vars', 'config_lines', 'deployment_type'],
+      properties: {
+        template_name: { type: 'string' },
+        template_path: { type: 'string' },
+        target_device: { type: 'string' },
+        template_vars: { type: 'object' },
+        config_lines: { type: 'number' },
+        deployment_type: { type: 'string', enum: ['TEMPLATE', 'CONFIG'] }
+      }
+    }
+  },
+
+  // Template deployment progress events - template deployment step progress
+  TEMPLATE_DEPLOY_PROGRESS: {
+    extends: BASE_MESSAGE_SCHEMA,
+    required: ['event_type', 'timestamp', 'job_id'],
+    optional: ['data', 'message'],
+    data: {
+      required: ['step_name', 'progress'],
+      optional: ['step_number', 'total_steps', 'details', 'duration_ms'],
+      properties: {
+        step_name: { type: 'string' },
+        progress: { type: 'number', min: 0, max: 100 },
+        step_number: { type: 'number', min: 1 },
+        total_steps: { type: 'number', min: 1 },
+        details: { type: 'object' },
+        duration_ms: { type: 'number' }
+      }
+    }
+  },
+
+  // Template deployment completion events - final status of template deployment
+  TEMPLATE_DEPLOY_COMPLETE: {
+    extends: BASE_MESSAGE_SCHEMA,
+    required: ['event_type', 'timestamp', 'job_id', 'success'],
+    optional: ['data', 'message', 'level'],
+    data: {
+      required: ['deployment_result'],
+      optional: ['config_applied', 'diff_data', 'validation_result', 'details'],
+      properties: {
+        deployment_result: { type: 'string', enum: ['SUCCESS', 'FAILED', 'PARTIAL'] },
+        config_applied: { type: 'boolean' },
+        diff_data: { type: 'string' },
+        validation_result: { type: 'string', enum: ['PASSED', 'FAILED', 'WARNING'] },
+        details: { type: 'object' }
+      }
+    }
+  },
+
+  // Template validation result events - configuration validation results
+  TEMPLATE_VALIDATION_RESULT: {
+    extends: BASE_MESSAGE_SCHEMA,
+    required: ['event_type', 'timestamp', 'job_id'],
+    optional: ['data', 'message'],
+    data: {
+      required: ['validation_passed'],
+      optional: ['validation_type', 'errors', 'warnings', 'syntax_check'],
+      properties: {
+        validation_passed: { type: 'boolean' },
+        validation_type: { type: 'string', enum: ['SYNTAX', 'SEMANTIC', 'FULL'] },
+        errors: { type: 'array', items: { type: 'string' } },
+        warnings: { type: 'array', items: { type: 'string' } },
+        syntax_check: { type: 'object' }
+      }
+    }
+  },
+
+  // Template diff generation events - configuration diff generation results
+  TEMPLATE_DIFF_GENERATED: {
+    extends: BASE_MESSAGE_SCHEMA,
+    required: ['event_type', 'timestamp', 'job_id'],
+    optional: ['data', 'message'],
+    data: {
+      required: ['diff_available'],
+      optional: ['diff_content', 'diff_size', 'changes_count'],
+      properties: {
+        diff_available: { type: 'boolean' },
+        diff_content: { type: 'string' },
+        diff_size: { type: 'number' },
+        changes_count: { type: 'number' }
+      }
+    }
   }
 };
 
