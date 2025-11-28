@@ -20,9 +20,12 @@ import os
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple, Any, Dict, cast, List, Set
- 
+
 import redis
 import redis.asyncio as aioredis
+
+# Phase 2 Enhancement: Import validation methods
+from validation_methods import event_validator
  
 # =============================================================================
 # SECTION 1: LOGGING CONFIGURATION
@@ -75,6 +78,12 @@ RECOGNIZED_EVENT_TYPES: Set[str] = {
     "PROGRESS_UPDATE",  # ← ADDED: Fix for progress bar double-escaping issue
     "UPLOAD_COMPLETE",  # ← ADDED: Fix for completion events in stderr
     "UPLOAD_START",     # ← ADDED: Fix for upload start events
+    # TEMPLATE DEPLOYMENT EVENTS - Phase 2 Architecture
+    "TEMPLATE_DEPLOY_START",
+    "TEMPLATE_DEPLOY_PROGRESS",
+    "TEMPLATE_DEPLOY_COMPLETE",
+    "TEMPLATE_VALIDATION_RESULT",
+    "TEMPLATE_DIFF_GENERATED",
 }
  
 # =============================================================================
@@ -264,6 +273,14 @@ class StreamProcessor:
             event_data = self.parse_and_validate_event(line)
  
             if event_data:
+                # Phase 2 Enhancement: Validate event structure before publishing
+                if event_validator.validate_event_structure(event_data):
+                    logger.debug(f"[PHASE2] Event validation passed: {event_data.get('event_type', 'UNKNOWN')}")
+                    event_validator.validation_stats["validation_passed"] += 1
+                else:
+                    logger.warning(f"[PHASE2] Event validation FAILED: {event_data.get('event_type', 'UNKNOWN')} - Event dropped")
+                    return None
+
                 # Add job_id if not already present
                 if "job_id" not in event_data:
                     event_data["job_id"] = self.job_id
@@ -323,7 +340,16 @@ class StreamProcessor:
         embedded_event = self.extract_embedded_event(line)
  
         if embedded_event:
-            if "job_id" not in embedded_event:
+            # Phase 2 Enhancement: Validate embedded event structure before publishing
+            if event_validator.validate_event_structure(embedded_event):
+                logger.debug(f"[PHASE2] Embedded event validation passed: {embedded_event.get('event_type', 'UNKNOWN')}")
+                event_validator.validation_stats["validation_passed"] += 1
+            else:
+                logger.warning(f"[PHASE2] Embedded event validation FAILED: {embedded_event.get('event_type', 'UNKNOWN')} - Event dropped")
+                # Fall through to treat as log message instead of dropping entirely
+                embedded_event = None
+
+            if embedded_event and "job_id" not in embedded_event:
                 embedded_event["job_id"] = self.job_id
  
             self.sequence_number += 1
@@ -768,6 +794,7 @@ async def job_consumer() -> None:
     logger.info(f"📦 Queue: {REDIS_JOB_QUEUE}")
     logger.info(f"📡 Channel Prefix: {REDIS_CHANNEL_PREFIX}")
     logger.info(f"🎯 Recognized Events: {', '.join(sorted(RECOGNIZED_EVENT_TYPES))}")
+    logger.info("🔍 Phase 2 Validation: ENABLED - Event structure validation active")
     logger.info(f"🔧 Version: 2.2.0 (Channel Verification & Enhanced Logging)")
     logger.info("=" * 80)
     logger.info(f"⏳ Monitoring queue: {REDIS_JOB_QUEUE}")
