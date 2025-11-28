@@ -72,6 +72,36 @@ const WORKFLOW_CONFIGS = {
       progress: 'progress',
       logs: 'jobOutput'
     }
+  },
+
+  /**
+   * Strategy for Template Deployments (e.g., Templates.jsx) - Phase 2 Architecture
+   */
+  'template-deploy': {
+    recognizedEvents: new Set([
+      'TEMPLATE_DEPLOY_START',
+      'TEMPLATE_DEPLOY_PROGRESS',
+      'TEMPLATE_DEPLOY_COMPLETE',
+      'TEMPLATE_VALIDATION_RESULT',
+      'TEMPLATE_DIFF_GENERATED',
+      'STEP_COMPLETE',
+      'STEP_PROGRESS',
+      'OPERATION_COMPLETE',
+      'OPERATION_START',
+      'LOG_MESSAGE',
+      'ERROR'
+    ]),
+    stateMap: {
+      jobId: 'deploymentJobId',
+      progress: 'deploymentProgress',
+      isRunning: 'isDeploying',
+      complete: 'deploymentComplete',
+      error: 'deploymentError',
+      logs: 'deploymentLogs',
+      activeStep: 'activeDeploymentStep',
+      diffData: 'diffData',
+      deploymentResult: 'deploymentResult'
+    }
   }
 };
 
