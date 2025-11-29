@@ -185,13 +185,15 @@ export function processLogMessage(rawEvent) {
  
       // FIXED: Replaced payload.data?.required_mb with explicit checks
       if (payload.data &&
-          payload.data.required_mb !== undefined &&
           payload.data.available_mb !== undefined) {
+        const requiredText = payload.data.required_mb !== undefined && payload.data.required_mb !== null
+          ? 'Required: ' + payload.data.required_mb.toFixed(2) + ' MB\n'
+          : '';
         message = '✅ Storage validation passed\n' +
-                  '   Required: ' + payload.data. required_mb. toFixed(2) + ' MB\n' +
+                  '   ' + requiredText +
                   '   Available: ' + payload.data.available_mb.toFixed(2) + ' MB';
       } else if (payload.message) {
-        message = payload. message;
+        message = payload.message;
       } else {
         message = '✅ Storage validation passed';
       }
@@ -200,11 +202,11 @@ export function processLogMessage(rawEvent) {
       uiType = 'ERROR';
  
       if (payload.message) {
-        message = payload. message;
+        message = payload.message;
       } else if (payload.data &&
                  payload.data.results_by_host &&
                  payload.data. results_by_host[0] &&
-                 payload. data.results_by_host[0].test_results &&
+                 payload.data.results_by_host[0].test_results &&
                  payload.data. results_by_host[0]. test_results[0] &&
                  payload.data. results_by_host[0]. test_results[0].error) {
         message = '❌ ' + payload.data.results_by_host[0].test_results[0].error;
@@ -248,7 +250,7 @@ export function processLogMessage(rawEvent) {
     uiType = 'STEP_PROGRESS';
  
     if (payload.message) {
-      message = payload. message;
+      message = payload.message;
     } else if (payload.data. description || payload.data.name) {
       const stepNum = payload.data.step || '';
       const stepName = payload.data.description || payload.data.name;
@@ -287,7 +289,7 @@ export function processLogMessage(rawEvent) {
  
   else if (eventType === 'OPERATION_COMPLETE') {
     // FIXED: Replaced payload.data?.success with explicit checks
-    const dataSuccess = payload.data && payload. data.success;
+    const dataSuccess = payload.data && payload.data.success;
     const dataStatus = payload.data && payload.data.status;
     const success = dataSuccess !== false && dataStatus !== 'FAILED';
  
@@ -339,10 +341,10 @@ export function processLogMessage(rawEvent) {
  
     if (payload.message) {
       message = payload.message;
-    } else if (payload. data && payload.data.error) {
+    } else if (payload.data && payload.data.error) {
       message = '❌ ' + payload.data.error;
     } else if (payload.data && payload.data.message) {
-      message = '❌ ' + payload. data.message;
+      message = '❌ ' + payload.data.message;
     } else {
       message = '❌ An error occurred';
     }

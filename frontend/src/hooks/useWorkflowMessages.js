@@ -75,6 +75,34 @@ const WORKFLOW_CONFIGS = {
   },
 
   /**
+   * Strategy for JSNAPy Validation (e.g., Validation.jsx) - Phase 2 Architecture
+   */
+  'validation': {
+    recognizedEvents: new Set([
+      'STEP_START',
+      'STEP_COMPLETE',
+      'OPERATION_COMPLETE',
+      'OPERATION_START',
+      'PRE_CHECK_COMPLETE',
+      'LOG_MESSAGE',
+      'ERROR',
+      'VALIDATION_COMPLETE',
+      'TEST_RESULT',
+      'SNAPSHOT_COMPLETE'
+    ]),
+    stateMap: {
+      jobId: 'jobId',
+      progress: 'validationProgress',
+      isRunning: 'isValidating',
+      complete: 'validationComplete',
+      error: 'validationError',
+      logs: 'validationLogs',
+      activeStep: 'activeValidationStep',
+      validationResults: 'validationResults'
+    }
+  },
+
+  /**
    * Strategy for Template Deployments (e.g., Templates.jsx) - Phase 2 Architecture
    */
   'template-deploy': {

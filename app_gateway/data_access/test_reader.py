@@ -4,8 +4,8 @@ from typing import Dict, List, Optional
 from loguru import logger
 
 # --- Updated Base Directory ---
-# Points to: atlas/thinknet/shared/data/tests
-TESTS_BASE_DIR = Path("/app/shared/data/tests")
+# Points to: atlas/thinknet/shared/jsnapy/testfiles
+TESTS_BASE_DIR = Path("/app/shared/jsnapy/testfiles")
 
 
 def scan_tests_directory() -> Dict:
@@ -30,6 +30,7 @@ def scan_tests_directory() -> Dict:
         for file in files:
             if file.endswith(".yml"):
                 file_path = Path(root) / file
+                # Create relative path from the testfiles directory
                 relative_path = file_path.relative_to(TESTS_BASE_DIR.parent)
                 inventory["tests"].append(
                     {
@@ -50,9 +51,13 @@ def scan_tests_directory() -> Dict:
 def get_test_by_path(test_path: str) -> Optional[Dict]:
     """
     Get a specific test file by its relative path
-    (e.g., 'tests/protocols/test_bgp_summary.yml')
+    (e.g., 'test_bgp_summary.yml' or 'testfiles/test_bgp_summary.yml')
     """
-    full_path = TESTS_BASE_DIR.parent / test_path
+    # Handle both relative paths and direct filenames
+    if test_path.startswith('testfiles/'):
+        full_path = TESTS_BASE_DIR.parent / test_path
+    else:
+        full_path = TESTS_BASE_DIR / test_path
     if not full_path.exists() or not full_path.suffix.lower() == ".yml":
         logger.warning(f"Test file not found: {full_path}")
         return None
