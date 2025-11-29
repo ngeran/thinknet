@@ -32,6 +32,7 @@ RECOGNIZED_EVENT_TYPES: Set[str] = {
     "OPERATION_COMPLETE",
     "OPERATION_START",
     "STEP_COMPLETE",
+    "STEP_START",
     "STEP_PROGRESS",
     "DEVICE_PROGRESS",
     "UPGRADE_PROGRESS",
@@ -156,7 +157,7 @@ class EventValidator:
             elif event_type == "LOG_MESSAGE":
                 return self._validate_log_message(event_data)
 
-            elif event_type in ["STEP_COMPLETE", "STEP_PROGRESS", "DEVICE_PROGRESS", "UPGRADE_PROGRESS"]:
+            elif event_type in ["STEP_COMPLETE", "STEP_START", "STEP_PROGRESS", "DEVICE_PROGRESS", "UPGRADE_PROGRESS"]:
                 return self._validate_step_event(event_data)
 
             # For other event types, perform basic validation only
@@ -188,16 +189,19 @@ class EventValidator:
 
     def _validate_completion_event(self, event_data: Dict[str, Any]) -> bool:
         """Validate completion event structure."""
-        if "success" not in event_data:
-            self._record_validation_error("completion_missing_success")
-            return False
+        # Be more lenient with completion events - they can come in different formats
+        # Some have success as a boolean, others have it embedded in the structure
 
-        success = event_data["success"]
-        if not isinstance(success, bool):
-            validation_logger.debug(f"[VALIDATION] Invalid success value: {success}")
-            self._record_validation_error("completion_invalid_success")
-            return False
+        # If success field exists, validate it
+        if "success" in event_data:
+            success = event_data["success"]
+            if not isinstance(success, bool):
+                validation_logger.debug(f"[VALIDATION] Invalid success value: {success}")
+                # Don't fail the validation - just log it and continue
+                # The frontend can handle various completion formats
+                pass
 
+        # Always allow completion events to pass through
         return True
 
     def _validate_template_deploy_start(self, event_data: Dict[str, Any]) -> bool:
@@ -300,16 +304,18 @@ class EventValidator:
 
     def _validate_step_event(self, event_data: Dict[str, Any]) -> bool:
         """Validate step-based event structure."""
-        if "data" not in event_data:
-            self._record_validation_error("step_event_missing_data")
-            return False
+        # Be more lenient with step events - they come from different sources
+        # and may not always have the expected structure
 
-        # Basic validation for step events
-        data = event_data["data"]
-        if not isinstance(data, dict):
-            self._record_validation_error("step_event_invalid_data")
-            return False
+        # If data field exists, validate it's a dict
+        if "data" in event_data:
+            data = event_data["data"]
+            if not isinstance(data, dict):
+                validation_logger.debug(f"[VALIDATION] Step event data is not a dict: {type(data)}")
+                self._record_validation_error("step_event_invalid_data")
+                return False
 
+        # Always allow step events to pass through - frontend can handle them
         return True
 
     def _record_validation_error(self, error_type: str) -> None:

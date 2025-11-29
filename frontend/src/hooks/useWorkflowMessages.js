@@ -85,6 +85,7 @@ const WORKFLOW_CONFIGS = {
       'TEMPLATE_VALIDATION_RESULT',
       'TEMPLATE_DIFF_GENERATED',
       'STEP_COMPLETE',
+      'STEP_START',
       'STEP_PROGRESS',
       'OPERATION_COMPLETE',
       'OPERATION_START',
@@ -357,12 +358,19 @@ export default function useWorkflowMessages({
       // **PHASE 2 ENHANCEMENT: Message validation using schemas**
       const validation = validateMessage(eventData, eventType);
       if (!validation.isValid) {
-        console.warn(`⚠️ [useWorkflowMessages] Invalid message structure:`, {
-          eventType,
-          errors: validation.errors,
-          eventData
-        });
-        // Still process the message for now, but log the issue
+        // For STEP_COMPLETE events, be more lenient and still process them
+        if (eventType === 'STEP_COMPLETE') {
+          console.log(`⚠️ [useWorkflowMessages] STEP_COMPLETE validation failed, but processing anyway:`, {
+            errors: validation.errors,
+            eventData
+          });
+        } else {
+          console.warn(`⚠️ [useWorkflowMessages] Invalid message structure:`, {
+            eventType,
+            errors: validation.errors,
+            eventData
+          });
+        }
       } else {
         console.log(`✅ [useWorkflowMessages] Message validation passed:`, eventType);
       }
@@ -372,6 +380,13 @@ export default function useWorkflowMessages({
       // **PRIORITY 1: Handle final success messages that have no event_type**
       if (!eventType && eventData.success === true) {
          console.log('✅ [useWorkflowMessages] FINAL SUCCESS MESSAGE DETECTED:', eventData); // DEBUG
+
+         // For template deployments, extract diff data from final message
+         if (workflowType === 'template-deploy' && eventData.details?.diff && stateSetters.setDiffData) {
+           stateSetters.setDiffData(eventData.details.diff);
+           console.log('📝 [useWorkflowMessages] Diff extracted from final message');
+         }
+
          handleCompleteDefault(eventData);
          return;
       }
@@ -412,6 +427,7 @@ export default function useWorkflowMessages({
           handleProgressDefault(eventData);
           break;
         case 'UPLOAD_COMPLETE':
+        case 'OPERATION_COMPLETE':
           handleCompleteDefault(eventData);
           break;
         case 'ERROR':
@@ -423,8 +439,19 @@ export default function useWorkflowMessages({
           // Simplified: Direct log message handling (no double-escaping after worker fix)
           appendLog(eventData);
           break;
-        case 'UPLOAD_START':
+        case 'STEP_COMPLETE':
+          // Handle step completion with potential diff data
+          if (workflowType === 'template-deploy' && eventData.data) {
+            const stepData = eventData.data;
+            const potentialDiff = stepData?.diff || stepData?.details?.diff;
+            if (potentialDiff && stateSetters.setDiffData) {
+              stateSetters.setDiffData(potentialDiff);
+            }
+          }
+          appendLog(eventData);
+          break;
         case 'STEP_START':
+        case 'UPLOAD_START':
         default:
           appendLog(eventData);
           break;
