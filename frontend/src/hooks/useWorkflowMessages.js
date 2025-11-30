@@ -39,14 +39,14 @@ const WORKFLOW_CONFIGS = {
       'PRE_CHECK_COMPLETE',
       'PROGRESS_UPDATE',
       'OPERATION_COMPLETE',
-      'UPLOAD_START', 
+      'UPLOAD_START',
       'UPLOAD_COMPLETE',
       'STEP_START',
       'LOG_MESSAGE',
       'ERROR'
     ]),
     stateMap: {
-      jobId: 'uploadJobId',       
+      jobId: 'uploadJobId',
       progress: 'uploadProgress',
       isRunning: 'isUploading',
       complete: 'uploadComplete',

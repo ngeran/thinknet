@@ -124,7 +124,11 @@ export default function ImageUploads({
     setStorageCheck,
     setStorageCheckError,
     setIsCheckingStorage
-  }), []);
+  }), [
+    setUploadJobId, setUploadProgress, setIsUploading, setUploadComplete,
+    setUploadError, setTerminalLogs, setStorageCheck, setStorageCheckError,
+    setIsCheckingStorage
+  ]);
 
   /**
    * INTEGRATE THE REUSABLE HOOK
@@ -150,6 +154,7 @@ export default function ImageUploads({
   // ===========================================================================
 
   useEffect(() => {
+    // Priority-based step management - highest priority step wins
     if (uploadComplete) {
       setCurrentStep(UPLOAD_STEPS.COMPLETE);
     } else if (isUploadingResolved) {
@@ -159,6 +164,8 @@ export default function ImageUploads({
     } else if (parameters.hostname && parameters.username && parameters.password) {
       setCurrentStep(UPLOAD_STEPS.DEVICE_CONFIG);
     } else if (selectedFile) {
+      setCurrentStep(UPLOAD_STEPS.FILE_SELECTION);
+    } else {
       setCurrentStep(UPLOAD_STEPS.FILE_SELECTION);
     }
   }, [selectedFile, parameters, storageCheck, isUploadingResolved, uploadComplete]);
@@ -182,38 +189,75 @@ export default function ImageUploads({
     }]);
 
     try {
-      const payload = {
-        hostname: parameters.hostname,
-        username: parameters.username,
-        password: parameters.password,
-        tests: ["test_storage_check"],
-        mode: "check",
-        tag: "snap",
-        file_size: selectedFile.size
-      };
+      // Use the dedicated device storage endpoint for accurate storage validation
+      const fileSizeMB = selectedFile ? (selectedFile.size / (1024 * 1024)).toFixed(2) : 0;
+      console.log(`Storage check: Required space for upload: ${fileSizeMB} MB`);
 
-      const response = await fetch(`${API_BASE}/api/operations/validation/execute-v2`, {
+      setTerminalLogs(prev => [...prev, {
+        id: 'storage_check_start',
+        type: 'INFO',
+        message: `🔍 Checking device storage for ${fileSizeMB} MB requirement...`,
+        timestamp: new Date().toLocaleTimeString(),
+        isTechnical: false
+      }]);
+
+      // Create form data for the device storage endpoint
+      const formData = new FormData();
+      formData.append('hostname', parameters.hostname);
+      formData.append('username', parameters.username);
+      formData.append('password', parameters.password);
+      formData.append('required_space', selectedFile.size.toString());
+      formData.append('filesystem', '/');
+
+      const response = await fetch(`${API_BASE}/api/device/check-storage`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: formData
       });
 
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Storage check failed: ${errorText}`);
+      }
 
-      const data = await response.json();
-      setCheckJobId(data.job_id);
+      const storageData = await response.json();
+      console.log('Device storage check result:', storageData);
 
-      if (data.ws_channel && isConnected) {
-        sendMessage({ type: 'SUBSCRIBE', channel: data.ws_channel });
+      // Set storage check data from actual device response
+      setStorageCheck({
+        required_mb: storageData.required_mb,
+        available_mb: storageData.available_mb,
+        has_sufficient_space: storageData.has_sufficient_space,
+        status: storageData.has_sufficient_space ? 'validated' : 'insufficient'
+      });
+
+      setIsCheckingStorage(false);
+
+      if (storageData.has_sufficient_space) {
+        setTerminalLogs(prev => [...prev, {
+          id: 'storage_check_success',
+          type: 'SUCCESS',
+          message: `✅ Storage validated - Required: ${storageData.required_mb} MB, Available: ${storageData.available_mb} MB (${storageData.method})`,
+          timestamp: new Date().toLocaleTimeString(),
+          isTechnical: false
+        }]);
+      } else {
+        setTerminalLogs(prev => [...prev, {
+          id: 'storage_check_failed',
+          type: 'ERROR',
+          message: `❌ Insufficient storage - Required: ${storageData.required_mb} MB, Available: ${storageData.available_mb} MB`,
+          timestamp: new Date().toLocaleTimeString(),
+          isTechnical: false
+        }]);
       }
 
     } catch (error) {
+      console.error('Device storage check failed:', error);
       setStorageCheckError(error.message);
       setIsCheckingStorage(false);
       setTerminalLogs(prev => [...prev, {
-        id: 'validation_error',
+        id: 'storage_check_error',
         type: 'ERROR',
-        message: `Validation failed: ${error.message}`,
+        message: `Storage validation failed: ${error.message}`,
         timestamp: new Date().toLocaleTimeString(),
         isTechnical: false
       }]);
@@ -478,10 +522,16 @@ export default function ImageUploads({
                     <div className="font-semibold mb-1">✅ Sufficient Space Found</div>
                     <div className="grid grid-cols-2 gap-1 text-xs">
                       <span className="font-medium">Required:</span>
-                      <span className="font-mono text-right">{(storageCheck.required_mb || 0).toFixed(2)} MB</span>
+                      <span className="font-mono text-right">
+                        {typeof storageCheck.required_mb === 'number'
+                          ? storageCheck.required_mb.toFixed(2)
+                          : parseFloat(storageCheck.required_mb || 0).toFixed(2)} MB
+                      </span>
                       <span className="font-medium">Available:</span>
                       <span className="font-mono text-green-700 font-bold text-right">
-                        {(storageCheck.available_mb || 0).toFixed(2)} MB
+                        {typeof storageCheck.available_mb === 'number'
+                          ? storageCheck.available_mb.toFixed(2)
+                          : parseFloat(storageCheck.available_mb || 0).toFixed(2)} MB
                       </span>
                     </div>
                 </div>

@@ -278,7 +278,7 @@ class StreamProcessor:
                 event_type = event_data.get('event_type', 'UNKNOWN')
 
                 # Allow step and completion events to pass through without strict validation for now
-                if event_type in ['STEP_START', 'STEP_COMPLETE', 'OPERATION_COMPLETE']:
+                if event_type in ['STEP_START', 'STEP_COMPLETE', 'OPERATION_COMPLETE', 'UPLOAD_COMPLETE', 'PROGRESS_UPDATE']:
                     logger.info(f"[PHASE2] EVENT PASSED THROUGH: {event_type} - Validation bypassed")
                     event_validator.validation_stats["validation_passed"] += 1
                 elif event_validator.validate_event_structure(event_data):

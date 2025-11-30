@@ -4,9 +4,9 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # 1. Install necessary system packages for external network debugging AND SSH client
-# iputils-ping, netcat-openbsd, and **openssh-client** are essential.
+# iputils-ping, netcat-openbsd, openssh-client, and sshpass are essential.
 RUN apt-get update && \
-    apt-get install -y openssh-client iputils-ping netcat-openbsd && \
+    apt-get install -y openssh-client iputils-ping netcat-openbsd sshpass && \
     rm -rf /var/lib/apt/lists/*
 
 # 2. Copy requirements.txt and install Python dependencies
