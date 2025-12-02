@@ -40,7 +40,7 @@ import ResultsTab from './tabs/ResultsTab';
  * MAIN COMPONENT - ZUSTAND VERSION
  * =============================================================================
  */
-export default function CodeUpgrades() {
+export default function CodeUpgradesZustand() {
 
   // ==========================================================================
   // SECTION 1: WEBSOCKET CONNECTION (Same as original)
@@ -55,7 +55,7 @@ export default function CodeUpgrades() {
    * All business logic and state management through Zustand
    * Replaces: useUpgradeState, usePreCheck, useCodeUpgrade, useWebSocketMessages
    */
-  const workflow = useCodeUpgradeWorkflowZustand({ sendMessage });
+  const workflow = useCodeUpgradeWorkflowZustand();
 
   // Direct store access for UI state
   const {
@@ -204,45 +204,43 @@ export default function CodeUpgrades() {
         </TabsList>
 
         {/* ==================================================================
-            TAB CONTENT - CONFIGURATION (Zustand Integration)
+            TAB CONTENT - CONFIGURATION (Direct Store Access)
             ================================================================== */}
         <TabsContent value={WORKFLOW_STEPS.CONFIGURE}>
-          <ConfigurationTab
-            // Legacy props for compatibility (will be removed in Phase 5)
-            upgradeParams={deviceConfig}
-            onParamChange={workflow.handleDeviceConfigChange}
-            onStartPreCheck={workflow.startPreCheckExecution}
-            isFormValid={isFormValid}
-            isRunning={isRunning}
-            isConnected={isConnected}
-            selectedPreChecks={deviceConfig.selectedPreChecks || []}
-            onPreCheckSelectionChange={handlePreCheckSelectionChange}
-          />
+          <ConfigurationTab />
         </TabsContent>
 
         {/* ==================================================================
             TAB CONTENT - EXECUTION (Pre-Check)
             ================================================================== */}
         <TabsContent value={WORKFLOW_STEPS.PRE_CHECK}>
-          <ExecutionTab
-            currentPhase="pre_check"
-            isRunning={preCheck.isRunning}
-            isComplete={preCheck.isComplete}
-            hasError={!!preCheck.error}
-            progress={preCheck.progress}
-            completedSteps={[]} // TODO: Implement step tracking in store
-            totalSteps={100} // TODO: Implement step tracking in store
-            latestStepMessage={null} // TODO: Implement in store
-            jobOutput={preCheck.logs.map(log => ({
+          {(() => {
+            console.log('[CODE_UPGRADES] PreCheck state:', preCheck);
+            console.log('[CODE_UPGRADES] PreCheck logs count:', preCheck.logs.length);
+            const jobOutput = preCheck.logs.map(log => ({
               timestamp: log.timestamp,
               message: log.message,
               level: log.level.toLowerCase(),
               event_type: 'PRE_CHECK_LOG'
-            }))}
-            showTechnicalDetails={false} // TODO: Implement in store
-            onToggleTechnicalDetails={() => {}} // TODO: Implement in store
-            scrollAreaRef={{ current: null }} // TODO: Implement in store
-          />
+            }));
+            console.log('[CODE_UPGRADES] JobOutput for ExecutionTab:', jobOutput);
+            return (
+              <ExecutionTab
+                currentPhase="pre_check"
+                isRunning={preCheck.isRunning}
+                isComplete={preCheck.isComplete}
+                hasError={!!preCheck.error}
+                progress={preCheck.progress}
+                completedSteps={[]} // TODO: Implement step tracking in store
+                totalSteps={100} // TODO: Implement step tracking in store
+                latestStepMessage={null} // TODO: Implement in store
+                jobOutput={jobOutput}
+                showTechnicalDetails={false} // TODO: Implement in store
+                onToggleTechnicalDetails={() => {}} // TODO: Implement in store
+                scrollAreaRef={{ current: null }} // TODO: Implement in store
+              />
+            );
+          })()}
         </TabsContent>
 
         {/* ==================================================================

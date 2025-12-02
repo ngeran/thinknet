@@ -43,8 +43,12 @@ import CodeUpgradeForm from '@/forms/CodeUpgradeForm';
 import SelectImageRelease from '@/forms/SelectImageRelease';
 import PreCheckSelector from '@/shared/PreCheckSelector';
 
+// Zustand Store Integration (Direct Store Access)
+import { useCodeUpgradeStore } from '@/lib/codeUpgradeStore';
+import { useCodeUpgradeWorkflowZustand } from '@/hooks/useCodeUpgradeWorkflowZustand';
+
 /**
- * Configuration Tab Component
+ * Configuration Tab Component - ZUSTAND VERSION
  *
  * First step in the upgrade workflow where users:
  * - Select software image
@@ -54,42 +58,71 @@ import PreCheckSelector from '@/shared/PreCheckSelector';
  * - Select pre-check validations to run
  * - Initiate pre-check validation
  *
- * @param {Object} props - Component properties
- * @param {Object} props.upgradeParams - Current upgrade parameters
- * @param {Function} props.onParamChange - Callback when parameters change
- * @param {Function} props.onStartPreCheck - Callback to start pre-check
- * @param {boolean} props.isFormValid - Whether form is valid
- * @param {boolean} props.isRunning - Whether operation is running
- * @param {boolean} props.isConnected - WebSocket connection status
- * @param {Array<string>} props.selectedPreChecks - Selected pre-check IDs
- * @param {Function} props.onPreCheckSelectionChange - Callback when pre-check selection changes
+ * Uses Zustand store directly - no props needed!
  */
-export default function ConfigurationTab({
-  upgradeParams,
-  onParamChange,
-  onStartPreCheck,
-  isFormValid,
-  isRunning,
-  isConnected,
-  selectedPreChecks,
-  onPreCheckSelectionChange,
-}) {
+export default function ConfigurationTab() {
 
   // ===========================================================================
-  // VALIDATION & STATE COMPUTATION
+  // ZUSTAND STORE INTEGRATION (Direct Store Access)
   // ===========================================================================
 
-  const hasPreChecksSelected = selectedPreChecks && selectedPreChecks.length > 0;
-  const canStartPreCheck = isFormValid && hasPreChecksSelected && !isRunning && isConnected;
+  /**
+   * Direct access to Zustand store and workflow
+   * No props needed - all data comes from store
+   */
+  const {
+    deviceConfig,
+    error,
+    isProcessing,
+    canStartPreCheck: storeCanStartPreCheck,
+    updateDeviceConfig,
+    clearError,
+  } = useCodeUpgradeStore();
+
+  const {
+    startPreCheckExecution,
+    handlePreCheckSelectionChange,
+  } = useCodeUpgradeWorkflowZustand();
+
+  // ===========================================================================
+  // EVENT HANDLERS (Store-based)
+  // ===========================================================================
+
+  const handleParamChange = (name, value) => {
+    console.log(`[CONFIG_TAB] Parameter change: ${name} = ${value}`);
+    updateDeviceConfig({ [name]: value });
+  };
+
+  const handleStartPreCheck = () => {
+    console.log('[CONFIG_TAB] Starting pre-check execution');
+    startPreCheckExecution();
+  };
+
+  // Note: using workflow's handlePreCheckSelectionChange for consistency
+
+  // ===========================================================================
+  // VALIDATION & STATE COMPUTATION (Store-based)
+  // ===========================================================================
+
+  const hasPreChecksSelected = deviceConfig.selectedPreChecks && deviceConfig.selectedPreChecks.length > 0;
+  const isFormValid = !!(
+    deviceConfig.username?.trim() &&
+    deviceConfig.password?.trim() &&
+    (deviceConfig.hostname?.trim() || deviceConfig.inventory_file?.trim()) &&
+    deviceConfig.image_filename?.trim() &&
+    deviceConfig.target_version?.trim()
+  );
+
+  const canStartPreCheck = isFormValid && hasPreChecksSelected && !isProcessing;
 
   const upgradeOptionsConfigured =
-    upgradeParams.no_validate !== undefined &&
-    upgradeParams.no_copy !== undefined &&
-    upgradeParams.auto_reboot !== undefined;
+    deviceConfig.no_validate !== undefined &&
+    deviceConfig.no_copy !== undefined &&
+    deviceConfig.auto_reboot !== undefined;
 
   const hasRiskyOptions =
-    upgradeParams.no_validate === true ||
-    upgradeParams.auto_reboot === false;
+    deviceConfig.no_validate === true ||
+    deviceConfig.auto_reboot === false;
 
   // ===========================================================================
   // STATUS CONFIGURATION
@@ -99,26 +132,26 @@ export default function ConfigurationTab({
     {
       icon: Image,
       label: 'Image',
-      value: upgradeParams.image_filename,
-      isValid: !!upgradeParams.image_filename,
+      value: deviceConfig.image_filename,
+      isValid: !!deviceConfig.image_filename,
     },
     {
       icon: Package,
       label: 'Version',
-      value: upgradeParams.target_version,
-      isValid: !!upgradeParams.target_version,
+      value: deviceConfig.target_version,
+      isValid: !!deviceConfig.target_version,
     },
     {
       icon: Server,
       label: 'Device',
-      value: upgradeParams.hostname || (upgradeParams.inventory_file ? 'Inventory' : null),
-      isValid: !!(upgradeParams.hostname || upgradeParams.inventory_file),
+      value: deviceConfig.hostname || (deviceConfig.inventory_file ? 'Inventory' : null),
+      isValid: !!(deviceConfig.hostname || deviceConfig.inventory_file),
     },
     {
       icon: Lock,
       label: 'Auth',
-      value: upgradeParams.username ? '••••••' : null,
-      isValid: !!(upgradeParams.username && upgradeParams.password),
+      value: deviceConfig.username ? '••••••' : null,
+      isValid: !!(deviceConfig.username && deviceConfig.password),
     },
     {
       icon: Settings,
@@ -130,7 +163,7 @@ export default function ConfigurationTab({
     {
       icon: Shield,
       label: 'Checks',
-      value: hasPreChecksSelected ? `${selectedPreChecks.length}` : null,
+      value: hasPreChecksSelected ? `${deviceConfig.selectedPreChecks?.length || 0}` : null,
       isValid: hasPreChecksSelected,
     },
   ];
@@ -216,8 +249,8 @@ export default function ConfigurationTab({
           </CardHeader>
           <CardContent className="p-3 sm:p-4">
             <SelectImageRelease
-              parameters={upgradeParams}
-              onParamChange={onParamChange}
+              parameters={deviceConfig}
+              onParamChange={handleParamChange}
             />
           </CardContent>
         </Card>
@@ -239,8 +272,8 @@ export default function ConfigurationTab({
           </CardHeader>
           <CardContent className="p-3 sm:p-4">
             <CodeUpgradeForm
-              parameters={upgradeParams}
-              onParamChange={onParamChange}
+              parameters={deviceConfig}
+              onParamChange={handleParamChange}
             />
           </CardContent>
         </Card>
@@ -266,11 +299,11 @@ export default function ConfigurationTab({
             <div className="flex items-start space-x-2 p-2.5 sm:p-3 rounded-lg border border-gray-200 bg-white hover:border-gray-400 transition-colors">
               <Checkbox
                 id="validateImage"
-                checked={!upgradeParams.no_validate}
+                checked={!deviceConfig.no_validate}
                 onCheckedChange={(checked) =>
-                  onParamChange('no_validate', !checked)
+                  handleParamChange('no_validate', !checked)
                 }
-                disabled={isRunning}
+                disabled={isProcessing}
                 className="mt-0.5"
               />
               <div className="flex-1 min-w-0">
@@ -293,11 +326,11 @@ export default function ConfigurationTab({
             <div className="flex items-start space-x-2 p-2.5 sm:p-3 rounded-lg border border-gray-200 bg-white hover:border-gray-400 transition-colors">
               <Checkbox
                 id="skipCopy"
-                checked={upgradeParams.no_copy}
+                checked={deviceConfig.no_copy}
                 onCheckedChange={(checked) =>
-                  onParamChange('no_copy', checked)
+                  handleParamChange('no_copy', checked)
                 }
-                disabled={isRunning}
+                disabled={isProcessing}
                 className="mt-0.5"
               />
               <div className="flex-1 min-w-0">
@@ -320,11 +353,11 @@ export default function ConfigurationTab({
             <div className="flex items-start space-x-2 p-2.5 sm:p-3 rounded-lg border border-gray-200 bg-white hover:border-gray-400 transition-colors">
               <Checkbox
                 id="autoReboot"
-                checked={upgradeParams.auto_reboot}
+                checked={deviceConfig.auto_reboot}
                 onCheckedChange={(checked) =>
-                  onParamChange('auto_reboot', checked)
+                  handleParamChange('auto_reboot', checked)
                 }
-                disabled={isRunning}
+                disabled={isProcessing}
                 className="mt-0.5"
               />
               <div className="flex-1 min-w-0">
@@ -344,7 +377,7 @@ export default function ConfigurationTab({
             </div>
 
             {/* Warning Alerts - Compact */}
-            {upgradeParams.no_validate && (
+            {deviceConfig.no_validate && (
               <Alert className="border border-orange-300 bg-orange-50 p-2.5">
                 <AlertTriangle className="h-3.5 w-3.5 text-orange-600" />
                 <AlertTitle className="text-orange-900 font-bold text-xs">
@@ -356,7 +389,7 @@ export default function ConfigurationTab({
               </Alert>
             )}
 
-            {!upgradeParams.auto_reboot && (
+            {!deviceConfig.auto_reboot && (
               <Alert className="border border-blue-300 bg-blue-50 p-2.5">
                 <AlertCircle className="h-3.5 w-3.5 text-blue-600" />
                 <AlertTitle className="text-blue-900 font-bold text-xs">
@@ -388,9 +421,9 @@ export default function ConfigurationTab({
           </CardHeader>
           <CardContent className="p-3 sm:p-4">
             <PreCheckSelector
-              selectedChecks={selectedPreChecks}
-              onChange={onPreCheckSelectionChange}
-              disabled={isRunning}
+              selectedChecks={deviceConfig.selectedPreChecks || []}
+              onChange={handlePreCheckSelectionChange}
+              disabled={isProcessing}
             />
           </CardContent>
         </Card>
@@ -403,7 +436,8 @@ export default function ConfigurationTab({
         <CardContent className="p-3 sm:p-4">
 
           {/* Connection Warning - Compact */}
-          {!isConnected && (
+          {/* Note: We'll add WebSocket status later */}
+          {false && (
             <Alert className="mb-3 border border-red-500 bg-red-50 p-2.5">
               <AlertTriangle className="h-3.5 w-3.5 text-red-600" />
               <AlertTitle className="font-bold text-red-900 text-xs">Connection Issue</AlertTitle>
@@ -445,19 +479,19 @@ export default function ConfigurationTab({
                     Missing:
                   </p>
                   <div className="space-y-1 text-[10px] sm:text-xs text-gray-700">
-                    {!upgradeParams.image_filename && (
+                    {!deviceConfig.image_filename && (
                       <p className="flex items-center gap-1.5">
                         <span className="w-1 h-1 bg-gray-400 rounded-full"></span>
                         Software image
                       </p>
                     )}
-                    {!upgradeParams.hostname && !upgradeParams.inventory_file && (
+                    {!deviceConfig.hostname && !deviceConfig.inventory_file && (
                       <p className="flex items-center gap-1.5">
                         <span className="w-1 h-1 bg-gray-400 rounded-full"></span>
                         Device target
                       </p>
                     )}
-                    {(!upgradeParams.username || !upgradeParams.password) && (
+                    {(!deviceConfig.username || !deviceConfig.password) && (
                       <p className="flex items-center gap-1.5">
                         <span className="w-1 h-1 bg-gray-400 rounded-full"></span>
                         Credentials
@@ -480,14 +514,14 @@ export default function ConfigurationTab({
             {/* Action Button - Compact */}
             <div className="w-full sm:w-auto">
               <Button
-                onClick={onStartPreCheck}
+                onClick={handleStartPreCheck}
                 disabled={!canStartPreCheck}
                 className={`w-full sm:w-auto px-6 sm:px-8 h-10 sm:h-12 text-sm sm:text-base font-bold transition-all ${canStartPreCheck
                   ? 'bg-black hover:bg-gray-800 text-white shadow-lg hover:shadow-xl'
                   : 'bg-gray-200 text-gray-500 cursor-not-allowed'
                   }`}
               >
-                {isRunning ? (
+                {isProcessing ? (
                   <>
                     <Loader2 className="h-4 w-4 sm:h-5 sm:w-5 animate-spin mr-2" />
                     Running
