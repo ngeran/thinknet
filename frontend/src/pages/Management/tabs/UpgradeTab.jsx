@@ -29,6 +29,7 @@ import { Separator } from '@/components/ui/separator';
 import {
   CheckCircle,
   XCircle,
+  Circle,
   Loader2,
   AlertCircle,
   Info,
@@ -139,31 +140,69 @@ function ElapsedTimeDisplay({ isRunning, jobOutput }) {
 }
 
 /**
- * Progress Card Component
+ * Progress Card Component - Matches ExecutionTab styling
  * Displays overall upgrade progress with visual indicators
  */
-function UpgradeProgressCard({ progress, completedSteps, totalSteps, isRunning, elapsedTime }) {
-  const getProgressColor = () => {
-    if (progress >= 90) return 'bg-green-600';
-    if (progress >= 70) return 'bg-blue-600';
-    if (progress >= 50) return 'bg-blue-500';
-    if (progress >= 30) return 'bg-blue-400';
-    return 'bg-blue-300';
+function UpgradeProgressCard({ progress, completedSteps, totalSteps, isRunning, elapsedTime, currentPhase, isComplete, hasError }) {
+  const getPhaseMessage = (phase) => {
+    switch (phase) {
+      case 'connection': return '🔌 Establishing device connection...';
+      case 'version_detection': return '📋 Detecting current software version...';
+      case 'package_installation': return '📦 Installing software package (this may take 10-15 minutes)...';
+      case 'device_reboot': return '🔄 Device rebooting and reconnecting...';
+      case 'version_verification': return '🔎 Verifying new software version...';
+      case 'completion': return '✅ Finalizing upgrade...';
+      default: return '🚀 Upgrade in progress... This may take 10-15 minutes';
+    }
+  };
+
+  const getStatusBadge = () => {
+    if (isComplete) {
+      return (
+        <Badge variant="default" className="bg-gray-800">
+          <CheckCircle className="h-3 w-3 mr-1" />
+          Completed
+        </Badge>
+      );
+    }
+    if (hasError) {
+      return (
+        <Badge variant="destructive" className="bg-gray-700">
+          <XCircle className="h-3 w-3 mr-1" />
+          Failed
+        </Badge>
+      );
+    }
+    return (
+      <Badge variant="outline">
+        <Circle className="h-3 w-3 mr-1" />
+        Running
+      </Badge>
+    );
   };
 
   return (
-    <Card className="border-l-4 border-l-blue-500">
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2 justify-between">
-          <div className="flex items-center gap-2">
-            <Rocket className="h-4 w-4 text-blue-600" />
-            Upgrade Progress
-            {isRunning && (
-              <Loader2 className="h-3 w-3 text-blue-600 animate-spin" />
-            )}
+    <Card className="border-gray-300">
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div className="flex-1">
+            <CardTitle className="flex items-center gap-2">
+              <Rocket className="h-4 w-4" />
+              Upgrade Progress
+              {isRunning && (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              )}
+            </CardTitle>
+            <CardDescription>
+              Device software upgrade execution with real-time monitoring
+              {currentPhase && ` • Phase: ${currentPhase}`}
+            </CardDescription>
           </div>
-          {isRunning && <ElapsedTimeDisplay isRunning={isRunning} jobOutput={[]} />}
-        </CardTitle>
+          <div className="flex items-center gap-3">
+            {isRunning && <ElapsedTimeDisplay isRunning={isRunning} jobOutput={[]} />}
+            {getStatusBadge()}
+          </div>
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Progress bar */}
@@ -172,26 +211,22 @@ function UpgradeProgressCard({ progress, completedSteps, totalSteps, isRunning, 
             <span className="text-muted-foreground">Overall Progress</span>
             <span className="font-medium">{progress}%</span>
           </div>
-          <Progress value={progress} className={`h-2 ${getProgressColor()}`} />
+          <Progress value={progress} className="h-2" />
         </div>
 
-        <Separator />
-
-        {/* Step counter */}
-        <div className="flex justify-between items-center">
-          <span className="text-sm text-muted-foreground">Steps Completed</span>
-          <div className="flex items-center gap-2">
-            <span className="text-2xl font-bold text-blue-600">{completedSteps}</span>
-            <span className="text-muted-foreground">/ {totalSteps || '?'}</span>
+        {totalSteps > 0 && (
+          <div className="flex justify-between text-sm">
+            <span className="text-muted-foreground">Steps Completed</span>
+            <span className="font-medium">{completedSteps} / {totalSteps}</span>
           </div>
-        </div>
+        )}
 
         {/* Status indicator */}
         {isRunning && (
-          <div className="flex items-center gap-2 p-2 bg-blue-50 rounded-lg border border-blue-200">
-            <Loader2 className="h-4 w-4 text-blue-600 animate-spin" />
-            <span className="text-sm text-blue-700 font-medium">
-              Upgrade in progress... This may take 10-15 minutes
+          <div className="flex items-center gap-2 p-3 bg-gray-50 rounded-lg border">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span className="text-sm font-medium">
+              {getPhaseMessage(currentPhase)}
             </span>
           </div>
         )}
@@ -270,6 +305,65 @@ function MessagePriorityIndicator({ level }) {
   );
 }
 
+/**
+ * Get status class for step styling - matches ExecutionTab
+ */
+const getStepStatusClass = (message, isLastStep) => {
+  if (message?.includes('❌')) {
+    return 'border-gray-400 bg-gray-100';
+  } else if (message?.includes('✅')) {
+    return 'border-gray-800 bg-gray-50';
+  } else if (message?.includes('⚠️')) {
+    return 'border-gray-400 bg-gray-100';
+  } else if (message?.includes('⊘')) {
+    return 'border-gray-200 bg-white opacity-60';
+  } else if (message?.includes('🔍')) {
+    return 'border-gray-900 bg-gray-100 shadow-sm';
+  } else if (isLastStep) {
+    return 'border-gray-900 bg-gray-100 shadow-sm';
+  } else {
+    return 'border-gray-300 bg-gray-50';
+  }
+};
+
+/**
+ * Get status circle class for step icons
+ */
+const getStatusCircleClass = (message, isLastStep) => {
+  if (message?.includes('❌')) {
+    return 'bg-gray-200 border-gray-400';
+  } else if (message?.includes('✅')) {
+    return 'bg-white border-gray-800';
+  } else if (message?.includes('⚠️')) {
+    return 'bg-gray-100 border-gray-500';
+  } else if (message?.includes('🔍')) {
+    return 'bg-white border-gray-900';
+  } else if (isLastStep) {
+    return 'bg-white border-gray-900';
+  } else {
+    return 'bg-white border-gray-600';
+  }
+};
+
+/**
+ * Get status icon for step
+ */
+const getStatusIcon = (message, isLastStep) => {
+  if (message?.includes('❌') || message?.toLowerCase().includes('failed')) {
+    return <XCircle className="h-5 w-5 text-gray-800" />;
+  } else if (message?.includes('✅') || message?.toLowerCase().includes('success') || message?.toLowerCase().includes('passed')) {
+    return <CheckCircle className="h-5 w-5 text-gray-900" />;
+  } else if (message?.includes('⚠️') || message?.toLowerCase().includes('warning')) {
+    return <AlertCircle className="h-5 w-5 text-gray-700" />;
+  } else if (message?.includes('🔍')) {
+    return <Loader2 className="h-5 w-5 text-gray-900 animate-spin" />;
+  } else if (isLastStep) {
+    return <Loader2 className="h-5 w-5 text-gray-900 animate-spin" />;
+  } else {
+    return <CheckCircle className="h-5 w-5 text-gray-700" />;
+  }
+};
+
 // =============================================================================
 // SECTION 2: MAIN UPGRADE TAB COMPONENT
 // =============================================================================
@@ -291,6 +385,7 @@ export default function UpgradeTab({
   progress,
   completedSteps,
   totalSteps,
+  currentPhase,
   jobOutput,
   showTechnicalDetails,
   onToggleTechnicalDetails,
@@ -381,25 +476,22 @@ export default function UpgradeTab({
       {/* ====================================================================
           HEADER SECTION WITH ELAPSED TIME
           ==================================================================== */}
-      <Card className={`border-l-4 ${hasError ? 'border-l-red-500 bg-red-50' :
-        isComplete ? 'border-l-green-500 bg-green-50' :
-          'border-l-blue-500 bg-gradient-to-r from-blue-50 to-white'
-        }`}>
+      <Card className="border-gray-300">
         <CardHeader>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className={`p-2 rounded-lg ${hasError ? 'bg-red-100' :
                 isComplete ? 'bg-green-100' :
-                  'bg-blue-100'
+                  'bg-gray-100'
                 }`}>
                 <Rocket className={`h-6 w-6 ${hasError ? 'text-red-600' :
                   isComplete ? 'text-green-600' :
-                    'text-blue-600'
+                    ''
                   }`} />
               </div>
-              <div>
-                <CardTitle className="text-xl">Device Software Upgrade</CardTitle>
-                <CardDescription className="mt-1">
+              <div className="flex-1">
+                <CardTitle>Device Software Upgrade</CardTitle>
+                <CardDescription>
                   {hasError ? 'Upgrade encountered issues' :
                     isComplete ? 'Upgrade completed successfully' :
                       'Installing software, rebooting device, and verifying upgrade'}
@@ -429,6 +521,9 @@ export default function UpgradeTab({
         totalSteps={totalSteps}
         isRunning={isRunning}
         elapsedTime={elapsedTime}
+        currentPhase={currentPhase}
+        isComplete={isComplete}
+        hasError={hasError}
       />
 
       {/* ====================================================================
@@ -485,39 +580,23 @@ export default function UpgradeTab({
                     return (
                       <div
                         key={index}
-                        className={`flex items-start gap-3 p-4 rounded-lg border transition-all duration-200 ${isFailed
-                          ? 'bg-red-50 border-red-200 hover:border-red-300'
-                          : isWarning
-                            ? 'bg-orange-50 border-orange-200 hover:border-orange-300'
-                            : isPassed
-                              ? 'bg-green-50 border-green-200 hover:border-green-300'
-                              : 'bg-white border-gray-200 hover:border-gray-300 hover:shadow-sm'
-                          }`}
-                      >
-                        <MessagePriorityIndicator level={step.level} />
+                        className={`flex items-start gap-3 p-4 rounded-lg border ${getStepStatusClass(step.message, isRunning && index === userFacingMessages.length - 1)}`}>
 
-                        <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${isFailed
-                          ? 'bg-red-100'
-                          : isWarning
-                            ? 'bg-orange-100'
-                            : isPassed
-                              ? 'bg-green-100'
-                              : 'bg-gray-100'
-                          }`}>
-                          <UpgradeStepIcon message={displayMessage} passed={isPassed} />
+                        <div className={`flex-shrink-0 w-10 h-10 rounded-full border-2 flex items-center justify-center ${getStatusCircleClass(step.message, isRunning && index === userFacingMessages.length - 1)}`}>
+                          {getStatusIcon(step.message, isRunning && index === userFacingMessages.length - 1)}
                         </div>
 
                         <div className="flex-1 min-w-0">
-                          <p className={`text-sm font-medium break-words ${isFailed ? 'text-red-900' :
-                            isWarning ? 'text-orange-900' :
-                              isPassed ? 'text-green-900' :
-                                'text-gray-900'
-                            }`}>
+                          <p className="text-sm font-medium break-words leading-relaxed">
                             {displayMessage}
                           </p>
                           {step.timestamp && (
                             <p className="text-xs text-muted-foreground mt-1">
-                              {new Date(step.timestamp).toLocaleTimeString()}
+                              {new Date(step.timestamp).toLocaleTimeString('en-US', {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                second: '2-digit'
+                              })}
                             </p>
                           )}
                         </div>

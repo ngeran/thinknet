@@ -1,9 +1,25 @@
+# =============================================================================
+# DOCKER COMPOSE FOR CODE UPGRADE PLATFORM
+# =============================================================================
+# 
+# PURPOSE: Container orchestration for multi-service code upgrade system
+# ARCHITECTURE: Frontend (React) + Backend (FastAPI) + Worker + WebSocket Hub
+# VERSION: 2.0.0 - Fixed node_modules volume mounting issue
+# 
+# KEY FIX: Frontend container now properly preserves node_modules while
+# allowing hot-reload for source code changes during development.
+# =============================================================================
+
 # ----------------------------------------------------
 # VOLUME DEFINITIONS
 # ----------------------------------------------------
 volumes:
-  temp_upload_storage:  ## --> ADDED: Dedicated volume for temporary file uploads
+  temp_upload_storage:  ## Dedicated volume for temporary file uploads
+  frontend_node_modules:  ## ← ADDED: Named volume for node_modules persistence
 
+# ----------------------------------------------------
+# SERVICE DEFINITIONS
+# ----------------------------------------------------
 services:
   # ----------------------------------------------------
   # 0. REDIS MESSAGE BROKER
@@ -15,6 +31,8 @@ services:
     restart: always
     networks:
       - internal_net
+    # Redis doesn't need persistent storage for message queuing
+    # Data is ephemeral - messages are processed and discarded
 
   # ----------------------------------------------------
   # 1. RUST WS HUB (Port 3100)
@@ -25,19 +43,20 @@ services:
       dockerfile: Dockerfile.rust
     container_name: rust_ws_hub
     ports:
-      - "3100:3100"
+      - "3100:3100"  # WebSocket endpoint for real-time updates
     restart: always
     volumes:
-      - ./shared/data:/app/shared/data
-      - ./shared/schemas:/app/shared/schemas
+      - ./shared/data:/app/shared/data  # Shared data directory
+      - ./shared/schemas:/app/shared/schemas  # JSON schemas
     depends_on:
       - redis_broker
     environment:
-      RUST_LOG: info
+      RUST_LOG: info  # Log level for Rust application
       REDIS_HOST: redis_broker
       REDIS_PORT: 6379
     networks:
       - internal_net
+    # Rust service handles WebSocket connections and Redis pub/sub
 
   # ----------------------------------------------------
   # 2. FASTAPI AUTOMATION GATEWAY (Port 8000) - API Server ONLY
@@ -48,7 +67,7 @@ services:
       dockerfile: Dockerfile.fastapi
     container_name: fastapi_gateway
     ports:
-      - "8000:8000"
+      - "8000:8000"  # REST API endpoint
     depends_on:
       - rust_backend
       - redis_broker
@@ -56,25 +75,28 @@ services:
     # CRITICAL: Runs ONLY the Uvicorn server (stable and responsive)
     command: uvicorn app_gateway.main:app --host 0.0.0.0 --port 8000
     environment:
-      RUST_WS_URL: ws://rust_backend:3100/ws
+      RUST_WS_URL: ws://rust_backend:3100/ws  # Internal WebSocket URL
       REDIS_HOST: redis_broker
       REDIS_PORT: 6379
     volumes:
-      # Ensure app_gateway/api/routers/operations.py is mounted here
+      # Mount application code for development hot-reload
       - ./app_gateway:/app/app_gateway
       - ./shared:/app/shared
       - ./frontend/py_scripts:/app/app_gateway/py_scripts
-      - temp_upload_storage:/tmp/uploads  ## --> ADDED: Gateway writes here
+      
+      # Temporary upload storage - shared with worker
+      - temp_upload_storage:/tmp/uploads
+      
       # --- JSNAPy MAPPINGS ---
-      # 1. Config (where logging.yml will be auto-created)
+      # 1. Config directory (where logging.yml will be auto-created)
       - ./shared/jsnapy/config:/etc/jsnapy
-      # 2. Snapshots (so you can view XMLs on your host)
+      # 2. Snapshots directory (view XMLs on your host)
       - ./shared/jsnapy/snapshots:/usr/local/share/jsnapy/snapshots
-      # 3. Logs (so you can debug failures on your host)
+      # 3. Logs directory (debug failures on your host)
       - ./shared/jsnapy/logs:/var/log/jsnapy
     networks:
       - internal_net
-      - crpd-net
+      - crpd-net  # Network for communicating with network devices
 
   # ----------------------------------------------------
   # 3. DEDICATED FASTAPI WORKER - Job Execution ONLY
@@ -86,39 +108,35 @@ services:
     container_name: fastapi_worker
     depends_on:
       - redis_broker
-    # Restart policy is essential for a worker service
-    restart: always
+    restart: always  # Essential for worker service reliability
     environment:
       REDIS_HOST: redis_broker
       REDIS_PORT: 6379
-      # Environment variables needed by the automation script
-      PARAMIKO_HOSTKEY_VERIFY: "0"
+      # Environment variables for automation scripts
+      PARAMIKO_HOSTKEY_VERIFY: "0"  # Disable SSH host key verification
       PYTHONPATH: /app/app_gateway/py_scripts
-
-    # CRITICAL: Runs the dedicated worker script
+    # CRITICAL: Runs the dedicated worker script for job processing
     command: /usr/local/bin/python /app/app_gateway/fastapi_worker.py
-
     volumes:
-      # Needs access to the worker script and automation scripts
+      # Mount application code
       - ./app_gateway:/app/app_gateway
       - ./shared:/app/shared
       - ./frontend/py_scripts:/app/app_gateway/py_scripts
-      - ./shared/data:/backups
-      - temp_upload_storage:/tmp/uploads  ## --> ADDED: Worker reads from here
+      - ./shared/data:/backups  # Backup storage
+      
+      # Temporary upload storage - shared with gateway
+      - temp_upload_storage:/tmp/uploads
+      
       # --- JSNAPy MAPPINGS ---
-      # 1. Config (where logging.yml will be auto-created)
       - ./shared/jsnapy/config:/etc/jsnapy
-      # 2. Snapshots (so you can view XMLs on your host)
       - ./shared/jsnapy/snapshots:/usr/local/share/jsnapy/snapshots
-      # 3. Logs (so you can debug failures on your host)
       - ./shared/jsnapy/logs:/var/log/jsnapy
     networks:
-      # Only needs the internal network to talk to Redis and devices (via crpd-net)
       - internal_net
-      - crpd-net
+      - crpd-net  # Network for device communication
 
   # ----------------------------------------------------
-  # 4. FRONTEND (React/Vite)
+  # 4. FRONTEND (React/Vite) - FIXED VOLUME MOUNTING
   # ----------------------------------------------------
   frontend:
     build:
@@ -126,18 +144,47 @@ services:
       dockerfile: Dockerfile.frontend
     container_name: frontend_app
     ports:
-      - "5173:5173"
+      - "5173:5173"  # Vite development server
     depends_on:
       - fastapi_automation
     volumes:
-      - ./frontend:/app
-      - /app/node_modules
+      # ====================================================================
+      # CRITICAL FIX: Selective volume mounting to preserve node_modules
+      # ====================================================================
+      # Mount ONLY source code for hot-reload, NOT the entire /app directory
+      - ./frontend/src:/app/src                    # React components
+      - ./frontend/public:/app/public              # Static assets
+      - ./frontend/index.html:/app/index.html      # HTML entry point
+      - ./frontend/vite.config.js:/app/vite.config.js  # Vite config
+      - ./frontend/package.json:/app/package.json  # Package file (read-only)
+      
+      # ====================================================================
+      # DO NOT MOUNT: /app directory directly (overwrites node_modules)
+      # DO NOT USE: ./frontend:/app (this was the problem)
+      # ====================================================================
+      
+      # Optional: Mount other config files if needed
+      # - ./frontend/.env:/app/.env
+      # - ./frontend/.eslintrc.js:/app/.eslintrc.js
+      # - ./frontend/tailwind.config.js:/app/tailwind.config.js
+      
+      # ====================================================================
+      # Use named volume for node_modules persistence
+      # ====================================================================
+      - frontend_node_modules:/app/node_modules
+      
     command: npm run dev -- --host 0.0.0.0
     environment:
+      # API endpoints (use localhost for external access)
       VITE_API_GATEWAY_URL: http://localhost:8000
       VITE_RUST_WS_URL: ws://localhost:3100/ws
+      # Development mode
+      NODE_ENV: development
     networks:
       - internal_net
+    # Development settings
+    stdin_open: true  # Keep STDIN open for interactive debugging
+    tty: true         # Allocate pseudo-TTY
 
 # ----------------------------------------------------
 # NETWORK DEFINITIONS
@@ -145,5 +192,8 @@ services:
 networks:
   internal_net:
     driver: bridge
+    # Internal communication between services
   crpd-net:
     external: true
+    # External network for connecting to network devices
+    # Must be created separately: docker network create crpd-net

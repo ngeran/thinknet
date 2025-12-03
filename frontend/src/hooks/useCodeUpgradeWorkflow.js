@@ -1,65 +1,90 @@
 /**
  * =============================================================================
- * CODE UPGRADE WORKFLOW HOOK
+ * CODE UPGRADE WORKFLOW HOOK v2.0.0
  * =============================================================================
  *
- * Business logic layer for code upgrade workflow
- * Handles API calls, validation, and workflow orchestration
+ * Business logic orchestrator for code upgrade workflow
+ * Handles API calls, validation, and store updates
  *
- * Location: src/hooks/useCodeUpgradeWorkflow.js
+ * ARCHITECTURE:
+ * - Accesses Zustand store directly (no props needed)
+ * - Makes API calls to backend
+ * - Updates store with job IDs and results
+ * - Returns workflow methods for components
+ *
+ * FLOW:
+ * 1. Component calls startPreCheckExecution()
+ * 2. Hook validates deviceConfig from store
+ * 3. Hook calls /api/operations/pre-check
+ * 4. Hook updates store with jobId and wsChannel
+ * 5. Hook transitions to PRE_CHECK step
+ * 6. WebSocket hook (useCodeUpgradeMessages) handles real-time updates
+ *
+ * Location: frontend/src/hooks/useCodeUpgradeWorkflow.js
  * Author: nikos-geranios_vgi
- * Date: 2025-12-01
- * Version: 1.0.0
+ * Date: 2025-12-02
+ * Version: 2.0.0 - Clean architecture without Zustand suffix
  * =============================================================================
  */
 
-import { useCallback, useEffect } from 'react';
+import { useCallback } from 'react';
 import { useCodeUpgradeStore, WORKFLOW_STEPS } from '@/lib/codeUpgradeStore';
 
-export function useCodeUpgradeWorkflow() {
-  // Access store
-  const {
-    deviceConfig,
-    currentStep,
-    preCheck,
-    upgrade,
-    error,
-    moveToPreCheck,
-    moveToReview,
-    moveToUpgrade,
-    moveToResults,
-    setPreCheckJobId,
-    setUpgradeJobId,
-    addPreCheckLog,
-    addUpgradeLog,
-    updateUpgradeProgress,
-    setPreCheckComplete,
-    setUpgradeComplete,
-    setError,
-    clearError,
-    reset,
-    canStartPreCheck: storeCanStartPreCheck,
-    canStartUpgrade: storeCanStartUpgrade,
-  } = useCodeUpgradeStore();
+// =============================================================================
+// SECTION 1: CONFIGURATION
+// =============================================================================
 
-  // ===========================================================================
-  // PRE-CHECK WORKFLOW
-  // ===========================================================================
+const API_URL = import.meta.env.VITE_API_GATEWAY_URL || 'http://localhost:8000';
+
+// =============================================================================
+// SECTION 2: MAIN HOOK DEFINITION
+// =============================================================================
+
+/**
+ * Code Upgrade Workflow Hook
+ *
+ * Provides workflow orchestration methods that interact with backend
+ * and update Zustand store. All business logic centralized here.
+ *
+ * @returns {Object} Workflow methods and store state
+ */
+export function useCodeUpgradeWorkflow() {
+  // Access entire store
+  const store = useCodeUpgradeStore();
+
+  // ==========================================================================
+  // SECTION 3: PRE-CHECK EXECUTION
+  // ==========================================================================
 
   /**
-   * Start pre-check validation
+   * Start Pre-Check Validation
    *
-   * Workflow:
-   * 1. Validate device config
-   * 2. Call API to start pre-check job
-   * 3. Transition to PRE_CHECK tab
-   * 4. Store job info for WebSocket handling
+   * FLOW:
+   * 1. Validate device configuration
+   * 2. Build API payload
+   * 3. POST to /api/operations/pre-check
+   * 4. Extract job_id and ws_channel from response
+   * 5. Update store with job info
+   * 6. Transition to PRE_CHECK step
+   * 7. Add initial log entry
+   *
+   * WebSocket subscription happens in useCodeUpgradeMessages hook
    */
-  const startPreCheck = useCallback(async () => {
+  const startPreCheckExecution = useCallback(async () => {
+    const {
+      deviceConfig,
+      setPreCheckJobId,
+      startPreCheck,
+      addPreCheckLog,
+      setError,
+      clearError,
+    } = store;
+
     try {
+      console.log('[WORKFLOW] Starting pre-check execution');
       clearError();
 
-      // Enhanced validation with specific error messages
+      // Validate required fields
       const missingFields = [];
       if (!deviceConfig.hostname?.trim()) missingFields.push('hostname');
       if (!deviceConfig.username?.trim()) missingFields.push('username');
@@ -72,7 +97,7 @@ export function useCodeUpgradeWorkflow() {
         throw new Error(`Missing required fields: ${missingFields.join(', ')}`);
       }
 
-      // Build API payload with proper field names
+      // Build API payload
       const payload = {
         hostname: deviceConfig.hostname.trim(),
         username: deviceConfig.username.trim(),
@@ -82,10 +107,10 @@ export function useCodeUpgradeWorkflow() {
         pre_check_selection: deviceConfig.selectedPreChecks.join(','),
       };
 
-      console.log('[WORKFLOW] Starting pre-check with payload:', payload);
+      console.log('[WORKFLOW] API payload:', payload);
 
-      // Call API
-      const response = await fetch('http://localhost:8000/api/operations/pre-check', {
+      // Call backend API
+      const response = await fetch(`${API_URL}/api/operations/pre-check`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -98,76 +123,84 @@ export function useCodeUpgradeWorkflow() {
       }
 
       const data = await response.json();
+      console.log('[WORKFLOW] Pre-check job created:', data.job_id);
 
-      // Update store with job info - construct ws_channel if not provided
-      const wsChannel = data.ws_channel || `ws_channel:job:${data.job_id}`;
+      // Construct WebSocket channel (backend may or may not provide it)
+      const wsChannel = data.ws_channel || `job:${data.job_id}`;
+
+      // Update store with job information
       setPreCheckJobId(data.job_id, wsChannel);
+      startPreCheck();
 
-      // Transition to pre-check tab
-      moveToPreCheck();
-
-      // Add initial log
+      // Add initial log entry
       addPreCheckLog({
         id: `log_${Date.now()}`,
         timestamp: new Date().toISOString(),
         level: 'INFO',
-        message: 'Pre-check validation started',
-        details: `Job ID: ${data.job_id}`,
+        message: `Pre-check job started: ${data.job_id}`,
       });
 
-      console.log('[WORKFLOW] Pre-check started:', data.job_id);
+      console.log('[WORKFLOW] Pre-check started successfully');
 
     } catch (error) {
       console.error('[WORKFLOW] Pre-check start failed:', error);
       setError(error.message);
     }
-  }, [
-    deviceConfig,
-    storeCanStartPreCheck,
-    setPreCheckJobId,
-    moveToPreCheck,
-    addPreCheckLog,
-    clearError,
-    setError,
-  ]);
+  }, [store]);
 
-  // ===========================================================================
-  // UPGRADE WORKFLOW
-  // ===========================================================================
+  // ==========================================================================
+  // SECTION 4: UPGRADE EXECUTION
+  // ==========================================================================
 
   /**
-   * Start upgrade execution
+   * Start Upgrade Execution
    *
-   * Workflow:
-   * 1. Validate pre-check passed
-   * 2. Call API to start upgrade job
-   * 3. Transition to UPGRADE tab
-   * 4. Store job info for WebSocket handling
+   * FLOW:
+   * 1. Validate pre-check completed
+   * 2. Build API payload
+   * 3. POST to /api/operations/upgrade
+   * 4. Extract job_id and ws_channel
+   * 5. Update store with job info
+   * 6. Transition to UPGRADE step
+   * 7. Add initial log entry
    */
-  const startUpgrade = useCallback(async (userOptions = {}) => {
+  const startUpgradeExecution = useCallback(async () => {
+    const {
+      deviceConfig,
+      preCheck,
+      setUpgradeJobId,
+      startUpgrade,
+      addUpgradeLog,
+      setError,
+      clearError,
+    } = store;
+
     try {
+      console.log('[WORKFLOW] Starting upgrade execution');
       clearError();
 
-      // Validation
-      if (!storeCanStartUpgrade()) {
-        throw new Error('Cannot proceed - pre-check validation failed or upgrade already running');
+      // Validate pre-check completed
+      if (!preCheck.isComplete || !preCheck.jobId) {
+        throw new Error('Pre-check must complete before starting upgrade');
       }
 
-      // Build API payload with user options
+      // Build API payload
       const payload = {
-        hostname: deviceConfig.hostname,
-        username: deviceConfig.username,
-        password: deviceConfig.password,
-        target_version: deviceConfig.targetVersion,
-        image_filename: deviceConfig.imageFilename,
-        pre_check_job_id: preCheck.jobId,
-        ...userOptions, // User-selected upgrade options
+        hostname: deviceConfig.hostname?.trim() || '',
+        username: deviceConfig.username?.trim() || '',
+        password: deviceConfig.password?.trim() || '',
+        target_version: deviceConfig.target_version?.trim() || '',
+        image_filename: deviceConfig.image_filename?.trim() || '',
+        no_validate: deviceConfig.no_validate || false,
+        no_copy: deviceConfig.no_copy || false,
+        auto_reboot: deviceConfig.auto_reboot || false,
       };
 
-      console.log('[WORKFLOW] Starting upgrade with payload:', payload);
+      console.log('[WORKFLOW] Upgrade payload:', JSON.stringify(payload, null, 2));
+      console.log('[WORKFLOW] Pre-check job ID:', preCheck.jobId);
 
-      // Call API
-      const response = await fetch('http://localhost:8000/api/operations/upgrade', {
+      // Call backend API
+      const response = await fetch(`${API_URL}/api/operations/upgrade`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -176,102 +209,87 @@ export function useCodeUpgradeWorkflow() {
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.detail || 'Upgrade start failed');
+        console.error('[WORKFLOW] Upgrade API error details:', JSON.stringify(errorData, null, 2));
+        throw new Error(errorData.detail || JSON.stringify(errorData) || 'Upgrade start failed');
       }
 
       const data = await response.json();
+      console.log('[WORKFLOW] Upgrade job created:', data.job_id);
 
-      // Update store with job info
-      setUpgradeJobId(data.job_id, data.ws_channel);
+      // Construct WebSocket channel
+      const wsChannel = data.ws_channel || `job:${data.job_id}`;
 
-      // Transition to upgrade tab
-      moveToUpgrade();
+      // Update store
+      setUpgradeJobId(data.job_id, wsChannel);
+      startUpgrade();
 
       // Add initial log
       addUpgradeLog({
         id: `log_${Date.now()}`,
         timestamp: new Date().toISOString(),
         level: 'INFO',
-        message: 'Upgrade execution started',
-        details: `Job ID: ${data.job_id}`,
+        message: `Upgrade job started: ${data.job_id}`,
       });
 
-      console.log('[WORKFLOW] Upgrade started:', data.job_id);
+      console.log('[WORKFLOW] Upgrade started successfully');
 
     } catch (error) {
       console.error('[WORKFLOW] Upgrade start failed:', error);
       setError(error.message);
     }
-  }, [
-    deviceConfig,
-    preCheck.jobId,
-    storeCanStartUpgrade,
-    setUpgradeJobId,
-    moveToUpgrade,
-    addUpgradeLog,
-    clearError,
-    setError,
-  ]);
+  }, [store]);
 
-  // ===========================================================================
-  // HELPER FUNCTIONS
-  // ===========================================================================
+  // ==========================================================================
+  // SECTION 5: PARAMETER HANDLERS
+  // ==========================================================================
 
-  const canStartPreCheck = useCallback(() => {
-    return storeCanStartPreCheck();
-  }, [storeCanStartPreCheck]);
+  /**
+   * Handle device config changes
+   * Updates a single field in deviceConfig
+   */
+  const handleDeviceConfigChange = useCallback((name, value) => {
+    store.updateDeviceConfig({ [name]: value });
+  }, [store]);
 
-  const canStartUpgrade = useCallback(() => {
-    return storeCanStartUpgrade();
-  }, [storeCanStartUpgrade]);
+  /**
+   * Handle pre-check selection changes
+   * Updates selectedPreChecks array in deviceConfig
+   */
+  const handlePreCheckSelectionChange = useCallback((checkIds) => {
+    store.updateDeviceConfig({ selectedPreChecks: checkIds });
+  }, [store]);
 
-  const cancelUpgrade = useCallback(() => {
-    // Cancel current upgrade and reset state
-    reset();
-  }, [reset]);
+  /**
+   * Reset entire workflow
+   * Clears all state and returns to configuration step
+   */
+  const resetWorkflow = useCallback(() => {
+    store.reset();
+  }, [store]);
 
-  const retryPreCheck = useCallback(() => {
-    // Clear current pre-check and restart
-    moveToPreCheck();
-  }, [moveToPreCheck]);
+  /**
+   * Set current workflow step
+   * Allows manual navigation between steps
+   */
+  const setCurrentStep = useCallback((step) => {
+    store.setCurrentStep(step);
+  }, [store]);
 
-  // Auto-transition effects
-  useEffect(() => {
-    // Auto-transition to results when upgrade completes
-    if (upgrade.result && currentStep === WORKFLOW_STEPS.UPGRADE) {
-      moveToResults(upgrade.result);
-    }
-  }, [upgrade.result, currentStep, moveToResults]);
-
-  // ===========================================================================
-  // RETURN PUBLIC API
-  // ===========================================================================
+  // ==========================================================================
+  // SECTION 6: RETURN PUBLIC API
+  // ==========================================================================
 
   return {
-    // State
-    currentStep,
-    deviceConfig,
-    preCheck,
-    upgrade,
-    error,
+    // Expose entire store state
+    ...store,
 
-    // Actions
-    startPreCheck,
-    startUpgrade,
-    cancelUpgrade,
-    retryPreCheck,
-
-    // Computed
-    canStartPreCheck,
-    canStartUpgrade,
-
-    // Navigation
-    moveToReview,
-    moveToResults,
-
-    // Utilities
-    clearError,
-    reset,
+    // Workflow methods
+    startPreCheckExecution,
+    startUpgradeExecution,
+    handleDeviceConfigChange,
+    handlePreCheckSelectionChange,
+    resetWorkflow,
+    setCurrentStep,
   };
 }
 

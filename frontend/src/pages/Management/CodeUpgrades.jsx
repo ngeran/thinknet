@@ -1,63 +1,92 @@
 /**
  * =============================================================================
- * CODE UPGRADES COMPONENT - ZUSTAND VERSION v1.0.0
+ * CODE UPGRADES COMPONENT v2.0.0
  * =============================================================================
  *
- * Clean, simplified orchestration for device upgrade workflow using Zustand store
- * Replaces complex hook-based architecture with centralized state management
+ * Main orchestrator for device upgrade workflow
+ * Clean architecture with Zustand store and centralized hooks
  *
- * VERSION: 1.0.0 - Phase 4 Implementation (2025-12-01)
- * AUTHOR: nikos-geranios_vgi
+ * ARCHITECTURE:
+ * - Uses Zustand store for state management
+ * - Uses useJobWebSocket for WebSocket connection
+ * - Uses useCodeUpgradeWorkflow for business logic
+ * - Uses useCodeUpgradeMessages for WebSocket processing
+ * - Tabs access store directly (no prop drilling)
  *
- * COMPARISON:
- * - Original: 650+ lines, 25+ useState hooks, complex prop drilling
- * - Zustand: ~200 lines, centralized state, clean architecture
+ * WORKFLOW STEPS:
+ * 1. CONFIGURE: Device setup, image selection, options
+ * 2. PRE_CHECK: Pre-flight validation execution
+ * 3. REVIEW: Pre-check results review
+ * 4. UPGRADE: Software upgrade execution
+ * 5. RESULTS: Final results and summary
  *
- * WORKFLOW:
- * Configuration → Pre-Check → Review → Upgrade → Results
- * All state managed centrally in Zustand store
+ * Location: frontend/src/pages/Management/CodeUpgrades.jsx
+ * Author: nikos-geranios_vgi
+ * Date: 2025-12-02
+ * Version: 2.0.0 - Clean architecture
+ * =============================================================================
  */
 
-import React, { useMemo, useEffect } from 'react';
-
+import React, { useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
+// Hooks
 import { useJobWebSocket } from '@/hooks/useJobWebSocket';
-import { useCodeUpgradeWorkflowZustand } from '@/hooks/useCodeUpgradeWorkflowZustand';
-import { useWebSocketMessagesZustand } from '@/hooks/useWebSocketMessagesZustand';
+import { useCodeUpgradeWorkflow } from '@/hooks/useCodeUpgradeWorkflow';
+import { useCodeUpgradeMessages } from '@/hooks/useCodeUpgradeMessages';
 import { useCodeUpgradeStore, WORKFLOW_STEPS } from '@/lib/codeUpgradeStore';
 
+// Tab components
 import ConfigurationTab from './tabs/ConfigurationTab';
 import ExecutionTab from './tabs/ExecutionTab';
 import ReviewTab from './tabs/ReviewTab';
 import UpgradeTab from './tabs/UpgradeTab';
 import ResultsTab from './tabs/ResultsTab';
 
+// =============================================================================
+// SECTION 1: MAIN COMPONENT
+// =============================================================================
+
 /**
- * =============================================================================
- * MAIN COMPONENT - ZUSTAND VERSION
- * =============================================================================
+ * Code Upgrades Component
+ *
+ * Main workflow orchestrator that coordinates:
+ * - WebSocket connection
+ * - Workflow state management
+ * - Message processing
+ * - Tab navigation
+ *
+ * State comes from Zustand store
+ * Business logic in useCodeUpgradeWorkflow
+ * WebSocket handling in useCodeUpgradeMessages
  */
 export default function CodeUpgrades() {
+  console.log('[CODE_UPGRADES] Component rendered');
 
   // ==========================================================================
-  // SECTION 1: WEBSOCKET CONNECTION (Same as original)
-  // ==========================================================================
-  const { sendMessage, lastMessage, isConnected } = useJobWebSocket();
-
-  // ==========================================================================
-  // SECTION 2: ZUSTAND WORKFLOW & STATE (Clean Architecture)
+  // SECTION 2: HOOKS INITIALIZATION
   // ==========================================================================
 
   /**
-   * All business logic and state management through Zustand
-   * Replaces: useUpgradeState, usePreCheck, useCodeUpgrade, useWebSocketMessages
+   * WebSocket connection hook
+   * Manages connection to WebSocket service
+   * Provides: sendMessage, lastMessage, isConnected
    */
-  const workflow = useCodeUpgradeWorkflowZustand({ sendMessage });
+  const { sendMessage, lastMessage, isConnected } = useJobWebSocket();
 
-  // Direct store access for UI state
+  /**
+   * Workflow orchestration hook
+   * Provides business logic methods and store access
+   * Exposes entire store + workflow methods
+   */
+  const workflow = useCodeUpgradeWorkflow();
+
+  /**
+   * Direct store access for UI state
+   * Alternative to accessing via workflow object
+   */
   const {
     currentStep,
     deviceConfig,
@@ -65,17 +94,27 @@ export default function CodeUpgrades() {
     upgrade,
     error,
     isProcessing,
-    isTabAccessible,
   } = useCodeUpgradeStore();
 
+  /**
+   * WebSocket message processing hook
+   * Subscribes to channels and routes messages to store
+   * CRITICAL: This hook makes WebSocket messages work!
+   */
+  useCodeUpgradeMessages({
+    lastMessage,
+    currentStep,
+    sendMessage,
+  });
+
   // ==========================================================================
-  // SECTION 3: DERIVED STATE (Simplified)
+  // SECTION 3: COMPUTED VALUES
   // ==========================================================================
 
-  const isRunning = isProcessing;
-  const isComplete = upgrade.isComplete;
-  const hasError = !!error;
-
+  /**
+   * Form validation for configuration step
+   * Checks all required fields are filled
+   */
   const isFormValid = useMemo(() => {
     return (
       deviceConfig.username?.trim() &&
@@ -87,48 +126,13 @@ export default function CodeUpgrades() {
   }, [deviceConfig]);
 
   // ==========================================================================
-  // SECTION 4: TAB ACCESSIBILITY (Simplified Logic)
-  // ==========================================================================
-
-  const isTabDisabled = (tabValue) => {
-    return !isTabAccessible(tabValue);
-  };
-
-  // ==========================================================================
-  // SECTION 5: EVENT HANDLERS (Clean Implementation)
-  // ==========================================================================
-
-  const handleReset = () => {
-    console.log('[ZUSTAND] Resetting workflow');
-    workflow.resetWorkflow();
-  };
-
-  const handlePreCheckSelectionChange = (checkIds) => {
-    workflow.handlePreCheckSelectionChange(checkIds);
-  };
-
-  // ==========================================================================
-  // SECTION 6: WEBSOCKET MESSAGE HANDLING (Zustand Integration)
-  // ==========================================================================
-
-  /**
-   * Zustand-based WebSocket message processing
-   * Replaces the complex useWebSocketMessages hook with clean store integration
-   */
-  const webSocketMessages = useWebSocketMessagesZustand({
-    lastMessage,
-    currentStep,
-    sendMessage
-  });
-
-  // ==========================================================================
-  // SECTION 7: RENDER
+  // SECTION 4: RENDER
   // ==========================================================================
 
   return (
     <div className="p-8 pt-6">
       {/* ====================================================================
-          HEADER SECTION
+          HEADER
           ==================================================================== */}
       <div className="flex items-center justify-between mb-2">
         <div>
@@ -136,14 +140,11 @@ export default function CodeUpgrades() {
           <p className="text-muted-foreground">
             Upgrade device operating system with pre-flight validation
           </p>
-          <p className="text-xs text-green-600 mt-1">
-            🟢 Zustand Version - Clean Architecture
-          </p>
         </div>
 
-        {/* Reset button - only show when workflow is active */}
+        {/* Reset button when workflow is active */}
         {(isProcessing || preCheck.isRunning || upgrade.isRunning) && (
-          <Button onClick={handleReset} variant="outline" size="sm">
+          <Button onClick={workflow.resetWorkflow} variant="outline" size="sm">
             Start New Upgrade
           </Button>
         )}
@@ -152,72 +153,40 @@ export default function CodeUpgrades() {
       <Separator className="mb-8" />
 
       {/* ====================================================================
-          MAIN TABS CONTAINER
+          TABS CONTAINER
           ==================================================================== */}
       <Tabs value={currentStep} onValueChange={workflow.setCurrentStep} className="w-full">
 
         {/* ==================================================================
-            TAB NAVIGATION - Clean Implementation
+            TAB NAVIGATION
             ================================================================== */}
         <TabsList className="grid w-full grid-cols-5 mb-6">
-          {/* Tab 1: Configuration */}
-          <TabsTrigger
-            value={WORKFLOW_STEPS.CONFIGURE}
-            disabled={isTabDisabled(WORKFLOW_STEPS.CONFIGURE)}
-          >
+          <TabsTrigger value={WORKFLOW_STEPS.CONFIGURE}>
             Configure
           </TabsTrigger>
 
-          {/* Tab 2: Pre-Check Execution */}
-          <TabsTrigger
-            value={WORKFLOW_STEPS.PRE_CHECK}
-            disabled={isTabDisabled(WORKFLOW_STEPS.PRE_CHECK)}
-          >
+          <TabsTrigger value={WORKFLOW_STEPS.PRE_CHECK}>
             Pre-Check
           </TabsTrigger>
 
-          {/* Tab 3: Review */}
-          <TabsTrigger
-            value={WORKFLOW_STEPS.REVIEW}
-            disabled={isTabDisabled(WORKFLOW_STEPS.REVIEW)}
-            className={preCheck.isComplete ? "bg-green-50 border-green-200" : ""}
-          >
+          <TabsTrigger value={WORKFLOW_STEPS.REVIEW}>
             Review {preCheck.isComplete && "✅"}
           </TabsTrigger>
 
-          {/* Tab 4: Upgrade */}
-          <TabsTrigger
-            value={WORKFLOW_STEPS.UPGRADE}
-            disabled={isTabDisabled(WORKFLOW_STEPS.UPGRADE)}
-            className={currentStep === WORKFLOW_STEPS.UPGRADE ? "bg-blue-50 border-blue-200" : ""}
-          >
+          <TabsTrigger value={WORKFLOW_STEPS.UPGRADE}>
             Upgrade
           </TabsTrigger>
 
-          {/* Tab 5: Results */}
-          <TabsTrigger
-            value={WORKFLOW_STEPS.RESULTS}
-            disabled={isTabDisabled(WORKFLOW_STEPS.RESULTS)}
-          >
+          <TabsTrigger value={WORKFLOW_STEPS.RESULTS}>
             Results
           </TabsTrigger>
         </TabsList>
 
         {/* ==================================================================
-            TAB CONTENT - CONFIGURATION (Zustand Integration)
+            TAB CONTENT - CONFIGURATION
             ================================================================== */}
         <TabsContent value={WORKFLOW_STEPS.CONFIGURE}>
-          <ConfigurationTab
-            // Legacy props for compatibility (will be removed in Phase 5)
-            upgradeParams={deviceConfig}
-            onParamChange={workflow.handleDeviceConfigChange}
-            onStartPreCheck={workflow.startPreCheckExecution}
-            isFormValid={isFormValid}
-            isRunning={isRunning}
-            isConnected={isConnected}
-            selectedPreChecks={deviceConfig.selectedPreChecks || []}
-            onPreCheckSelectionChange={handlePreCheckSelectionChange}
-          />
+          <ConfigurationTab />
         </TabsContent>
 
         {/* ==================================================================
@@ -230,18 +199,19 @@ export default function CodeUpgrades() {
             isComplete={preCheck.isComplete}
             hasError={!!preCheck.error}
             progress={preCheck.progress}
-            completedSteps={[]} // TODO: Implement step tracking in store
-            totalSteps={100} // TODO: Implement step tracking in store
-            latestStepMessage={null} // TODO: Implement in store
+            completedSteps={[]}
+            totalSteps={100}
+            latestStepMessage={null}
             jobOutput={preCheck.logs.map(log => ({
+              id: log.id,
               timestamp: log.timestamp,
               message: log.message,
               level: log.level.toLowerCase(),
-              event_type: 'PRE_CHECK_LOG'
+              event_type: log.event_type || 'LOG',
             }))}
-            showTechnicalDetails={false} // TODO: Implement in store
-            onToggleTechnicalDetails={() => {}} // TODO: Implement in store
-            scrollAreaRef={{ current: null }} // TODO: Implement in store
+            showTechnicalDetails={false}
+            onToggleTechnicalDetails={() => {}}
+            scrollAreaRef={{ current: null }}
           />
         </TabsContent>
 
@@ -256,13 +226,13 @@ export default function CodeUpgrades() {
             jobStatus={preCheck.isRunning ? 'running' : preCheck.isComplete ? 'success' : 'idle'}
             isRunningPreCheck={preCheck.isRunning}
             onProceedWithUpgrade={workflow.startUpgradeExecution}
-            onCancel={handleReset}
+            onCancel={workflow.resetWorkflow}
             onForceReview={() => {}}
           />
         </TabsContent>
 
         {/* ==================================================================
-            TAB CONTENT - UPGRADE (Real-time Monitoring)
+            TAB CONTENT - UPGRADE
             ================================================================== */}
         <TabsContent value={WORKFLOW_STEPS.UPGRADE}>
           <UpgradeTab
@@ -271,17 +241,22 @@ export default function CodeUpgrades() {
             isComplete={upgrade.isComplete}
             hasError={!!upgrade.error}
             progress={upgrade.progress}
-            completedSteps={[]} // TODO: Implement step tracking in store
-            totalSteps={100} // TODO: Implement step tracking in store
+            completedSteps={Math.floor(upgrade.logs.filter(log => log.step_name).length)}
+            totalSteps={8} // Approximate number of upgrade phases
+            currentPhase={upgrade.phase}
             jobOutput={upgrade.logs.map(log => ({
+              id: log.id,
               timestamp: log.timestamp,
               message: log.message,
               level: log.level.toLowerCase(),
-              event_type: 'UPGRADE_LOG'
+              event_type: log.event_type || 'LOG',
+              step_name: log.step_name,
+              phase: log.phase,
+              progress: log.progress,
             }))}
-            showTechnicalDetails={false} // TODO: Implement in store
-            onToggleTechnicalDetails={() => {}} // TODO: Implement in store
-            scrollAreaRef={{ current: null }} // TODO: Implement in store
+            showTechnicalDetails={false}
+            onToggleTechnicalDetails={() => {}}
+            scrollAreaRef={{ current: null }}
           />
         </TabsContent>
 
@@ -297,20 +272,21 @@ export default function CodeUpgrades() {
             jobId={upgrade.jobId}
             preCheckJobId={preCheck.jobId}
             progress={upgrade.progress}
-            completedSteps={[]} // TODO: Implement step tracking in store
-            totalSteps={100} // TODO: Implement step tracking in store
+            completedSteps={[]}
+            totalSteps={100}
             currentPhase={WORKFLOW_STEPS.RESULTS}
             isConnected={isConnected}
-            statistics={[]} // TODO: Implement in store
-            showTechnicalDetails={false} // TODO: Implement in store
-            onToggleTechnicalDetails={() => {}} // TODO: Implement in store
+            statistics={{}}
+            showTechnicalDetails={false}
+            onToggleTechnicalDetails={() => {}}
             onNavigateToExecute={() => workflow.setCurrentStep(WORKFLOW_STEPS.PRE_CHECK)}
-            onStartNewUpgrade={handleReset}
+            onStartNewUpgrade={workflow.resetWorkflow}
             jobOutput={[...preCheck.logs, ...upgrade.logs].map(log => ({
+              id: log.id,
               timestamp: log.timestamp,
               message: log.message,
               level: log.level.toLowerCase(),
-              event_type: log.level === 'INFO' ? 'JOB_LOG' : 'ERROR'
+              event_type: log.event_type || 'LOG',
             }))}
           />
         </TabsContent>

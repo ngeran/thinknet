@@ -45,7 +45,7 @@ import PreCheckSelector from '@/shared/PreCheckSelector';
 
 // Zustand Store Integration (Direct Store Access)
 import { useCodeUpgradeStore } from '@/lib/codeUpgradeStore';
-import { useCodeUpgradeWorkflowZustand } from '@/hooks/useCodeUpgradeWorkflowZustand';
+import { useCodeUpgradeWorkflow } from '@/hooks/useCodeUpgradeWorkflow';
 
 /**
  * Configuration Tab Component - ZUSTAND VERSION
@@ -82,7 +82,7 @@ export default function ConfigurationTab() {
   const {
     startPreCheckExecution,
     handlePreCheckSelectionChange,
-  } = useCodeUpgradeWorkflowZustand();
+  } = useCodeUpgradeWorkflow();
 
   // ===========================================================================
   // EVENT HANDLERS (Store-based)
