@@ -165,10 +165,15 @@ export const useCodeUpgradeStore = create(
         })),
 
       setPreCheckProgress: (progress) =>
-        set((state) => ({
-          preCheck: { ...state.preCheck, progress },
-          lastUpdate: new Date().toISOString()
-        })),
+        set((state) => {
+          console.log('[ZUSTAND_STORE] 🎯 Setting PRE-CHECK progress:', progress, 'from:', state.preCheck.progress);
+          const newState = {
+            preCheck: { ...state.preCheck, progress },
+            lastUpdate: new Date().toISOString()
+          };
+          console.log('[ZUSTAND_STORE] ✅ PRE-CHECK progress updated in store');
+          return newState;
+        }),
 
       addPreCheckLog: (log) =>
         set((state) => {

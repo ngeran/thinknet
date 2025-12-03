@@ -27,7 +27,7 @@
  * =============================================================================
  */
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -64,6 +64,9 @@ import ResultsTab from './tabs/ResultsTab';
  */
 export default function CodeUpgrades() {
   console.log('[CODE_UPGRADES] Component rendered');
+
+  // Local state for technical details toggle
+  const [showUpgradeTechnicalDetails, setShowUpgradeTechnicalDetails] = useState(false);
 
   // ==========================================================================
   // SECTION 2: HOOKS INITIALIZATION
@@ -258,8 +261,8 @@ export default function CodeUpgrades() {
               phase: log.phase,
               progress: log.progress,
             }))}
-            showTechnicalDetails={false}
-            onToggleTechnicalDetails={() => {}}
+            showTechnicalDetails={showUpgradeTechnicalDetails}
+            onToggleTechnicalDetails={() => setShowUpgradeTechnicalDetails(!showUpgradeTechnicalDetails)}
             scrollAreaRef={{ current: null }}
           />
         </TabsContent>

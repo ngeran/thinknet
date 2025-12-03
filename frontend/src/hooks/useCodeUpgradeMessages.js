@@ -82,6 +82,7 @@ export function useCodeUpgradeMessages({ lastMessage, currentStep, sendMessage }
     addUpgradeLog,
     setPreCheckComplete,
     setUpgradeComplete,
+    setPreCheckProgress,
     setUpgradeProgress,
     moveToReview,
     moveToResults,
@@ -187,8 +188,8 @@ export function useCodeUpgradeMessages({ lastMessage, currentStep, sendMessage }
   const handlePreCheckComplete = useCallback((message) => {
     console.log('[WS_MESSAGES] Pre-check completed:', message.data);
 
-    // Extract summary from message
-    const summary = message.data?.summary || message.data || {
+    // Extract summary from message - prioritize final_results over summary
+    const finalResults = message.data?.final_results || message.data?.summary || message.data || {
       total_checks: 0,
       passed_checks: 0,
       failed_checks: 0,
@@ -196,8 +197,8 @@ export function useCodeUpgradeMessages({ lastMessage, currentStep, sendMessage }
       results: [],
     };
 
-    // Update store with completion data
-    setPreCheckComplete(summary);
+    // Update store with completion data - use final_results if available
+    setPreCheckComplete(finalResults);
 
     // Transition to review tab
     moveToReview();
@@ -217,7 +218,7 @@ export function useCodeUpgradeMessages({ lastMessage, currentStep, sendMessage }
    * Routes different event types to appropriate handlers
    */
   const handlePreCheckMessage = useCallback((message) => {
-    console.log('[WS_MESSAGES] Processing pre-check message:', message.event_type);
+    console.log('[WS_MESSAGES] 🔵 Processing PRE-CHECK message:', message.event_type);
 
     switch (message.event_type) {
       case 'PRE_CHECK_COMPLETE':
@@ -226,10 +227,35 @@ export function useCodeUpgradeMessages({ lastMessage, currentStep, sendMessage }
 
       case 'PRE_CHECK_RESULT':
       case 'STEP_START':
+        // Clear stale check results when pre-check starts
+        if (message.message && message.message.includes('Pre-check validation started')) {
+          console.log('[WS_MESSAGES] 🗑️ Clearing stale check results');
+          checkResultsRef.current = [];
+        }
+        // Fall through to handle STEP_START
+
       case 'STEP_COMPLETE':
       case 'STEP_PROGRESS':
       case 'OPERATION_START':
       case 'LOG_MESSAGE':
+        // Extract progress data from STEP_COMPLETE events for PRE-CHECKS
+        if (message.event_type === 'STEP_COMPLETE' && message.data) {
+          console.log('[WS_MESSAGES] 🔍 PRE-CHECK STEP_COMPLETE with data:', {
+            event_type: message.event_type,
+            data: message.data,
+            message: message.message?.substring(0, 50) + '...',
+            currentStep
+          });
+
+          const { percentage, step, total_steps } = message.data;
+          if (percentage !== undefined) {
+            console.log('[WS_MESSAGES] 🎯 Setting PRE-CHECK progress from handler:', percentage + '%');
+            setPreCheckProgress(percentage);
+            console.log('[WS_MESSAGES] ✅ PRE-CHECK progress updated successfully');
+          } else {
+            console.log('[WS_MESSAGES] ⚠️ No percentage in pre-check STEP_COMPLETE data:', message.data);
+          }
+        }
         // Parse clean message for pre-check
         const cleanPreCheckMessage = parseCleanMessage(message.message || '');
 
@@ -274,6 +300,7 @@ export function useCodeUpgradeMessages({ lastMessage, currentStep, sendMessage }
         if (cleanPreCheckMessage && cleanPreCheckMessage.includes('Pre-check phase completed successfully')) {
           console.log('[WS_MESSAGES] 🎯 Detected completion from log message:', cleanPreCheckMessage);
           console.log('[WS_MESSAGES] 📋 Collected check results:', checkResultsRef.current);
+          console.log('[WS_MESSAGES] ⚠️ ISSUE: Using stale check results instead of backend results!');
 
           const checkResults = checkResultsRef.current;
           let totalChecks = checkResults.length;
@@ -373,7 +400,7 @@ export function useCodeUpgradeMessages({ lastMessage, currentStep, sendMessage }
    * Routes different event types to appropriate handlers
    */
   const handleUpgradeMessage = useCallback((message) => {
-    console.log('[WS_MESSAGES] Processing upgrade message:', message.event_type);
+    console.log('[WS_MESSAGES] 🔴 Processing UPGRADE message:', message.event_type);
 
     switch (message.event_type) {
       case 'OPERATION_COMPLETE':
@@ -388,6 +415,15 @@ export function useCodeUpgradeMessages({ lastMessage, currentStep, sendMessage }
       case 'UPLOAD_START':
       case 'UPLOAD_COMPLETE':
       case 'PROGRESS_UPDATE':
+        // Basic debug log for all these events
+        if (message.event_type === 'STEP_COMPLETE') {
+          console.log('[WS_MESSAGES] 🔥 STEP_COMPLETE event received!', {
+            event_type: message.event_type,
+            hasData: !!message.data,
+            message: message.message?.substring(0, 50) + '...',
+            currentStep
+          });
+        }
         // Check for upgrade completion in log messages
         if (message.message && message.message.includes('Upgrade phase completed successfully')) {
           console.log('[WS_MESSAGES] 🎯 Detected upgrade completion from log message:', message.message);
@@ -420,6 +456,44 @@ export function useCodeUpgradeMessages({ lastMessage, currentStep, sendMessage }
           handleUpgradeComplete({
             data: completionResult
           });
+        }
+
+        // Extract progress data from STEP_COMPLETE events
+        if (message.event_type === 'STEP_COMPLETE') {
+          console.log('[WS_MESSAGES] 🔍 DEBUG STEP_COMPLETE message:', {
+            event_type: message.event_type,
+            hasData: !!message.data,
+            data: message.data,
+            message: message.message,
+            currentStep
+          });
+
+          if (message.data) {
+            const { percentage, step, total_steps } = message.data;
+            if (percentage !== undefined) {
+              console.log('[WS_MESSAGES] 📊 Updating progress from STEP_COMPLETE:', {
+                percentage,
+                step,
+                total_steps,
+                currentStep
+              });
+
+              // Update progress in store
+              if (currentStep === WORKFLOW_STEPS.PRE_CHECK) {
+                console.log('[WS_MESSAGES] 🎯 Setting PRE-CHECK progress to:', percentage + '%');
+                setPreCheckProgress(percentage);
+                console.log('[WS_MESSAGES] ✅ Pre-check progress updated successfully');
+              } else if (currentStep === WORKFLOW_STEPS.UPGRADE) {
+                console.log('[WS_MESSAGES] 🎯 Setting UPGRADE progress to:', percentage + '%');
+                setUpgradeProgress(percentage, 'installation');
+                console.log('[WS_MESSAGES] ✅ Upgrade progress updated successfully');
+              }
+            } else {
+              console.log('[WS_MESSAGES] ⚠️ No percentage found in message.data:', message.data);
+            }
+          } else {
+            console.log('[WS_MESSAGES] ⚠️ No message.data found for STEP_COMPLETE');
+          }
         }
 
         // Parse clean message first

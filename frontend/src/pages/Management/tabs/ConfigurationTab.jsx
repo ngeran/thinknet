@@ -295,33 +295,7 @@ export default function ConfigurationTab() {
           </CardHeader>
           <CardContent className="p-3 sm:p-4 space-y-2.5">
 
-            {/* Option 1: Validate Image */}
-            <div className="flex items-start space-x-2 p-2.5 sm:p-3 rounded-lg border border-gray-200 bg-white hover:border-gray-400 transition-colors">
-              <Checkbox
-                id="validateImage"
-                checked={!deviceConfig.no_validate}
-                onCheckedChange={(checked) =>
-                  handleParamChange('no_validate', !checked)
-                }
-                disabled={isProcessing}
-                className="mt-0.5"
-              />
-              <div className="flex-1 min-w-0">
-                <label
-                  htmlFor="validateImage"
-                  className="text-xs sm:text-sm font-semibold cursor-pointer block mb-1"
-                >
-                  Validate Image Before Installation
-                </label>
-                <p className="text-[10px] sm:text-xs text-gray-600 leading-relaxed">
-                  <span className="inline-flex items-center gap-0.5 text-green-700 font-semibold">
-                    <CheckCircle className="h-2.5 w-2.5" /> Recommended
-                  </span>
-                  {' '}— Validates integrity (~2 min). Unchecking increases risk.
-                </p>
-              </div>
-            </div>
-
+  
             {/* Option 2: Skip File Copy */}
             <div className="flex items-start space-x-2 p-2.5 sm:p-3 rounded-lg border border-gray-200 bg-white hover:border-gray-400 transition-colors">
               <Checkbox
@@ -376,19 +350,7 @@ export default function ConfigurationTab() {
               </div>
             </div>
 
-            {/* Warning Alerts - Compact */}
-            {deviceConfig.no_validate && (
-              <Alert className="border border-orange-300 bg-orange-50 p-2.5">
-                <AlertTriangle className="h-3.5 w-3.5 text-orange-600" />
-                <AlertTitle className="text-orange-900 font-bold text-xs">
-                  Validation Disabled
-                </AlertTitle>
-                <AlertDescription className="text-orange-800 text-[10px] sm:text-xs">
-                  Skipping validation increases failure risk. Only disable if image is verified.
-                </AlertDescription>
-              </Alert>
-            )}
-
+  
             {!deviceConfig.auto_reboot && (
               <Alert className="border border-blue-300 bg-blue-50 p-2.5">
                 <AlertCircle className="h-3.5 w-3.5 text-blue-600" />

@@ -40,6 +40,12 @@ import {
   Wifi,
   ShieldAlert,
   Clock,
+  ChevronDown,
+  Plug,
+  Search,
+  Package,
+  RefreshCw,
+  CheckCheck,
 } from 'lucide-react';
 
 import { shouldShowToUser } from '../utils/messageFiltering';
@@ -140,20 +146,78 @@ function ElapsedTimeDisplay({ isRunning, jobOutput }) {
 }
 
 /**
+ * Estimated Time Remaining Component
+ * Calculates and displays ETA based on current phase and progress
+ */
+function EstimatedTimeRemaining({ currentPhase, elapsedTime, progress }) {
+  // Phase duration estimates (in seconds)
+  const phaseDurations = {
+    connection: 30,
+    version_detection: 20,
+    package_installation: 600, // 10 minutes
+    device_reboot: 300,        // 5 minutes
+    version_verification: 60,
+  };
+
+  const calculateETA = () => {
+    if (!currentPhase || progress >= 100) return 0;
+
+    // Get remaining phases after current one
+    const phases = Object.keys(phaseDurations);
+    const currentIndex = phases.indexOf(currentPhase);
+    const remainingPhases = phases.slice(currentIndex + 1);
+
+    // Calculate time for remaining phases
+    const remainingPhaseTime = remainingPhases.reduce((sum, phase) =>
+      sum + (phaseDurations[phase] || 0), 0
+    );
+
+    // Estimate current phase remaining time
+    const currentPhaseDuration = phaseDurations[currentPhase] || 0;
+    const currentPhaseProgress = progress - (currentIndex * 20); // Rough estimate
+    const currentPhaseTotal = 20; // Rough estimate per phase
+    const currentPhaseRemaining = Math.max(0, currentPhaseTotal - Math.abs(currentPhaseProgress));
+    const currentPhaseTimeRemaining = (currentPhaseRemaining / currentPhaseTotal) * currentPhaseDuration;
+
+    return Math.round(currentPhaseTimeRemaining + remainingPhaseTime);
+  };
+
+  const eta = calculateETA();
+  const minutes = Math.floor(eta / 60);
+  const seconds = eta % 60;
+
+  if (eta <= 0) return null;
+
+  return (
+    <div className="flex items-center gap-2 text-sm text-muted-foreground bg-gray-50 px-3 py-2 rounded-lg border">
+      <Clock className="w-4 h-4" />
+      <span className="font-medium">
+        Estimated time remaining: {minutes}m {seconds}s
+      </span>
+    </div>
+  );
+}
+
+/**
  * Progress Card Component - Matches ExecutionTab styling
  * Displays overall upgrade progress with visual indicators
  */
-function UpgradeProgressCard({ progress, completedSteps, totalSteps, isRunning, elapsedTime, currentPhase, isComplete, hasError }) {
+function UpgradeProgressCard({ progress, completedSteps, totalSteps, isRunning, currentPhase, isComplete, hasError }) {
+  const phases = [
+    { name: 'Connect', value: 'connection', range: [0, 10], icon: <Plug className="h-4 w-4" />, description: 'Establishing device connection' },
+    { name: 'Detect', value: 'version_detection', range: [10, 20], icon: <Search className="h-4 w-4" />, description: 'Detecting current software version' },
+    { name: 'Install', value: 'package_installation', range: [20, 70], icon: <Package className="h-4 w-4" />, description: 'Installing software package' },
+    { name: 'Reboot', value: 'device_reboot', range: [70, 85], icon: <RefreshCw className="h-4 w-4" />, description: 'Device rebooting and starting up' },
+    { name: 'Verify', value: 'version_verification', range: [85, 95], icon: <CheckCheck className="h-4 w-4" />, description: 'Verifying new software version' },
+    { name: 'Complete', value: 'completion', range: [95, 100], icon: <CheckCircle className="h-4 w-4" />, description: 'Finalizing upgrade' },
+  ];
+
   const getPhaseMessage = (phase) => {
-    switch (phase) {
-      case 'connection': return '🔌 Establishing device connection...';
-      case 'version_detection': return '📋 Detecting current software version...';
-      case 'package_installation': return '📦 Installing software package (this may take 10-15 minutes)...';
-      case 'device_reboot': return '🔄 Device rebooting... This will take approximately 2-3 minutes';
-      case 'version_verification': return '🔎 Verifying new software version...';
-      case 'completion': return '✅ Finalizing upgrade...';
-      default: return '🚀 Upgrade in progress... This may take 10-15 minutes';
+    const phaseData = phases.find(p => p.value === phase);
+    if (phaseData) {
+      return `${phaseData.icon} ${phaseData.description}${phase === 'package_installation' ? ' (this may take 10-15 minutes)' : ''}${phase === 'device_reboot' ? ' (approximately 2-3 minutes)' : ''}`;
     }
+    return '🚀 Upgrade in progress... This may take 10-15 minutes';
   };
 
   const getPhaseDescription = (phase) => {
@@ -207,7 +271,6 @@ function UpgradeProgressCard({ progress, completedSteps, totalSteps, isRunning, 
             </CardDescription>
           </div>
           <div className="flex items-center gap-3">
-            {isRunning && <ElapsedTimeDisplay isRunning={isRunning} jobOutput={[]} />}
             {getStatusBadge()}
           </div>
         </div>
@@ -221,6 +284,38 @@ function UpgradeProgressCard({ progress, completedSteps, totalSteps, isRunning, 
           </div>
           <Progress value={progress} className="h-2" />
         </div>
+
+        {/* Phase indicators */}
+        <div className="space-y-2">
+          <div className="flex justify-between text-xs">
+            {phases.map((phase, idx) => {
+              const isActive = currentPhase === phase.value;
+              const isComplete = progress >= phase.range[1];
+              const isCurrent = progress >= phase.range[0] && progress < phase.range[1];
+
+              return (
+                <div key={idx} className={`flex items-center gap-1 transition-colors ${
+                  isCurrent ? 'text-blue-600 font-semibold' :
+                  isComplete ? 'text-green-600' :
+                  isActive ? 'text-blue-700' :
+                  'text-gray-400'
+                }`}>
+                  <span className="text-sm">{phase.icon}</span>
+                  <span className="text-xs">{phase.name}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Estimated time remaining */}
+        {isRunning && (
+          <EstimatedTimeRemaining
+            currentPhase={currentPhase}
+            elapsedTime={elapsedTime}
+            progress={progress}
+          />
+        )}
 
         {totalSteps > 0 && (
           <div className="flex justify-between text-sm">
@@ -440,10 +535,48 @@ export default function UpgradeTab({
   }, [isRunning, jobOutput]);
 
   // ==========================================================================
-  // SECTION 4: MESSAGE FILTERING
+  // SECTION 4: MESSAGE FILTERING & DEDUPLICATION
   // ==========================================================================
 
-  const userFacingMessages = jobOutput.filter(shouldShowToUser);
+  /**
+   * Remove duplicate messages from the output
+   * Filters out consecutive identical messages and common repeated messages
+   */
+  const deduplicateMessages = (messages) => {
+    const seenMessages = new Set();
+    const commonRepeatedMessages = [
+      'Verifying package installation...',
+      'Installing software...',
+      'Waiting for device reboot...',
+      'Connecting to device...',
+    ];
+
+    return messages.filter((msg, index) => {
+      const message = msg.message || '';
+
+      // Skip common repeated messages that appear multiple times
+      if (commonRepeatedMessages.some(commonMsg => message.includes(commonMsg))) {
+        const prevMsg = messages[index - 1]?.message || '';
+        // Only keep if it's different from the previous message
+        if (prevMsg.includes(commonMsg)) {
+          return false;
+        }
+      }
+
+      // Skip exact duplicates that appear consecutively
+      if (seenMessages.has(message)) {
+        const prevMsg = messages[index - 1]?.message || '';
+        if (prevMsg === message) {
+          return false;
+        }
+      }
+
+      seenMessages.add(message);
+      return true;
+    });
+  };
+
+  const userFacingMessages = deduplicateMessages(jobOutput.filter(shouldShowToUser));
 
   // ==========================================================================
   // SECTION 5: STATUS CALCULATIONS
@@ -537,7 +670,6 @@ export default function UpgradeTab({
         completedSteps={completedSteps}
         totalSteps={totalSteps}
         isRunning={isRunning}
-        elapsedTime={elapsedTime}
         currentPhase={currentPhase}
         isComplete={isComplete}
         hasError={hasError}

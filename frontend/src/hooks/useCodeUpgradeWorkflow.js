@@ -107,7 +107,11 @@ export function useCodeUpgradeWorkflow() {
         pre_check_selection: deviceConfig.selectedPreChecks.join(','),
       };
 
-      console.log('[WORKFLOW] API payload:', payload);
+      console.log('[WORKFLOW] 🚀 API payload being sent:', {
+        selectedPreChecks: deviceConfig.selectedPreChecks,
+        pre_check_selection: payload.pre_check_selection,
+        payload
+      });
 
       // Call backend API
       const response = await fetch(`${API_URL}/api/operations/pre-check`, {

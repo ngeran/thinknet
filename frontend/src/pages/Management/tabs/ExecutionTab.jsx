@@ -72,6 +72,16 @@ export default function ExecutionTab({
   onToggleTechnicalDetails,
   scrollAreaRef
 }) {
+  // Add progress logging
+  useEffect(() => {
+    console.log("[EXECUTION_TAB] 📊 Progress updated:", {
+      progress,
+      isRunning,
+      isComplete,
+      hasError,
+      currentPhase
+    });
+  }, [progress, isRunning, isComplete, hasError, currentPhase]);
  
   // ===========================================================================
   // SUBSECTION 1.1: DEBUG - LOG WHAT WE'RE RECEIVING

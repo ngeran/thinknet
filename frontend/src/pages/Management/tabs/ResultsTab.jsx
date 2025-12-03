@@ -358,42 +358,7 @@ export default function ResultsTab({
         </Card>
       </div>
  
-      {/* ====================================================================
-          STATISTICS CARD
-          ==================================================================== */}
-      {(statistics.total > 0 || finalResults) && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm flex items-center gap-2">
-              <Info className="h-4 w-4" />
-              Operation Statistics
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-3 gap-4 text-center">
-              <div className="p-3 bg-blue-50 rounded-lg">
-                <div className="text-2xl font-bold text-blue-600">
-                  {statistics.total || completedSteps}
-                </div>
-                <div className="text-xs text-gray-600 mt-1">Total Operations</div>
-              </div>
-              <div className="p-3 bg-green-50 rounded-lg">
-                <div className="text-2xl font-bold text-green-600">
-                  {statistics.succeeded || (jobStatus === 'success' ? completedSteps : 0)}
-                </div>
-                <div className="text-xs text-gray-600 mt-1">Succeeded</div>
-              </div>
-              <div className="p-3 bg-red-50 rounded-lg">
-                <div className="text-2xl font-bold text-red-600">
-                  {statistics.failed || (jobStatus === 'failed' ? 1 : 0)}
-                </div>
-                <div className="text-xs text-gray-600 mt-1">Failed</div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
- 
+   
       {/* ====================================================================
           DEBUG INFORMATION (Development Only)
           ==================================================================== */}
