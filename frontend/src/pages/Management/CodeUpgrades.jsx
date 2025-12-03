@@ -155,7 +155,11 @@ export default function CodeUpgrades() {
       {/* ====================================================================
           TABS CONTAINER
           ==================================================================== */}
-      <Tabs value={currentStep} onValueChange={workflow.setCurrentStep} className="w-full">
+      <Tabs value={currentStep} onValueChange={(value) => {
+        console.log('[CODE_UPGRADES] Tab navigation attempt:', value);
+        console.log('[CODE_UPGRADES] Current step before change:', currentStep);
+        workflow.setCurrentStep(value);
+      }} className="w-full">
 
         {/* ==================================================================
             TAB NAVIGATION
@@ -174,7 +178,7 @@ export default function CodeUpgrades() {
           </TabsTrigger>
 
           <TabsTrigger value={WORKFLOW_STEPS.UPGRADE}>
-            Upgrade
+            Upgrade {upgrade.isRunning && "🔄"} {upgrade.isComplete && "✅"}
           </TabsTrigger>
 
           <TabsTrigger value={WORKFLOW_STEPS.RESULTS}>

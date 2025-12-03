@@ -109,6 +109,8 @@ export const useCodeUpgradeStore = create(
       // =====================================================================
 
       setCurrentStep: (step) => {
+        console.log('[CODE_UPGRADE_STORE] setCurrentStep called with:', step);
+        console.log('[CODE_UPGRADE_STORE] Current step before change:', get().currentStep);
         set({ currentStep: step, lastUpdate: new Date().toISOString() });
       },
 

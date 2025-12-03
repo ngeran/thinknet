@@ -149,10 +149,18 @@ function UpgradeProgressCard({ progress, completedSteps, totalSteps, isRunning, 
       case 'connection': return '🔌 Establishing device connection...';
       case 'version_detection': return '📋 Detecting current software version...';
       case 'package_installation': return '📦 Installing software package (this may take 10-15 minutes)...';
-      case 'device_reboot': return '🔄 Device rebooting and reconnecting...';
+      case 'device_reboot': return '🔄 Device rebooting... This will take approximately 2-3 minutes';
       case 'version_verification': return '🔎 Verifying new software version...';
       case 'completion': return '✅ Finalizing upgrade...';
       default: return '🚀 Upgrade in progress... This may take 10-15 minutes';
+    }
+  };
+
+  const getPhaseDescription = (phase) => {
+    switch (phase) {
+      case 'device_reboot': return 'The device is restarting. Please wait while the system boots up with the new software version.';
+      case 'version_verification': return 'Connecting to the device to verify the new software version was successfully installed.';
+      default: return '';
     }
   };
 
@@ -223,11 +231,20 @@ function UpgradeProgressCard({ progress, completedSteps, totalSteps, isRunning, 
 
         {/* Status indicator */}
         {isRunning && (
-          <div className="flex items-center gap-2 p-3 bg-gray-50 rounded-lg border">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            <span className="text-sm font-medium">
-              {getPhaseMessage(currentPhase)}
-            </span>
+          <div className="flex items-start gap-3 p-4 bg-gray-50 rounded-lg border">
+            <div className="flex-shrink-0 mt-0.5">
+              <Loader2 className="h-4 w-4 animate-spin" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium mb-1">
+                {getPhaseMessage(currentPhase)}
+              </p>
+              {getPhaseDescription(currentPhase) && (
+                <p className="text-xs text-muted-foreground">
+                  {getPhaseDescription(currentPhase)}
+                </p>
+              )}
+            </div>
           </div>
         )}
       </CardContent>

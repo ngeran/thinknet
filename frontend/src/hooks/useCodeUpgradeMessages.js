@@ -91,6 +91,30 @@ export function useCodeUpgradeMessages({ lastMessage, currentStep, sendMessage }
   const processedMessagesRef = useRef(new Set());
   const checkResultsRef = useRef([]);
 
+  // Enhanced message parser to extract clean user-friendly content
+  const parseCleanMessage = useCallback((rawMessage) => {
+    if (!rawMessage) return 'Log message';
+
+    // Remove timestamp, module info, and path details
+    // Pattern: "2025-12-02 23:14:27,271 - module.file - LEVEL - [path:line] - [PREFIX] Message"
+    const patterns = [
+      // Full log format with timestamp and module info
+      /^[\d-]+\s+[\d:,]+\s+-\s+[\w.-]+\s+-\s+[A-Z]+\s+-\s+\[[\w.]+:\d+\]\s+-\s+\[[\w-]+\]\s*/,
+      // Simplified format: "[PREFIX] Message"
+      /^\[[\w-]+\]\s*/,
+      // Timestamp format: "2025-12-02 23:14:27,271 - "
+      /^[\d-]+\s+[\d:,]+\s+-\s+/,
+    ];
+
+    let cleanMessage = rawMessage;
+    patterns.forEach(pattern => {
+      cleanMessage = cleanMessage.replace(pattern, '');
+    });
+
+    // Trim whitespace and return cleaned message
+    return cleanMessage.trim() || rawMessage;
+  }, []);
+
   // ==========================================================================
   // SECTION 3: WEBSOCKET SUBSCRIPTION
   // ==========================================================================
@@ -206,14 +230,17 @@ export function useCodeUpgradeMessages({ lastMessage, currentStep, sendMessage }
       case 'STEP_PROGRESS':
       case 'OPERATION_START':
       case 'LOG_MESSAGE':
+        // Parse clean message for pre-check
+        const cleanPreCheckMessage = parseCleanMessage(message.message || '');
+
         // Check for check results and store them
-        if (message.message && (
-          message.message.includes('Image File Availability') ||
-          message.message.includes('Storage Space')
+        if (cleanPreCheckMessage && (
+          cleanPreCheckMessage.includes('Image File Availability') ||
+          cleanPreCheckMessage.includes('Storage Space')
         )) {
-          const isImageCheck = message.message.includes('Image File Availability');
-          const isStorageCheck = message.message.includes('Storage Space');
-          const passed = message.message.includes('✅ PASS') || message.message.includes('🟢 PASS');
+          const isImageCheck = cleanPreCheckMessage.includes('Image File Availability');
+          const isStorageCheck = cleanPreCheckMessage.includes('Storage Space');
+          const passed = cleanPreCheckMessage.includes('✅ PASS') || cleanPreCheckMessage.includes('🟢 PASS');
 
           let checkName, checkMessage;
           if (isImageCheck) {
@@ -244,8 +271,8 @@ export function useCodeUpgradeMessages({ lastMessage, currentStep, sendMessage }
         }
 
         // Only trigger completion on the final completion message, not intermediate status updates
-        if (message.message && message.message.includes('Pre-check phase completed successfully')) {
-          console.log('[WS_MESSAGES] 🎯 Detected completion from log message:', message.message);
+        if (cleanPreCheckMessage && cleanPreCheckMessage.includes('Pre-check phase completed successfully')) {
+          console.log('[WS_MESSAGES] 🎯 Detected completion from log message:', cleanPreCheckMessage);
           console.log('[WS_MESSAGES] 📋 Collected check results:', checkResultsRef.current);
 
           const checkResults = checkResultsRef.current;
@@ -289,20 +316,22 @@ export function useCodeUpgradeMessages({ lastMessage, currentStep, sendMessage }
           });
         }
 
-        // Add to pre-check logs
-        addPreCheckLog({
-          id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          timestamp: message.timestamp || new Date().toISOString(),
-          level: message.level?.toUpperCase() || 'INFO',
-          message: message.message || 'Log message',
-          event_type: message.event_type,
-        });
+        // Add to pre-check logs only if we have a meaningful message
+        if (cleanPreCheckMessage && cleanPreCheckMessage.trim()) {
+          addPreCheckLog({
+            id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            timestamp: message.timestamp || new Date().toISOString(),
+            level: message.level?.toUpperCase() || 'INFO',
+            message: cleanPreCheckMessage,
+            event_type: message.event_type,
+          });
+        }
         break;
 
       default:
         console.log('[WS_MESSAGES] Unhandled pre-check event:', message.event_type);
     }
-  }, [handlePreCheckComplete, addPreCheckLog]);
+  }, [handlePreCheckComplete, addPreCheckLog, parseCleanMessage]);
 
   // ==========================================================================
   // SECTION 5: UPGRADE MESSAGE HANDLERS
@@ -393,88 +422,104 @@ export function useCodeUpgradeMessages({ lastMessage, currentStep, sendMessage }
           });
         }
 
+        // Parse clean message first
+        const cleanMessage = parseCleanMessage(message.message || '');
+
         // Extract meaningful step name for better user experience
-        let enhancedMessage = message.message || 'Log message';
+        let enhancedMessage = cleanMessage;
         let stepName = null;
         let currentPhase = null;
         let progressUpdate = null;
 
-        if (message.message) {
-          // Connection steps
-          if (message.message.includes('Connected successfully')) {
-            stepName = 'Device Connection';
-            enhancedMessage = '✅ Connected to device successfully';
-            currentPhase = 'connection';
-            progressUpdate = 10;
+        if (cleanMessage) {
+          // Pre-check completion
+          if (cleanMessage.includes('Pre-check phase completed successfully')) {
+            stepName = 'Pre-check Completion';
+            enhancedMessage = '✅ Pre-check validation completed successfully';
           }
-          // Version detection
-          else if (message.message.includes('Current version:') && message.message.includes('upgrade.device_upgrader')) {
+          // Upgrade completion
+          else if (cleanMessage.includes('Upgrade phase completed successfully')) {
+            stepName = 'Upgrade Completion';
+            enhancedMessage = '✅ Upgrade completed successfully';
+            currentPhase = 'completion';
+            progressUpdate = 95;
+          }
+          // Version detection (both pre-check and upgrade)
+          else if (cleanMessage.includes('Current version:')) {
+            const version = cleanMessage.match(/Current version: (.+)$/)?.[1] || 'Unknown';
             stepName = 'Version Detection';
-            const version = message.message.match(/Current version: (.+)$/)?.[1] || 'Unknown';
-            enhancedMessage = `📋 Current version detected: ${version}`;
+            enhancedMessage = `📋 Current version: ${version}`;
             currentPhase = 'version_detection';
             progressUpdate = 20;
           }
+          // Version change reporting
+          else if (cleanMessage.includes('Version change:')) {
+            stepName = 'Version Change';
+            // Keep the original version change message as it's informative
+            currentPhase = 'completion';
+            progressUpdate = 100;
+          }
+          // Connection steps
+          else if (cleanMessage.includes('Connected successfully')) {
+            // Check if we're reconnecting after reboot
+            if (upgrade.phase === 'device_reboot') {
+              stepName = 'Device Reconnection';
+              enhancedMessage = '✅ Device back online after reboot';
+              currentPhase = 'version_verification';
+              progressUpdate = 85;
+            } else {
+              stepName = 'Device Connection';
+              enhancedMessage = '✅ Connected to device successfully';
+              currentPhase = 'connection';
+              progressUpdate = 10;
+            }
+          }
+          // Connection attempts with hostname
+          else if (cleanMessage.includes('Connecting to') && cleanMessage.includes('admin@')) {
+            const hostname = cleanMessage.match(/Connecting to (.+?)(?:\s|$)/)?.[1] || 'device';
+            stepName = 'Device Connection';
+            enhancedMessage = `🔌 Connecting to device ${hostname}...`;
+            currentPhase = 'connection';
+          }
           // Package installation
-          else if (message.message.includes('software pkgadd')) {
+          else if (cleanMessage.includes('software pkgadd')) {
             stepName = 'Package Installation';
             enhancedMessage = '📦 Installing software package...';
             currentPhase = 'package_installation';
             progressUpdate = 40;
           }
-          else if (message.message.includes('package-result: 0')) {
+          else if (cleanMessage.includes('package-result: 0')) {
             stepName = 'Package Installation';
             enhancedMessage = '✅ Software package installed successfully';
             currentPhase = 'package_installation';
             progressUpdate = 60;
           }
           // Verification
-          else if (message.message.includes('request-package-checks-pending-install')) {
+          else if (cleanMessage.includes('request-package-checks-pending-install')) {
             stepName = 'Package Verification';
             enhancedMessage = '🔍 Verifying package installation...';
             currentPhase = 'package_installation';
             progressUpdate = 50;
           }
           // Reboot/connection attempts
-          else if (message.message.includes('Connection failed: ConnectTimeoutError')) {
+          else if (cleanMessage.includes('Connection failed: ConnectTimeoutError')) {
             stepName = 'Device Reboot';
             enhancedMessage = '🔄 Device rebooting, waiting for reconnection...';
             currentPhase = 'device_reboot';
             progressUpdate = 70;
           }
-          // Reconnect after reboot (first connection after reboot)
-          else if (message.message.includes('Connected successfully') && upgrade.phase === 'device_reboot') {
-            stepName = 'Device Reconnection';
-            enhancedMessage = '✅ Device successfully rebooted and back online';
-            currentPhase = 'version_verification';
-            progressUpdate = 85;
+          // SSH connection warnings (ignore these in user display)
+          else if (cleanMessage.includes('WARNING: connection is not using a post-quantum key exchange algorithm')) {
+            // Filter out this technical SSH warning - don't add to logs
+            stepName = null; // Don't show this step
+            enhancedMessage = ''; // Don't show this message
           }
-          // Version verification after reboot
-          else if (message.message.includes('Current version:') && upgrade.phase === 'version_verification') {
-            stepName = 'Version Verification';
-            const version = message.message.match(/Current version: (.+)$/)?.[1] || 'Unknown';
-            enhancedMessage = `🎯 Version verified after reboot: ${version}`;
-            currentPhase = 'version_verification';
-            progressUpdate = 90;
-          }
-          // Upgrade progress
-          else if (message.message.includes('Verifying upgrade completed successfully')) {
+          // Verification progress
+          else if (cleanMessage.includes('Verifying upgrade completed successfully')) {
             stepName = 'Upgrade Verification';
-            enhancedMessage = '🔎 Verifying upgrade completion...';
+            enhancedMessage = '🔎 Upgrade verification completed successfully';
             currentPhase = 'version_verification';
             progressUpdate = 90;
-          }
-          // Completion
-          else if (message.message.includes('Upgrade phase completed successfully')) {
-            stepName = 'Upgrade Completion';
-            currentPhase = 'completion';
-            progressUpdate = 95;
-          }
-          else if (message.message.includes('Version change:')) {
-            stepName = 'Version Change';
-            // Keep the original version change message as it's informative
-            currentPhase = 'completion';
-            progressUpdate = 100;
           }
         }
 
@@ -483,17 +528,19 @@ export function useCodeUpgradeMessages({ lastMessage, currentStep, sendMessage }
           setUpgradeProgress(progressUpdate, currentPhase);
         }
 
-        // Add to upgrade logs with enhanced information
-        addUpgradeLog({
-          id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          timestamp: message.timestamp || new Date().toISOString(),
-          level: message.level?.toUpperCase() || 'INFO',
-          message: enhancedMessage,
-          event_type: message.event_type,
-          step_name: stepName,
-          phase: currentPhase,
-          progress: progressUpdate,
-        });
+        // Only add to logs if we have a meaningful message to show
+        if (enhancedMessage && stepName) {
+          addUpgradeLog({
+            id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            timestamp: message.timestamp || new Date().toISOString(),
+            level: message.level?.toUpperCase() || 'INFO',
+            message: enhancedMessage,
+            event_type: message.event_type,
+            step_name: stepName,
+            phase: currentPhase,
+            progress: progressUpdate,
+          });
+        }
         break;
 
       default:
