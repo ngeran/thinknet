@@ -1,3 +1,4 @@
+
 """
 Juniper Device Code Upgrade - FINAL v5.1.0 - Real Upgrade Execution with User Options
 Supports both pre-check validation and actual upgrade operations with user-configurable options
@@ -460,27 +461,61 @@ def execute_upgrade_phase(args) -> int:
  
  
 # =============================================================================
-# SECTION 5: PRE-CHECK EXECUTION FUNCTION (UNCHANGED)
+# SECTION 5: PRE-CHECK EXECUTION FUNCTION v2.0.0 (SIMPLIFIED)
+# =============================================================================
+#
+# CRITICAL CHANGES (2025-12-05):
+# - Removed complex conditional logic for device_connectivity and version_compatibility
+# - Mandatory checks (connectivity, image_availability) now handled by pre_check_engine.py
+# - Simplified flow: Connect → Run all checks → Report results
+# - Fail-fast on connection failures
+#
 # =============================================================================
  
  
 def execute_pre_check_phase(args, selected_checks: List[str]) -> int:
     """
     Execute the pre-check validation phase with enhanced progress tracking.
-    Maintains full backward compatibility with existing pre-check functionality.
+ 
+    CRITICAL CHANGES v2.0.0 (2025-12-05):
+    - Mandatory checks (connectivity, image_availability) ALWAYS run first
+    - Optional checks run only if user selects them
+    - Simplified logic - pre_check_engine.py handles all check orchestration
+    - Fail-fast on connectivity failures
+ 
+    Args:
+        args: Command-line arguments
+        selected_checks: User-selected optional check IDs (mandatory checks auto-added)
+ 
+    Returns:
+        0 on success, 1 on failure
     """
-    BASE_STEPS = 7
-    check_count = len(selected_checks) if selected_checks else 4
+    # Define mandatory checks that ALWAYS run
+    MANDATORY_CHECKS = ['device_connectivity', 'image_availability']
+ 
+    # Build complete check list: mandatory + user-selected optional
+    all_checks = MANDATORY_CHECKS.copy()
+    if selected_checks:
+        # Add user-selected checks that aren't already in mandatory list
+        for check in selected_checks:
+            if check not in MANDATORY_CHECKS:
+                all_checks.append(check)
+ 
+    # Calculate total steps
+    BASE_STEPS = 3  # Initialize, Connect, Connected confirmation
+    check_count = len(all_checks)
     FINALIZE_STEPS = 1
     TOTAL_STEPS = BASE_STEPS + check_count + FINALIZE_STEPS
  
     logger.info(f"[PRE-CHECK] ========================================")
-    logger.info(f"[PRE-CHECK] PRE-CHECK PHASE STARTED")
+    logger.info(f"[PRE-CHECK] PRE-CHECK PHASE STARTED v2.0.0")
     logger.info(f"[PRE-CHECK] Hostname: {args.hostname}")
     logger.info(f"[PRE-CHECK] Total steps: {TOTAL_STEPS}")
-    logger.info(f"[PRE-CHECK] Selected checks: {selected_checks or 'ALL'}")
+    logger.info(f"[PRE-CHECK] Mandatory checks (ALWAYS run): {MANDATORY_CHECKS}")
+    logger.info(f"[PRE-CHECK] User-selected optional checks: {selected_checks or 'NONE'}")
+    logger.info(f"[PRE-CHECK] Total checks to run: {all_checks}")
     logger.info(f"[PRE-CHECK] User: nikos-geranios_vgi")
-    logger.info(f"[PRE-CHECK] Date: 2025-11-19 11:38:21 UTC")
+    logger.info(f"[PRE-CHECK] Date: 2025-12-05")
     logger.info(f"[PRE-CHECK] ========================================")
  
     try:
@@ -502,28 +537,25 @@ def execute_pre_check_phase(args, selected_checks: List[str]) -> int:
         )
         time.sleep(STEP_EMISSION_DELAY)
  
+        # STEP 1: Initialize pre-check
         emit_step_with_delay(
-            1, TOTAL_STEPS, f"Pre-check validation started for {args.hostname}"
+            1, TOTAL_STEPS, f"🔍 Pre-check validation started for {args.hostname}"
         )
+ 
+        # STEP 2: Establish connection (MANDATORY - FAIL FAST)
         emit_step_with_delay(
-            2, TOTAL_STEPS, f"Checking reachability to {args.hostname}..."
+            2, TOTAL_STEPS, f"🔌 Connecting to device {args.hostname}..."
         )
  
         with upgrader.connector.connect():
+            # STEP 3: Connection established
             emit_step_with_delay(
-                3, TOTAL_STEPS, f"✅ Device {args.hostname} is reachable and connected"
+                3, TOTAL_STEPS, f"✅ Connected to {args.hostname} successfully"
             )
-            emit_step_with_delay(4, TOTAL_STEPS, "Retrieving current device version...")
-            current_version = upgrader.get_current_version()
-            emit_step_with_delay(
-                5, TOTAL_STEPS, f"✅ Current version: {current_version}"
-            )
-            emit_step_with_delay(6, TOTAL_STEPS, "Validating version compatibility...")
-            upgrader._validate_downgrade_scenario(current_version, args.target_version)
-            emit_step_with_delay(7, TOTAL_STEPS, "✅ Version compatibility validated")
  
             current_step = BASE_STEPS
  
+            # Progress callback for individual check completion
             def check_progress_callback(
                 check_name: str, check_num: int, total_checks: int, passed: bool
             ):
@@ -534,18 +566,19 @@ def execute_pre_check_phase(args, selected_checks: List[str]) -> int:
                 message = f"{status_icon} Check {check_num}/{total_checks}: {check_name} - {status_text}"
                 emit_step_with_delay(current_step, TOTAL_STEPS, message)
  
-            emit_step_with_delay(
-                BASE_STEPS + 1,
-                TOTAL_STEPS,
-                f"🔍 Starting {check_count} validation check{'s' if check_count > 1 else ''}...",
+            # STEP 4+: Run ALL checks (mandatory + optional)
+            # The pre_check_engine.py handles mandatory vs optional logic internally
+            logger.info(
+                f"[PRE-CHECK] 🔍 Running {len(all_checks)} checks "
+                f"({len(MANDATORY_CHECKS)} mandatory + {len(all_checks) - len(MANDATORY_CHECKS)} optional)"
             )
-            current_step = BASE_STEPS + 1
  
             upgrader.run_pre_checks(
-                selected_check_ids=selected_checks or None,
+                selected_check_ids=all_checks,
                 progress_callback=check_progress_callback,
             )
  
+            # Get results from upgrader
             summary = upgrader.status.pre_check_summary
             results_dict = {
                 "total_checks": getattr(summary, "total_checks", 0),
@@ -575,6 +608,7 @@ def execute_pre_check_phase(args, selected_checks: List[str]) -> int:
                 f"✅ All validation checks completed: {passed_count}/{results_dict['total_checks']} passed",
             )
  
+        # Emit completion events
         emitter.pre_check_complete(args.hostname, results_dict)
         time.sleep(STEP_EMISSION_DELAY)
  
@@ -585,6 +619,10 @@ def execute_pre_check_phase(args, selected_checks: List[str]) -> int:
         )
  
         logger.info(f"[PRE-CHECK] Pre-check phase completed successfully")
+        logger.info(
+            f"[PRE-CHECK] Results: {passed_count}/{results_dict['total_checks']} passed, "
+            f"{results_dict['warnings']} warnings, {results_dict['critical_failures']} critical failures"
+        )
         return 0
  
     except Exception as e:
@@ -626,6 +664,7 @@ def execute_pre_check_phase(args, selected_checks: List[str]) -> int:
         )
  
         return 1
+ 
  
  
 # =============================================================================
@@ -674,9 +713,13 @@ def main() -> int:
     )
     args = parser.parse_args()
  
-    selected_checks = [
-        c.strip() for c in args.pre_check_selection.split(",") if c.strip()
-    ]
+    # Only process pre_check_selection if it's not empty
+    if args.pre_check_selection and args.pre_check_selection.strip():
+        selected_checks = [
+            c.strip() for c in args.pre_check_selection.split(",") if c.strip()
+        ]
+    else:
+        selected_checks = []  # Empty list means no checks selected
  
     logger.info(f"[MAIN] ========================================")
     logger.info(f"[MAIN] UNIFIED UPGRADE MANAGER v5.1.0 - REAL UPGRADES WITH USER OPTIONS")
