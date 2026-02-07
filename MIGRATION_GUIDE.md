@@ -377,6 +377,27 @@ cat ~/.ssh/id_ed25519.pub
 # Then clone using SSH: git clone git@github.com:username/thinknet.git
 ```
 
+### Issue 8: Navigation Menu Shows Error "Unexpected token '<', "<!doctype "... is not valid JSON"
+
+**Symptom:** Browser console shows error when loading navigation menu
+
+**Cause:** Environment variable mismatch between `VITE_API_GATEWAY_URL` (set in docker-compose.yml) and `VITE_API_BASE_URL` (used in some frontend files)
+
+**Solution:**
+```bash
+# The files should use VITE_API_GATEWAY_URL consistently
+# If you see this error, verify environment variable names match:
+
+# 1. Check docker-compose.yml has:
+# VITE_API_GATEWAY_URL: http://localhost:8000
+
+# 2. Check frontend files use the same variable:
+grep -r "VITE_API_BASE_URL" frontend/src/
+
+# 3. If found, restart frontend after code changes:
+docker compose restart frontend
+```
+
 ---
 
 ## Configuration Customization

@@ -6,7 +6,7 @@ import { PageMap } from '../lib/navigationUtils';
 // CONFIGURATION & CONTEXT
 // =================================================================
 
-const API_GATEWAY_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+const API_GATEWAY_URL = import.meta.env.VITE_API_GATEWAY_URL || "http://127.0.0.1:8000";
 const NAVIGATION_ENDPOINT = `${API_GATEWAY_URL}/api/navigation`;
 
 const NavigationContext = createContext();

@@ -10,7 +10,7 @@ import MegaMenuCard from './MegaMenuCard';
 // CONFIGURATION
 // ================================================
 // API Gateway base URL retrieved from environment variables
-const API_GATEWAY_URL = import.meta.env.VITE_API_BASE_URL;
+const API_GATEWAY_URL = import.meta.env.VITE_API_GATEWAY_URL;
 
 /**
  * MegaMenu Component
